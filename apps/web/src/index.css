@@ -1,0 +1,98 @@
+@tailwind base;
+@tailwind components;
+@tailwind utilities;
+
+/*
+ * Design tokens (PART 09 productization sprint — dark mode). Light
+ * values live on `:root`; `.dark` (toggled by `useTheme`) overrides them.
+ * Every value is "R G B" (space-separated, no `rgb()` wrapper) so
+ * `tailwind.config.ts` can compose them with Tailwind's opacity syntax.
+ */
+:root {
+  --color-surface: 255 255 255;
+  --color-surface-subtle: 248 250 252;
+  --color-surface-sunken: 241 245 249;
+  --color-surface-elevated: 255 255 255;
+  --color-border: 226 232 240;
+  --color-border-strong: 203 213 225;
+  --color-ink: 15 23 42;
+  --color-ink-muted: 71 85 105;
+  --color-ink-faint: 148 163 184;
+  --color-brand-50: 238 244 255;
+  --color-brand-100: 219 230 254;
+  --color-brand-300: 147 180 251;
+  --color-brand-500: 59 99 245;
+  --color-brand-600: 44 79 222;
+  --color-brand-700: 36 63 180;
+  --color-success: 22 163 74;
+  --color-success-subtle: 220 252 231;
+  --color-success-text: 22 101 52;
+  --color-warning: 217 119 6;
+  --color-warning-subtle: 254 243 199;
+  --color-warning-text: 146 64 14;
+  --color-danger: 220 38 38;
+  --color-danger-subtle: 254 226 226;
+  --color-danger-text: 153 27 27;
+  --color-info: 8 145 178;
+  --color-info-subtle: 207 250 254;
+  --color-info-text: 21 94 117;
+}
+
+.dark {
+  --color-surface: 15 23 42;
+  --color-surface-subtle: 30 41 59;
+  --color-surface-sunken: 71 85 105;
+  --color-surface-elevated: 30 41 59;
+  --color-border: 51 65 85;
+  --color-border-strong: 100 116 139;
+  --color-ink: 241 245 249;
+  --color-ink-muted: 165 180 202;
+  --color-ink-faint: 148 163 184;
+  --color-brand-50: 30 41 59;
+  --color-brand-100: 40 54 92;
+  --color-brand-300: 147 180 251;
+  --color-brand-500: 91 130 255;
+  --color-brand-600: 122 154 255;
+  --color-brand-700: 179 199 255;
+  --color-success: 74 222 128;
+  --color-success-subtle: 20 55 39;
+  --color-success-text: 134 239 172;
+  --color-warning: 251 191 36;
+  --color-warning-subtle: 66 48 15;
+  --color-warning-text: 253 186 116;
+  --color-danger: 248 113 113;
+  --color-danger-subtle: 69 26 26;
+  --color-danger-text: 252 165 165;
+  --color-info: 56 224 244;
+  --color-info-subtle: 22 56 63;
+  --color-info-text: 165 243 252;
+}
+
+@layer base {
+  html {
+    -webkit-font-smoothing: antialiased;
+  }
+  body {
+    @apply bg-surface-subtle text-ink font-sans;
+  }
+  /* PART 01 §35 — visible focus states everywhere, not just default UA styling. */
+  :focus-visible {
+    @apply outline-none ring-2 ring-brand-500 ring-offset-2 ring-offset-surface-subtle;
+  }
+  @media (prefers-reduced-motion: reduce) {
+    *,
+    *::before,
+    *::after {
+      animation-duration: 0.001ms !important;
+      animation-iteration-count: 1 !important;
+      transition-duration: 0.001ms !important;
+      scroll-behavior: auto !important;
+    }
+  }
+}
+
+@layer utilities {
+  .no-scrollbar::-webkit-scrollbar {
+    display: none;
+  }
+}
