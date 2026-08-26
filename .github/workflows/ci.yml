@@ -1,0 +1,96 @@
+name: CI
+
+# PART 09 §86-§87: runs the exact same commands documented in the README
+# and PROGRESS.md — typecheck, lint, test, build — plus both capped AI
+# evaluation suites in CONTRACT mode (deterministic, offline-safe; no
+# AI_PROVIDER_API_KEY is set, so these never make a live paid AI call).
+# No Razorpay/Anthropic credentials are used or required.
+
+on:
+  push:
+    branches: [main]
+  pull_request:
+    branches: [main]
+
+concurrency:
+  group: ci-${{ github.ref }}
+  cancel-in-progress: true
+
+jobs:
+  verify:
+    runs-on: ubuntu-latest
+    timeout-minutes: 20
+    env:
+      NODE_ENV: development
+      PORT: 4000
+      WEB_ORIGIN: http://localhost:5173
+      LOG_LEVEL: info
+      DATABASE_URL: postgresql://postgres:postgres@127.0.0.1:5432/postgres?sslmode=disable&pgbouncer=true&connection_limit=5
+      VITE_API_BASE_URL: http://localhost:4000/api/v1
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+
+      - name: Setup Node
+        uses: actions/setup-node@v4
+        with:
+          node-version: "20"
+
+      - name: Setup pnpm
+        uses: pnpm/action-setup@v4
+        with:
+          version: 11.24.0
+
+      - name: Cache pnpm store
+        uses: actions/cache@v4
+        with:
+          path: ~/.local/share/pnpm/store
+          key: pnpm-store-${{ runner.os }}-${{ hashFiles('pnpm-lock.yaml') }}
+          restore-keys: |
+            pnpm-store-${{ runner.os }}-
+
+      - name: Install dependencies
+        run: pnpm install --frozen-lockfile
+
+      - name: Write local .env (no real secrets — Razorpay/AI keys stay unset)
+        run: |
+          cat > .env <<'EOF'
+          NODE_ENV=development
+          PORT=4000
+          WEB_ORIGIN=http://localhost:5173
+          LOG_LEVEL=info
+          DATABASE_URL=postgresql://postgres:postgres@127.0.0.1:5432/postgres?sslmode=disable&pgbouncer=true&connection_limit=5
+          VITE_API_BASE_URL=http://localhost:4000/api/v1
+          EOF
+
+      - name: Typecheck
+        run: pnpm typecheck
+
+      - name: Lint
+        run: pnpm lint
+
+      - name: Start local dev database (PGlite, Postgres wire protocol)
+        run: |
+          nohup pnpm db:up > db-up.log 2>&1 &
+          for i in $(seq 1 30); do
+            grep -q "listening on" db-up.log && exit 0
+            sleep 1
+          done
+          echo "Database did not become ready in time" && cat db-up.log && exit 1
+
+      - name: Run migrations
+        run: pnpm db:migrate
+
+      - name: Seed demo data
+        run: pnpm db:seed
+
+      - name: Test
+        run: pnpm test
+
+      - name: Build
+        run: pnpm build
+
+      - name: AI evaluations (CONTRACT mode — no live provider key set)
+        run: |
+          pnpm eval:intent
+          pnpm eval:recommendation
