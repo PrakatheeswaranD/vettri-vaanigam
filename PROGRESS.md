@@ -2503,6 +2503,20 @@ rule to commit only when the user requests it — which this prompt does,
 explicitly and in detail — real local commits were created this session:
 one baseline commit capturing the complete PART 00–09 implementation as
 it stood before this productization sprint, followed by scoped commits
-for Trust Trace, Break the Agent, the navigation restructure, CI, and
-documentation. No push was performed (no remote is configured, and none
-was requested) and no force/destructive git operation was used.
+for Trust Trace, Break the Agent, the navigation restructure, dark mode,
+CI, and documentation. No push was performed (no remote is configured,
+and none was requested) and no force/destructive git operation was used.
+
+```
+abdbc26 docs: document Trust Trace, Break the Agent, dark mode, and productization sprint
+03a8449 ci: add typecheck, lint, test, build, and eval workflow
+fd85924 feat(ui): add real dark mode via CSS custom-property tokens
+2977d2b feat(ui): restructure navigation into Discover/Govern/Operate and wire new routes
+a442ad4 feat(demo): add adversarial Break the Agent sandbox
+6b76862 feat(ui): add Trust Trace governance visualization
+93fdc61 Initial commit: RazorGrowth AI — PART 00-09 complete implementation
+```
+
+`git status` is clean (no untracked/modified files) as of the last commit
+above. The project owner still needs to add a remote and push if a
+hosted repository is desired — neither was requested this session.
