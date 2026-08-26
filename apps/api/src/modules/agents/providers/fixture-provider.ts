@@ -1,0 +1,56 @@
+/**
+ * Deterministic fixture `AIProvider` for tests (PART 03 §10, §92, §102,
+ * §141; PART 04 §98-§104). Lets tests script exact extraction/ranking/
+ * proposal responses — including deliberately broken ones (hallucinated
+ * product IDs, malformed output, timeouts) — without any network
+ * dependency, so `pnpm test` never needs `AI_PROVIDER_API_KEY` to pass
+ * (PART 03 §141 build invariant).
+ */
+import type {
+  AIProvider,
+  ExtractIntentParams,
+  ProposeGrowthActionParams,
+  ProposeRecoveryActionParams,
+  RankCandidatesParams,
+  RawGrowthProposal,
+  RawIntentExtraction,
+  RawRankedItem,
+  RawRecoveryProposal,
+} from "../ai-provider.js";
+
+export interface FixtureProviderScript {
+  extractIntent?: (params: ExtractIntentParams) => Promise<RawIntentExtraction> | RawIntentExtraction;
+  rankCandidates?: (params: RankCandidatesParams) => Promise<RawRankedItem[]> | RawRankedItem[];
+  proposeGrowthAction?: (params: ProposeGrowthActionParams) => Promise<RawGrowthProposal> | RawGrowthProposal;
+  proposeRecoveryAction?: (params: ProposeRecoveryActionParams) => Promise<RawRecoveryProposal> | RawRecoveryProposal;
+}
+
+export function createFixtureProvider(script: FixtureProviderScript, mode: AIProvider["mode"] = "LIVE_ANTHROPIC"): AIProvider {
+  return {
+    mode,
+    async extractIntent(params) {
+      if (!script.extractIntent) {
+        throw new Error("Fixture provider: extractIntent was not scripted for this test.");
+      }
+      return script.extractIntent(params);
+    },
+    async rankCandidates(params) {
+      if (!script.rankCandidates) {
+        throw new Error("Fixture provider: rankCandidates was not scripted for this test.");
+      }
+      return script.rankCandidates(params);
+    },
+    async proposeGrowthAction(params) {
+      if (!script.proposeGrowthAction) {
+        throw new Error("Fixture provider: proposeGrowthAction was not scripted for this test.");
+      }
+      return script.proposeGrowthAction(params);
+    },
+    async proposeRecoveryAction(params) {
+      if (!script.proposeRecoveryAction) {
+        throw new Error("Fixture provider: proposeRecoveryAction was not scripted for this test.");
+      }
+      return script.proposeRecoveryAction(params);
+    },
+  };
+}

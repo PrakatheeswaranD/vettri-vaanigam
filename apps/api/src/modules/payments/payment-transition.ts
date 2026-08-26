@@ -1,0 +1,222 @@
+/**
+ * The single place a verified provider fact becomes an internal
+ * `Payment`/`Order`/`CheckoutSession` state change (PART 07 §20-§22,
+ * §52-§57). Called from three places — the webhook processor, the client-
+ * completion verification route, and manual reconciliation — so all three
+ * evidence sources go through the exact same deterministic transition
+ * logic, never three separately-maintained copies (PART 07 §41's evidence
+ * hierarchy is enforced structurally: whichever caller has the freshest
+ * verified fact calls this function, and illegal/stale transitions are
+ * rejected here regardless of which caller triggered them).
+ *
+ * No AI dependency, no frontend trust: every input here is either already
+ * persisted (`Payment`, `Order`) or came from a signature-verified /
+ * directly-fetched provider response (PART 07 §20).
+ */
+import type { Order, Payment, PaymentState, Prisma } from "@prisma/client";
+import { canTransitionPaymentState } from "@razorgrowth/domain";
+import { normalizeRazorpayFailure } from "./failure-mapper.js";
+import { applyPaymentTransition } from "./payment-repository.js";
+import { setOrderStatus } from "../commerce/order-repository.js";
+import { updateCheckoutStatus } from "../commerce/checkout-repository.js";
+import { appendLedgerEvent } from "../audit/ledger.js";
+import type { ProviderPaymentInfo } from "./gateway.js";
+
+export type PaymentEvidenceSource = "WEBHOOK" | "CLIENT_VERIFICATION" | "RECONCILE";
+
+export interface ResolvePaymentEventResult {
+  applied: boolean;
+  fromState: PaymentState;
+  toState: PaymentState;
+  /** `true` when the provider evidence's amount/currency/order linkage did
+   * not match what this checkout actually authorized (PART 07 §55-§57) —
+   * the transition was refused specifically because of that mismatch,
+   * never silently normalized. */
+  integrityError: boolean;
+  reason: string;
+}
+
+function mapProviderStatus(providerStatus: string): PaymentState | null {
+  switch (providerStatus) {
+    case "created":
+      return "CREATED";
+    case "authorized":
+      return "AUTHORIZED";
+    case "captured":
+      return "CAPTURED";
+    case "failed":
+      return "FAILED";
+    default:
+      // "refunded" and any other provider status PART 07 does not model
+      // (refunds are explicitly out of scope, §186) resolve to UNKNOWN
+      // rather than guessing.
+      return null;
+  }
+}
+
+/**
+ * Applies one piece of verified provider evidence to a `Payment` row,
+ * inside an already-open transaction, and cascades to `Order`/
+ * `CheckoutSession` only on the transitions that legitimately require it
+ * (§52-§53). Every branch appends its own ledger event on the checkout's
+ * `workflowId` so the full proposal → ... → payment story stays one
+ * continuous, hash-verifiable timeline (PART 07 §77-§78).
+ */
+export async function resolvePaymentEvent(
+  tx: Prisma.TransactionClient,
+  params: {
+    workflowId: string;
+    merchantId: string;
+    payment: Payment;
+    order: Order;
+    checkoutId: string;
+    providerInfo: ProviderPaymentInfo;
+    source: PaymentEvidenceSource;
+    now: Date;
+  },
+): Promise<ResolvePaymentEventResult> {
+  const { payment, order, providerInfo, now } = params;
+
+  // PART 07 §55-§57 — financial integrity checks BEFORE any state
+  // mutation. A mismatch here means the provider's evidence does not
+  // describe the payment we actually authorized; the safe response is to
+  // refuse the transition, not to silently trust the provider's number.
+  if (providerInfo.amountMinor !== payment.amountMinor || providerInfo.currency.toUpperCase() !== payment.currency) {
+    await applyPaymentTransition(tx, payment.id, { state: "UNKNOWN" });
+    await appendLedgerEvent(tx, {
+      workflowId: params.workflowId,
+      merchantId: params.merchantId,
+      actorType: "PAYMENT_SYSTEM",
+      actionType: "PAYMENT_FINANCIAL_INTEGRITY_ERROR",
+      status: "FAILED",
+      conciseReason: `Provider-reported amount/currency (${providerInfo.amountMinor} ${providerInfo.currency}) does not match the authorized payment (${payment.amountMinor} ${payment.currency}).`,
+      relatedEntityType: "Payment",
+      relatedEntityId: payment.id,
+      executedAt: now,
+    });
+    return { applied: false, fromState: payment.state, toState: "UNKNOWN", integrityError: true, reason: "AMOUNT_OR_CURRENCY_MISMATCH" };
+  }
+  if (payment.providerOrderId && providerInfo.providerOrderId && providerInfo.providerOrderId !== payment.providerOrderId) {
+    await appendLedgerEvent(tx, {
+      workflowId: params.workflowId,
+      merchantId: params.merchantId,
+      actorType: "PAYMENT_SYSTEM",
+      actionType: "PAYMENT_FINANCIAL_INTEGRITY_ERROR",
+      status: "FAILED",
+      conciseReason: `Provider payment references an unexpected provider order (${providerInfo.providerOrderId}); refusing to link it to this payment.`,
+      relatedEntityType: "Payment",
+      relatedEntityId: payment.id,
+      executedAt: now,
+    });
+    return { applied: false, fromState: payment.state, toState: payment.state, integrityError: true, reason: "PROVIDER_ORDER_MISMATCH" };
+  }
+
+  const candidate = mapProviderStatus(providerInfo.providerStatus);
+  if (!candidate) {
+    return { applied: false, fromState: payment.state, toState: payment.state, integrityError: false, reason: `UNMODELED_PROVIDER_STATUS:${providerInfo.providerStatus}` };
+  }
+
+  // PART 07 §21-§24 — the domain state machine is the single authority on
+  // transition legality; a stale/out-of-order event that would regress a
+  // terminal state is rejected here, not specially detected per caller.
+  if (!canTransitionPaymentState(payment.state, candidate)) {
+    await appendLedgerEvent(tx, {
+      workflowId: params.workflowId,
+      merchantId: params.merchantId,
+      actorType: "PAYMENT_SYSTEM",
+      actionType: "PAYMENT_STATE_TRANSITION_REJECTED",
+      status: "REJECTED",
+      conciseReason: `Rejected illegal/stale transition ${payment.state} -> ${candidate} (source: ${params.source}).`,
+      relatedEntityType: "Payment",
+      relatedEntityId: payment.id,
+      metadata: { fromState: payment.state, attemptedState: candidate, source: params.source },
+      executedAt: now,
+    });
+    return { applied: false, fromState: payment.state, toState: payment.state, integrityError: false, reason: "ILLEGAL_OR_STALE_TRANSITION" };
+  }
+
+  if (candidate === payment.state) {
+    // Same-state event (idempotent no-op per the domain state machine) —
+    // nothing new to apply or record; the provider re-confirmed what we
+    // already know.
+    return { applied: true, fromState: payment.state, toState: candidate, integrityError: false, reason: "ALREADY_IN_STATE" };
+  }
+
+  if (candidate === "AUTHORIZED") {
+    await applyPaymentTransition(tx, payment.id, { state: "AUTHORIZED", providerPaymentId: providerInfo.providerPaymentId, authorizedAt: now });
+    await appendLedgerEvent(tx, {
+      workflowId: params.workflowId,
+      merchantId: params.merchantId,
+      actorType: "PAYMENT_SYSTEM",
+      actionType: "PAYMENT_AUTHORIZED",
+      status: "EXECUTED",
+      conciseReason: `Payment authorized (source: ${params.source}).`,
+      relatedEntityType: "Payment",
+      relatedEntityId: payment.id,
+      executedAt: now,
+    });
+    return { applied: true, fromState: payment.state, toState: "AUTHORIZED", integrityError: false, reason: "OK" };
+  }
+
+  if (candidate === "CAPTURED") {
+    await applyPaymentTransition(tx, payment.id, {
+      state: "CAPTURED",
+      providerPaymentId: providerInfo.providerPaymentId,
+      capturedAt: providerInfo.capturedAt ?? now,
+      providerMetadata: { method: providerInfo.method } as Prisma.InputJsonValue,
+    });
+    await setOrderStatus(tx, order.id, "PAID");
+    await updateCheckoutStatus(tx, params.checkoutId, "COMPLETED");
+    // PART 07 §98-§103 — this is the first point an order's value may
+    // legitimately become OBSERVED (paid) revenue; attribution fields are
+    // read straight off the already-persisted Order, never recomputed.
+    await appendLedgerEvent(tx, {
+      workflowId: params.workflowId,
+      merchantId: params.merchantId,
+      actorType: "PAYMENT_SYSTEM",
+      actionType: "PAYMENT_CAPTURED",
+      status: "EXECUTED",
+      conciseReason: `Payment captured: ${payment.amountMinor} ${payment.currency} minor units (source: ${params.source}).`,
+      relatedEntityType: "Payment",
+      relatedEntityId: payment.id,
+      metadata: {
+        orderId: order.id,
+        amountMinor: payment.amountMinor,
+        currency: payment.currency,
+        source: order.source,
+        growthProposalId: order.growthProposalId,
+        authorizationId: order.authorizationId,
+      },
+      executedAt: now,
+    });
+    return { applied: true, fromState: payment.state, toState: "CAPTURED", integrityError: false, reason: "OK" };
+  }
+
+  if (candidate === "FAILED") {
+    const failureCategory = normalizeRazorpayFailure(providerInfo.errorCode, providerInfo.errorDescription);
+    await applyPaymentTransition(tx, payment.id, {
+      state: "FAILED",
+      providerPaymentId: providerInfo.providerPaymentId,
+      failureCode: providerInfo.errorCode,
+      failureCategory,
+      failedAt: now,
+    });
+    await setOrderStatus(tx, order.id, "FAILED");
+    await updateCheckoutStatus(tx, params.checkoutId, "FAILED");
+    await appendLedgerEvent(tx, {
+      workflowId: params.workflowId,
+      merchantId: params.merchantId,
+      actorType: "PAYMENT_SYSTEM",
+      actionType: "PAYMENT_FAILED",
+      status: "FAILED",
+      conciseReason: `Payment failed: ${failureCategory} (source: ${params.source}).`,
+      relatedEntityType: "Payment",
+      relatedEntityId: payment.id,
+      metadata: { failureCode: providerInfo.errorCode, failureCategory, recoveryStatus: "NOT_EVALUATED" },
+      executedAt: now,
+    });
+    return { applied: true, fromState: payment.state, toState: "FAILED", integrityError: false, reason: "OK" };
+  }
+
+  return { applied: false, fromState: payment.state, toState: payment.state, integrityError: false, reason: "UNHANDLED_CANDIDATE_STATE" };
+}

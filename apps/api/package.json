@@ -1,0 +1,44 @@
+{
+  "name": "@razorgrowth/api",
+  "version": "0.1.0",
+  "private": true,
+  "type": "module",
+  "description": "RazorGrowth AI backend — Fastify API, domain services, Prisma/PostgreSQL.",
+  "scripts": {
+    "dev": "tsx watch src/server.ts",
+    "build": "tsc -p tsconfig.json",
+    "start": "node dist/server.js",
+    "typecheck": "tsc --noEmit",
+    "lint": "eslint --config ../../eslint.config.js src scripts",
+    "test": "vitest run",
+    "db:generate": "prisma generate --schema prisma/schema.prisma",
+    "db:migrate": "dotenv -e ../../.env -- prisma migrate deploy --schema prisma/schema.prisma",
+    "db:migrate:deploy": "dotenv -e ../../.env -- prisma migrate deploy --schema prisma/schema.prisma",
+    "db:seed": "node --env-file=../../.env --import tsx prisma/seed.ts",
+    "db:reset": "dotenv -e ../../.env -- prisma migrate reset --schema prisma/schema.prisma --force --skip-generate",
+    "eval:intent": "node --env-file=../../.env --import tsx scripts/eval-intent.ts",
+    "eval:recommendation": "node --env-file=../../.env --import tsx scripts/eval-recommendation.ts"
+  },
+  "prisma": {
+    "seed": "node --env-file=../../.env --import tsx prisma/seed.ts"
+  },
+  "dependencies": {
+    "@fastify/cors": "^10.0.1",
+    "@prisma/client": "^6.1.0",
+    "@razorgrowth/contracts": "workspace:*",
+    "@razorgrowth/domain": "workspace:*",
+    "dotenv": "^16.4.7",
+    "fastify": "^5.2.0",
+    "pino": "^9.5.0",
+    "zod": "^3.24.1"
+  },
+  "devDependencies": {
+    "@types/node": "^22.10.2",
+    "dotenv-cli": "^8.0.0",
+    "pino-pretty": "^13.0.0",
+    "prisma": "^6.1.0",
+    "tsx": "^4.19.2",
+    "typescript": "^5.7.3",
+    "vitest": "^2.1.8"
+  }
+}

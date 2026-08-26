@@ -1,0 +1,244 @@
+/**
+ * Deterministic Policy Engine orchestration (PART 05 §6-§22, §46-§47).
+ *
+ * This module's job is entirely data assembly and persistence around the
+ * pure `evaluatePolicy` function in `@razorgrowth/domain` — it revalidates
+ * authoritative commerce facts (never trusting anything the original AI
+ * proposal claimed), builds the evaluation context, persists the decision,
+ * transitions the proposal's governance status, and appends the ledger
+ * event, all inside one transaction (§67). No AI provider is imported
+ * here, directly or transitively (§100).
+ */
+import { randomUUID } from "node:crypto";
+import type { GrowthActionProposal, Prisma, PrismaClient } from "@prisma/client";
+import type { PolicyDecisionDTO } from "@razorgrowth/contracts";
+import {
+  evaluatePolicy,
+  isValidProposalTransition,
+  systemClock,
+  type GrowthProposalStatus,
+  type PolicyEvaluationInput,
+} from "@razorgrowth/domain";
+import { AppError } from "../../http/errors.js";
+import { logger } from "../../observability/logger.js";
+import { getAgentCatalogProduct } from "../agent-commerce/service.js";
+import { getGrowthConfig } from "../merchant-agent/repository.js";
+import { allowedActionTypes } from "../merchant-agent/service.js";
+import { appendLedgerEvent, withLedgerConcurrencyRetry } from "../audit/ledger.js";
+import { computeProposalFingerprint, PROPOSAL_FINGERPRINT_VERSION } from "./fingerprint.js";
+import { toPolicyDecisionDTO } from "./mapper.js";
+import {
+  countPriorRecoveryAttempts,
+  createPolicyEvaluation,
+  findPolicyEvaluationById,
+  findProposalForGovernance,
+  getMerchantPolicy,
+  updateProposalGovernanceState,
+} from "./repository.js";
+
+/** Statuses from which a (re-)evaluation is meaningful. `AUTHORIZED` is
+ * excluded deliberately — once execution authorization has been issued,
+ * re-deciding policy on the same proposal is out of scope for PART 05
+ * (a changed policy after authorization is a PART 06/07 revocation
+ * concern, not a re-evaluation one). */
+const EVALUABLE_STATUSES: readonly GrowthProposalStatus[] = ["PROPOSED", "ALLOWED", "PENDING_APPROVAL", "APPROVED"];
+
+interface CommerceFacts {
+  eligible: boolean;
+  available: boolean;
+  currency: string | null;
+}
+
+export async function revalidateCommerceFacts(prisma: PrismaClient, merchantId: string, productId: string): Promise<CommerceFacts> {
+  try {
+    const product = await getAgentCatalogProduct(prisma, merchantId, productId);
+    return {
+      eligible: true,
+      available: product.commerce.purchasableVariantCount > 0,
+      currency: product.commerce.currency,
+    };
+  } catch {
+    // Not found / no longer ACTIVE / no longer agent-visible — never a
+    // reason to throw here, just a fact the Policy Engine must see.
+    return { eligible: false, available: false, currency: null };
+  }
+}
+
+export function proposalOpportunity(proposal: GrowthActionProposal): { potentialBasketMinor?: number; currency?: string } | null {
+  return (proposal.opportunity as { potentialBasketMinor?: number; currency?: string } | null) ?? null;
+}
+
+function proposalOfferCalculation(proposal: GrowthActionProposal): { baseAmountMinor?: number; discountMinor?: number } | null {
+  return (proposal.offerCalculation as { baseAmountMinor?: number; discountMinor?: number } | null) ?? null;
+}
+
+export function deriveDiscountBps(proposal: GrowthActionProposal): { discountBps: number | null; discountMinor: number | null } {
+  if (!proposal.offerKind) return { discountBps: null, discountMinor: null };
+  const calc = proposalOfferCalculation(proposal);
+  const discountMinor = calc?.discountMinor ?? null;
+  if (proposal.offerKind === "PERCENTAGE") {
+    return { discountBps: proposal.offerPercentageBps, discountMinor };
+  }
+  // FIXED_AMOUNT — convert to an implied bps-of-base figure, the same
+  // convention `validateGrowthProposal` (PART 04) already uses, so a fixed
+  // discount cannot be used to sidestep the same percentage-shaped ceiling.
+  const base = calc?.baseAmountMinor ?? 0;
+  const impliedBps = base > 0 && discountMinor !== null ? Math.floor((discountMinor * 10_000) / base) : 0;
+  return { discountBps: impliedBps, discountMinor };
+}
+
+export function deriveProposalCurrency(proposal: GrowthActionProposal, policyCurrency: string): string {
+  return proposal.offerCurrency ?? proposalOpportunity(proposal)?.currency ?? policyCurrency;
+}
+
+export function fingerprintFromProposal(proposal: GrowthActionProposal) {
+  return computeProposalFingerprint({
+    proposalId: proposal.id,
+    merchantId: proposal.merchantId,
+    actionType: proposal.actionType,
+    primaryProductId: proposal.primaryProductId,
+    relatedProductIds: proposal.relatedProductIds as string[],
+    offerKind: proposal.offerKind,
+    offerPercentageBps: proposal.offerPercentageBps,
+    offerAmountMinor: proposal.offerAmountMinor,
+    currency: proposal.offerCurrency,
+  });
+}
+
+function nextStatusForOutcome(outcome: "ALLOW" | "DENY" | "REQUIRE_APPROVAL"): GrowthProposalStatus {
+  if (outcome === "ALLOW") return "ALLOWED";
+  if (outcome === "DENY") return "POLICY_DENIED";
+  return "PENDING_APPROVAL";
+}
+
+/**
+ * Evaluates (or re-evaluates) policy for one proposal and persists the
+ * result. This is the ONLY function that produces a `PolicyEvaluation`
+ * row — callers (the `/policy/evaluate` route, and the authorization
+ * service's stale-policy re-evaluation path) both go through this, never
+ * duplicate the assembly logic.
+ */
+export async function evaluateProposalPolicy(prisma: PrismaClient, merchantId: string, proposalId: string): Promise<PolicyDecisionDTO> {
+  const proposal = await findProposalForGovernance(prisma, merchantId, proposalId);
+  if (!proposal) throw AppError.notFound(`Growth action proposal not found: ${proposalId}`);
+
+  if (!EVALUABLE_STATUSES.includes(proposal.status)) {
+    throw new AppError(
+      "INVALID_STATE_TRANSITION",
+      `Proposal is in terminal status "${proposal.status}" and cannot be (re-)evaluated by policy.`,
+    );
+  }
+  if (!proposal.actionType) {
+    throw AppError.conflict("Proposal has no action type (failed validation) and cannot be policy-evaluated.");
+  }
+
+  const [policy, growthConfig, commerceFacts] = await Promise.all([
+    getMerchantPolicy(prisma, merchantId),
+    getGrowthConfig(prisma, merchantId),
+    revalidateCommerceFacts(prisma, merchantId, proposal.primaryProductId),
+  ]);
+
+  const actionTypeEnabled = allowedActionTypes(growthConfig).includes(proposal.actionType);
+  const { discountBps, discountMinor } = deriveDiscountBps(proposal);
+  const orderAmountMinor = proposalOpportunity(proposal)?.potentialBasketMinor ?? null;
+  const recoveryAttemptCount =
+    proposal.actionType === "RECOVERY"
+      ? await countPriorRecoveryAttempts(prisma, merchantId, { recommendationId: proposal.recommendationId, sourceOrderId: proposal.sourceOrderId }, proposal.id)
+      : 0;
+
+  const input: PolicyEvaluationInput = {
+    now: systemClock.now(),
+    policy: {
+      policyVersion: policy.policyVersion,
+      currency: policy.currency,
+      maxDiscountBps: policy.maxDiscountBps,
+      autoApprovalDiscountBps: policy.autoApprovalDiscountBps,
+      maxOrderAmountMinor: policy.maxOrderAmountMinor,
+      autoApprovalOrderAmountMinor: policy.autoApprovalOrderAmountMinor,
+      maxRecoveryAttempts: policy.maxRecoveryAttempts,
+      proposalValidityMinutes: policy.proposalValidityMinutes,
+    },
+    proposal: {
+      createdAt: proposal.createdAt,
+      currency: deriveProposalCurrency(proposal, policy.currency),
+      actionType: proposal.actionType,
+      actionTypeEnabled,
+      discountBps,
+      discountMinor,
+      orderAmountMinor,
+      productEligible: commerceFacts.eligible,
+      productAvailable: commerceFacts.available,
+      recoveryAttemptCount,
+    },
+  };
+
+  const result = evaluatePolicy(input);
+  const fingerprint = fingerprintFromProposal(proposal);
+  const nextStatus = nextStatusForOutcome(result.outcome);
+
+  if (!isValidProposalTransition(proposal.status, nextStatus)) {
+    throw new AppError("INVALID_STATE_TRANSITION", `Cannot transition proposal from "${proposal.status}" to "${nextStatus}".`);
+  }
+
+  const decisionRow = await withLedgerConcurrencyRetry(prisma, async (tx) => {
+    const row = await createPolicyEvaluation(tx, {
+      id: randomUUID(),
+      proposalId: proposal.id,
+      merchantId,
+      workflowId: proposal.traceId,
+      outcome: result.outcome,
+      reasonCodes: result.reasonCodes,
+      explanation: result.explanation,
+      evaluatedPolicyVersion: policy.policyVersion,
+      evaluatedValues: result.evaluatedValues as unknown as Prisma.InputJsonValue,
+      proposalFingerprint: fingerprint,
+      fingerprintVersion: PROPOSAL_FINGERPRINT_VERSION,
+    });
+
+    await updateProposalGovernanceState(tx, proposal.id, {
+      status: nextStatus,
+      latestPolicyDecisionId: row.id,
+    });
+
+    await appendLedgerEvent(tx, {
+      workflowId: proposal.traceId,
+      merchantId,
+      actorType: "POLICY_ENGINE",
+      actionType: result.outcome === "ALLOW" ? "POLICY_ALLOWED" : result.outcome === "DENY" ? "POLICY_DENIED" : "POLICY_EVALUATED",
+      conciseReason: result.explanation,
+      policyDecision: result.outcome,
+      relatedEntityType: "PolicyEvaluation",
+      relatedEntityId: row.id,
+      metadata: { proposalId: proposal.id, reasonCodes: result.reasonCodes, evaluatedPolicyVersion: policy.policyVersion },
+    });
+
+    if (result.outcome === "REQUIRE_APPROVAL") {
+      await appendLedgerEvent(tx, {
+        workflowId: proposal.traceId,
+        merchantId,
+        actorType: "SYSTEM",
+        actionType: "APPROVAL_REQUESTED",
+        status: "PENDING_APPROVAL",
+        conciseReason: "Awaiting merchant approval before execution can be authorized.",
+        relatedEntityType: "GrowthActionProposal",
+        relatedEntityId: proposal.id,
+        metadata: { proposalId: proposal.id, reasonCodes: result.reasonCodes },
+      });
+    }
+
+    return row;
+  });
+
+  logger.info(
+    { event: "policy.evaluated", merchantId, proposalId: proposal.id, outcome: result.outcome, reasonCodes: result.reasonCodes },
+    "Policy evaluated",
+  );
+
+  return toPolicyDecisionDTO(decisionRow);
+}
+
+export async function getPolicyDecision(prisma: PrismaClient, merchantId: string, id: string) {
+  const row = await findPolicyEvaluationById(prisma, merchantId, id);
+  if (!row) throw AppError.notFound(`Policy decision not found: ${id}`);
+  return toPolicyDecisionDTO(row);
+}

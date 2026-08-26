@@ -1,0 +1,35 @@
+# dependencies
+node_modules/
+.pnpm-store/
+
+# env
+.env
+.env.local
+.env.*.local
+
+# build output
+dist/
+build/
+.turbo/
+*.tsbuildinfo
+
+# local dev database (PGlite data directory — see scripts/db-server.mjs)
+.dbdata/
+
+# logs
+*.log
+npm-debug.log*
+pnpm-debug.log*
+
+# editor / OS junk
+.vscode/*
+!.vscode/extensions.json
+.idea/
+.DS_Store
+Thumbs.db
+
+# test / coverage
+coverage/
+
+# Prisma
+apps/api/prisma/dev.db

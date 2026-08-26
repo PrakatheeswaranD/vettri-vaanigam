@@ -1,0 +1,217 @@
+import { useState } from "react";
+import { Link } from "react-router-dom";
+import { Package, Search, SlidersHorizontal } from "lucide-react";
+import { useCatalog, useCatalogCategories } from "../hooks/use-api";
+import { Card, CardBody } from "../components/ui/Card";
+import { EmptyState, ErrorState, Skeleton } from "../components/ui/States";
+import { ProductReadinessBadge } from "../components/readiness/ProductReadinessBadge";
+import { formatMoney } from "../lib/format";
+import { ApiError } from "../lib/api-client";
+
+const AVAILABILITY_OPTIONS = [
+  { value: "", label: "Any availability" },
+  { value: "IN_STOCK", label: "In stock" },
+  { value: "LOW_STOCK", label: "Low stock" },
+  { value: "OUT_OF_STOCK", label: "Out of stock" },
+  { value: "UNAVAILABLE", label: "Unavailable" },
+  { value: "UNKNOWN", label: "Unknown inventory" },
+];
+
+export default function CatalogPage() {
+  const [search, setSearch] = useState("");
+  const [category, setCategory] = useState<string>("");
+  const [availability, setAvailability] = useState<string>("");
+  const [minPrice, setMinPrice] = useState<string>("");
+  const [maxPrice, setMaxPrice] = useState<string>("");
+  const [showFilters, setShowFilters] = useState(false);
+  const [page, setPage] = useState(1);
+
+  const { data: categories } = useCatalogCategories();
+  const { data, isLoading, isError, error, refetch } = useCatalog({
+    page,
+    limit: 12,
+    search: search || undefined,
+    category: category || undefined,
+    availability: availability || undefined,
+    minPriceMinor: minPrice ? Math.round(Number(minPrice) * 100) : undefined,
+    maxPriceMinor: maxPrice ? Math.round(Number(maxPrice) * 100) : undefined,
+  });
+
+  const priceRangeInvalid = minPrice !== "" && maxPrice !== "" && Number(minPrice) > Number(maxPrice);
+
+  return (
+    <div className="space-y-6">
+      <div className="flex flex-col gap-4 sm:flex-row sm:items-center sm:justify-between">
+        <div>
+          <h1 className="text-lg font-semibold text-ink">Catalog</h1>
+          <p className="mt-1 text-sm text-ink-muted">Agent-readable product catalog for Meridian Athletics.</p>
+        </div>
+        <div className="flex flex-col gap-2 sm:flex-row">
+          <div className="relative">
+            <Search size={14} className="pointer-events-none absolute left-3 top-1/2 -translate-y-1/2 text-ink-faint" />
+            <input
+              value={search}
+              onChange={(e) => {
+                setSearch(e.target.value);
+                setPage(1);
+              }}
+              placeholder="Search products…"
+              className="w-full rounded-md border border-border bg-surface py-2 pl-8 pr-3 text-sm text-ink placeholder:text-ink-faint focus:border-brand-500 sm:w-56"
+            />
+          </div>
+          <select
+            value={category}
+            onChange={(e) => {
+              setCategory(e.target.value);
+              setPage(1);
+            }}
+            className="rounded-md border border-border bg-surface px-3 py-2 text-sm text-ink focus:border-brand-500"
+          >
+            <option value="">All categories</option>
+            {categories?.items.map((c) => (
+              <option key={c} value={c}>
+                {c}
+              </option>
+            ))}
+          </select>
+          <button
+            type="button"
+            onClick={() => setShowFilters((v) => !v)}
+            className="inline-flex items-center gap-1.5 rounded-md border border-border bg-surface px-3 py-2 text-sm text-ink hover:bg-surface-subtle"
+            aria-expanded={showFilters}
+          >
+            <SlidersHorizontal size={14} />
+            Filters
+          </button>
+        </div>
+      </div>
+
+      {showFilters ? (
+        <Card>
+          <CardBody className="flex flex-wrap items-end gap-4">
+            <label className="flex flex-col gap-1 text-xs text-ink-muted">
+              Min price (₹)
+              <input
+                type="number"
+                min={0}
+                value={minPrice}
+                onChange={(e) => {
+                  setMinPrice(e.target.value);
+                  setPage(1);
+                }}
+                className="w-28 rounded-md border border-border bg-surface px-2 py-1.5 text-sm text-ink focus:border-brand-500"
+              />
+            </label>
+            <label className="flex flex-col gap-1 text-xs text-ink-muted">
+              Max price (₹)
+              <input
+                type="number"
+                min={0}
+                value={maxPrice}
+                onChange={(e) => {
+                  setMaxPrice(e.target.value);
+                  setPage(1);
+                }}
+                className="w-28 rounded-md border border-border bg-surface px-2 py-1.5 text-sm text-ink focus:border-brand-500"
+              />
+            </label>
+            <label className="flex flex-col gap-1 text-xs text-ink-muted">
+              Availability
+              <select
+                value={availability}
+                onChange={(e) => {
+                  setAvailability(e.target.value);
+                  setPage(1);
+                }}
+                className="rounded-md border border-border bg-surface px-2 py-1.5 text-sm text-ink focus:border-brand-500"
+              >
+                {AVAILABILITY_OPTIONS.map((opt) => (
+                  <option key={opt.value} value={opt.value}>
+                    {opt.label}
+                  </option>
+                ))}
+              </select>
+            </label>
+            {priceRangeInvalid ? (
+              <p className="text-xs text-danger-text">Minimum price cannot exceed maximum price.</p>
+            ) : null}
+          </CardBody>
+        </Card>
+      ) : null}
+
+      {isLoading ? (
+        <div className="grid gap-4 sm:grid-cols-2 lg:grid-cols-3 xl:grid-cols-4">
+          {Array.from({ length: 8 }).map((_, i) => (
+            <Skeleton key={i} className="h-44 w-full" />
+          ))}
+        </div>
+      ) : isError ? (
+        <Card>
+          <ErrorState
+            message={error instanceof ApiError ? error.message : "Could not load the catalog."}
+            onRetry={() => refetch()}
+          />
+        </Card>
+      ) : !data || data.items.length === 0 ? (
+        <Card>
+          <EmptyState icon={<Package size={18} />} title="No products found" description="Try a different search term or filters." />
+        </Card>
+      ) : (
+        <>
+          <div className="grid gap-4 sm:grid-cols-2 lg:grid-cols-3 xl:grid-cols-4">
+            {data.items.map((product) => (
+              <Link key={product.id} to={`/catalog/${product.id}`}>
+                <Card className="h-full transition-shadow hover:shadow-popover">
+                  <CardBody className="flex h-full flex-col gap-2">
+                    <div className="flex items-start justify-between gap-2">
+                      <span className="text-xs font-medium text-brand-600">{product.category}</span>
+                      <ProductReadinessBadge state={product.readiness} />
+                    </div>
+                    <span className="text-sm font-semibold text-ink">{product.name}</span>
+                    <span className="text-xs text-ink-faint">{product.brand}</span>
+                    <div className="mt-auto flex items-center justify-between pt-2 text-sm">
+                      <span className="font-medium text-ink">
+                        {product.minPrice ? formatMoney(product.minPrice) : "—"}
+                      </span>
+                      <span
+                        className={
+                          product.totalAvailable > 0 ? "text-xs text-success-text" : "text-xs text-danger-text"
+                        }
+                      >
+                        {product.totalAvailable > 0 ? `${product.totalAvailable} in stock` : "Out of stock"}
+                      </span>
+                    </div>
+                  </CardBody>
+                </Card>
+              </Link>
+            ))}
+          </div>
+
+          <div className="flex items-center justify-between text-sm text-ink-muted">
+            <span>
+              Page {data.pagination.page} of {data.pagination.totalPages} · {data.pagination.total} products
+            </span>
+            <div className="flex gap-2">
+              <button
+                type="button"
+                disabled={page <= 1}
+                onClick={() => setPage((p) => Math.max(1, p - 1))}
+                className="rounded-md border border-border px-3 py-1.5 disabled:opacity-40"
+              >
+                Previous
+              </button>
+              <button
+                type="button"
+                disabled={page >= data.pagination.totalPages}
+                onClick={() => setPage((p) => p + 1)}
+                className="rounded-md border border-border px-3 py-1.5 disabled:opacity-40"
+              >
+                Next
+              </button>
+            </div>
+          </div>
+        </>
+      )}
+    </div>
+  );
+}

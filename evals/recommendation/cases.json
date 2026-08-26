@@ -1,0 +1,65 @@
+{
+  "datasetVersion": "1.0",
+  "cases": [
+    {
+      "id": "clear-best-match",
+      "description": "Single exact match — cheapest black UK9 running shoe under a generous budget should resolve deterministically with no AI call.",
+      "category": "Running Shoes",
+      "maxPriceMinor": 460000,
+      "requiredAttributes": { "size": "UK9" },
+      "expectedMode": "DETERMINISTIC_SINGLE_MATCH"
+    },
+    {
+      "id": "several-equivalent-matches",
+      "description": "Multiple UK9 running shoes with no further constraint — several equally-eligible candidates.",
+      "category": "Running Shoes",
+      "requiredAttributes": { "size": "UK9" },
+      "expectMultipleExact": true
+    },
+    {
+      "id": "preference-based-ranking",
+      "description": "Multiple eligible candidates with a stated preference — ranking should favor the preferred attribute where present.",
+      "category": "Running Shoes",
+      "requiredAttributes": { "size": "UK9" },
+      "preferredAttributes": { "weight": "lightweight" }
+    },
+    {
+      "id": "no-exact-match",
+      "description": "Impossible size in an otherwise real category.",
+      "category": "Running Shoes",
+      "requiredAttributes": { "size": "UK47" },
+      "expectedMode": "NO_MATCH"
+    },
+    {
+      "id": "near-match-budget",
+      "description": "Black UK9 running shoe under a budget nothing in-category satisfies exactly, but a real near match exists.",
+      "category": "Running Shoes",
+      "requiredAttributes": { "size": "UK9", "color": "Black" },
+      "maxPriceMinor": 500000,
+      "expectedMode": "NEAR_MATCH"
+    },
+    {
+      "id": "over-budget-product",
+      "description": "Same as near-match-budget — verifies the disclosed violation is a BUDGET_MAX, not silently hidden.",
+      "category": "Running Shoes",
+      "requiredAttributes": { "size": "UK9", "color": "Black" },
+      "maxPriceMinor": 500000,
+      "expectNearMatchViolationType": "BUDGET_MAX"
+    },
+    {
+      "id": "excluded-attribute",
+      "description": "Excluding a color must never be relaxed, even when it would be the only near match.",
+      "category": "Running Shoes",
+      "requiredAttributes": { "size": "UK9" },
+      "excludedAttributes": { "color": ["Grey"] },
+      "expectExcludedColorAbsent": "Grey"
+    },
+    {
+      "id": "unavailable-product-not-recommended",
+      "description": "Availability requirement defaults to purchasable-only — an out-of-stock/unknown-inventory variant must not be recommended as confidently available.",
+      "category": "Running Shoes",
+      "requiredAttributes": { "size": "UK9" },
+      "expectAllRecommendationsPurchasable": true
+    }
+  ]
+}

@@ -1,0 +1,1046 @@
+// RazorGrowth AI — relational schema (PART 00 §37; PART 01 §9).
+//
+// Financial amounts are always stored as integer minor units (`*Minor`
+// Int columns) paired with a `Currency` enum column — never as floats,
+// never as a formatted string (PART 00 §16). Historical order/payment
+// rows snapshot the price and display text that were true at the time,
+// rather than depending on current catalog data to reconstruct past
+// financial truth (PART 00 §37; PART 01 §14).
+
+generator client {
+  provider = "prisma-client-js"
+}
+
+datasource db {
+  provider = "postgresql"
+  url      = env("DATABASE_URL")
+}
+
+enum Currency {
+  INR
+  USD
+}
+
+enum MerchantStatus {
+  ACTIVE
+  SUSPENDED
+}
+
+enum ProductStatus {
+  ACTIVE
+  DRAFT
+  ARCHIVED
+}
+
+/// PART 06 §13 — `CHECKED_OUT` (PART 01 placeholder, never referenced by
+/// any code) renamed to `CONVERTED` and `CHECKOUT_PENDING`/`EXPIRED` added
+/// to match the real deterministic lifecycle `@razorgrowth/domain`
+/// `CART_TRANSITIONS` now enforces.
+enum CartStatus {
+  ACTIVE
+  CHECKOUT_PENDING
+  CONVERTED
+  EXPIRED
+  ABANDONED
+}
+
+/// PART 06 §34 — `PAYMENT_PENDING` added for PART 07 forward-compatibility
+/// only; nothing in PART 06 ever sets it. `PENDING` (PART 01) doubles as
+/// PART 06's "order created, no payment attempted" state.
+enum OrderStatus {
+  PENDING
+  PAYMENT_PENDING
+  PAID
+  FAILED
+  CANCELLED
+}
+
+/// PART 06 §39-§40 — RazorGrowth's own internal commerce checkout state,
+/// explicitly NOT Razorpay Checkout. PART 06 only ever exercises
+/// `CREATED -> READY_FOR_PAYMENT` (plus `CANCELLED`/`EXPIRED`);
+/// `PAYMENT_IN_PROGRESS`/`COMPLETED`/`FAILED` exist for PART 07.
+enum CheckoutSessionStatus {
+  CREATED
+  READY_FOR_PAYMENT
+  PAYMENT_IN_PROGRESS
+  COMPLETED
+  FAILED
+  EXPIRED
+  CANCELLED
+}
+
+/// PART 00 §12 — deterministic payment state machine states. Transition
+/// legality is enforced in application code (`@razorgrowth/domain`
+/// `transitionPaymentState`), never by ad-hoc writes.
+enum PaymentState {
+  CREATED
+  AUTHORIZED
+  CAPTURED
+  FAILED
+  CANCELLED
+  UNKNOWN
+}
+
+/// PART 01 §77 — `DEMO` marks seeded/synthetic payment history so it can
+/// never be mistaken for a real Razorpay Test Mode transaction.
+/// PART 07 §10, §18 adds the real `MOCK` provider (the deterministic test
+/// double used by the automated test suite — distinct from `DEMO` seed
+/// data and from a real `RAZORPAY` Test Mode transaction, so all three can
+/// never be confused with one another).
+enum PaymentProvider {
+  DEMO
+  RAZORPAY
+  MOCK
+}
+
+/// PART 07 §25, §148 — lifecycle of one persisted `PaymentProviderEvent`
+/// (a webhook delivery), independent of the `PaymentState` it may cause a
+/// `Payment` to transition to.
+enum PaymentEventProcessingStatus {
+  RECEIVED
+  PROCESSED
+  DUPLICATE
+  FAILED_PROCESSING
+  UNRESOLVED
+  REJECTED_SIGNATURE
+}
+
+/// PART 05 §53 adds `MERCHANT_USER` — the human approver. `POLICY_ENGINE`
+/// is deterministic application code, never an AI actor; only
+/// `BUYER_AGENT`/`MERCHANT_AGENT` are real AI agents (PART 00 §6).
+enum AgentActorType {
+  BUYER_AGENT
+  MERCHANT_AGENT
+  POLICY_ENGINE
+  MERCHANT_USER
+  CUSTOMER
+  SYSTEM
+  /// PART 06 §85 — the deterministic commerce execution engine
+  /// (cart/order/checkout creation). Distinct from `SYSTEM` so the ledger
+  /// can show precisely which deterministic subsystem acted; never an AI
+  /// actor.
+  COMMERCE
+  /// PART 07 §75 — the deterministic payment orchestration engine
+  /// (initiation, client-verification handling, reconciliation). Distinct
+  /// from `SYSTEM`/`COMMERCE` so the ledger shows precisely which
+  /// deterministic subsystem acted; never an AI actor.
+  PAYMENT_SYSTEM
+  /// PART 07 §75 — attributed to Razorpay itself only for events whose
+  /// content ORIGINATED from Razorpay (a verified webhook delivery). Never
+  /// used for anything this application's own code decided — that is
+  /// always `PAYMENT_SYSTEM`.
+  RAZORPAY
+}
+
+/// PART 00 §11 — approval status lifecycle, not a boolean.
+enum AgentActionStatus {
+  PROPOSED
+  PENDING_APPROVAL
+  APPROVED
+  REJECTED
+  EXPIRED
+  EXECUTED
+  FAILED
+  VERIFIED
+}
+
+/// PART 05 §7 — the closed outcome vocabulary a `PolicyEvaluation` row (and
+/// the legacy `AgentAction.policyDecision` summary field) may hold.
+enum PolicyDecision {
+  ALLOW
+  DENY
+  REQUIRE_APPROVAL
+}
+
+/// PART 05 §29 — a human approval decision. Distinct from `PolicyDecision`:
+/// policy says what MAY happen, approval says what a human actually DECIDED.
+enum ApprovalDecision {
+  APPROVED
+  REJECTED
+}
+
+/// PART 05 §37-§38. `ACTIVE` is the only status PART 06/07 may execute
+/// against; every other status must be rejected by the future execution
+/// layer. `CONSUMED` is reserved for PART 06 to set — PART 05 never sets it
+/// (§45: "there is no execution yet").
+enum ExecutionAuthorizationStatus {
+  ACTIVE
+  CONSUMED
+  EXPIRED
+  REVOKED
+}
+
+enum OpportunityCategory {
+  CROSS_SELL
+  UPSELL
+  CATALOG_GAP
+  READINESS_GAP
+  PAYMENT_RECOVERY
+}
+
+enum OpportunityStatus {
+  IDENTIFIED
+  PROPOSED
+  ACTED_ON
+}
+
+/// PART 02 §57 — merchant-authored eligibility for a FUTURE offer. This is
+/// NOT an authorization to discount; actual offer approval remains the
+/// Policy Engine's job (PART 05). `UNKNOWN` is a real state, not a
+/// default "no".
+enum PromotionEligibility {
+  ELIGIBLE
+  INELIGIBLE
+  UNKNOWN
+}
+
+/// PART 02 §36 — merchant-level Agentic Readiness level, derived
+/// deterministically from `ReadinessSnapshot.overallScore` via
+/// `@razorgrowth/domain` `deriveReadinessLevel`.
+enum MerchantReadinessLevel {
+  AGENT_READY
+  NEARLY_READY
+  PARTIALLY_READY
+  NOT_READY
+}
+
+/// PART 00 §19, §29, §78 — every revenue figure carries this tag so
+/// observed, estimated, and opportunity values are never conflated.
+enum ValueClassification {
+  OBSERVED
+  ESTIMATED
+  OPPORTUNITY
+}
+
+/// PART 03 §145 — deliberately small; the payment state machine (PART 07)
+/// is where real transition rigor belongs, not buyer conversation state.
+enum BuyerConversationStatus {
+  ACTIVE
+  AWAITING_CLARIFICATION
+  RECOMMENDATION_READY
+  CLOSED
+}
+
+enum BuyerMessageRole {
+  BUYER
+  AGENT
+}
+
+/// PART 04 §10, §17, §24, §37, §50, §61 — Merchant Agent growth taxonomy.
+/// Small, explicit, closed vocabularies only — never an open string a
+/// model can extend.
+enum GrowthActionType {
+  CROSS_SELL
+  UPSELL
+  BUNDLE
+  BOUNDED_OFFER
+  RECOVERY
+}
+
+/// PART 04 ends at proposal creation/validation (`PROPOSED` /
+/// `REJECTED_VALIDATION`). PART 05 §26-§28 adds the real governance
+/// lifecycle: PROPOSED -> POLICY_DENIED | ALLOWED | PENDING_APPROVAL ->
+/// APPROVED | APPROVAL_REJECTED -> AUTHORIZED. See `@razorgrowth/domain`
+/// `GROWTH_PROPOSAL_TRANSITIONS` for the authoritative transition table
+/// shared between the API layer and tests.
+enum GrowthProposalStatus {
+  PROPOSED
+  REJECTED_VALIDATION
+  POLICY_DENIED
+  ALLOWED
+  PENDING_APPROVAL
+  APPROVED
+  APPROVAL_REJECTED
+  AUTHORIZED
+}
+
+enum GrowthProposalMode {
+  AI_PROPOSED
+  DETERMINISTIC_RELATIONSHIP
+  DETERMINISTIC_FALLBACK
+  NO_OPPORTUNITY
+  BLOCKED_BY_DATA
+}
+
+enum ProductRelationshipType {
+  COMPLEMENTARY
+  UPSELL_ALTERNATIVE
+  SIMILAR
+  BUNDLE_COMPATIBLE
+}
+
+/// PART 04 §25 — AI-suggested relationships are never treated as
+/// merchant truth; provenance is always recorded.
+enum RelationshipProvenance {
+  MERCHANT_CONFIGURED
+  CATALOG_METADATA
+  SYSTEM_DERIVED
+  DEMO_SEED
+}
+
+enum OfferKind {
+  PERCENTAGE
+  FIXED_AMOUNT
+}
+
+model Merchant {
+  id               String         @id @default(uuid())
+  name             String
+  slug             String         @unique
+  description      String?
+  defaultCurrency  Currency       @default(INR)
+  businessCategory String
+  status           MerchantStatus @default(ACTIVE)
+  createdAt        DateTime       @default(now())
+  updatedAt        DateTime       @updatedAt
+
+  policy              MerchantPolicy?
+  products            Product[]
+  customers           Customer[]
+  carts               Cart[]
+  orders              Order[]
+  agentActions        AgentAction[]
+  readinessSnapshots  ReadinessSnapshot[]
+  growthOpportunities GrowthOpportunity[]
+  buyerConversations  BuyerConversation[]
+  recommendationRecords RecommendationRecord[]
+  growthConfig            MerchantGrowthConfig?
+  productRelationships    ProductRelationship[]
+  growthActionProposals   GrowthActionProposal[]
+  policyEvaluations       PolicyEvaluation[]
+  approvals               Approval[]
+  executionAuthorizations ExecutionAuthorization[]
+  checkoutSessions        CheckoutSession[]
+  idempotencyRecords      IdempotencyRecord[]
+  payments                Payment[]
+  paymentProviderEvents   PaymentProviderEvent[]
+}
+
+/// Deterministic policy configuration read by the real Policy Engine
+/// (PART 00 §9-§11; PART 05 §11-§13, §47). This model is data only — no
+/// decision logic lives here (`@razorgrowth/domain` `evaluatePolicy` is the
+/// decision logic). `maxDiscountBps` is a hard ceiling (never exceedable,
+/// even with approval); `autoApprovalDiscountBps` is the lower autonomous
+/// threshold below which no human gate is needed — these are deliberately
+/// two different numbers (PART 05 §10), not a single "the" limit as the
+/// PART 01 placeholder shape had. `policyVersion` increments on every edit
+/// (PART 05 §12) so a decision evaluated under an old version can never
+/// silently authorize execution under a materially different one.
+model MerchantPolicy {
+  merchantId                    String   @id
+  merchant                      Merchant @relation(fields: [merchantId], references: [id], onDelete: Cascade)
+  policyVersion                 Int      @default(1)
+  currency                      Currency @default(INR)
+  maxDiscountBps                Int
+  autoApprovalDiscountBps       Int
+  maxOrderAmountMinor           Int
+  autoApprovalOrderAmountMinor  Int
+  maxRecoveryAttempts           Int
+  /// How long a proposal remains eligible for policy evaluation at all
+  /// after creation (PART 05 §8 `PROPOSAL_EXPIRED`).
+  proposalValidityMinutes       Int      @default(30)
+  /// How long a human `Approval` remains valid before it can no longer
+  /// authorize execution (PART 05 §31).
+  approvalValidityMinutes       Int      @default(15)
+  /// How long an issued `ExecutionAuthorization` remains `ACTIVE` (PART 05 §42).
+  authorizationValidityMinutes  Int      @default(10)
+  updatedAt                     DateTime @updatedAt
+}
+
+/// A persisted deterministic Policy Engine result (PART 05 §7, §13, §50) —
+/// one row per evaluation, never overwritten. The latest row for a given
+/// `proposalId` (by `createdAt`) is the authoritative current decision
+/// (PART 05 §46); re-evaluation (e.g. after a policy edit) simply appends
+/// another row rather than mutating history.
+model PolicyEvaluation {
+  id                     String         @id @default(uuid())
+  proposalId             String
+  proposal               GrowthActionProposal @relation(fields: [proposalId], references: [id], onDelete: Cascade)
+  merchantId             String
+  merchant               Merchant       @relation(fields: [merchantId], references: [id], onDelete: Cascade)
+  /// Denormalized from the proposal for convenient ledger correlation
+  /// (PART 05 §59: chain ledger events per-workflow).
+  workflowId             String
+  outcome                PolicyDecision
+  reasonCodes            Json
+  explanation            String
+  evaluatedPolicyVersion Int
+  evaluatedValues        Json
+  proposalFingerprint    String
+  fingerprintVersion     String
+  createdAt              DateTime       @default(now())
+
+  approvals               Approval[]
+  executionAuthorizations ExecutionAuthorization[]
+
+  @@index([proposalId, createdAt])
+  @@index([merchantId, createdAt])
+}
+
+/// A human approval DECISION (PART 05 §29-§32) — created only at the
+/// moment a merchant actually decides, never at "request" time (the
+/// request itself is just the proposal's `PENDING_APPROVAL` status plus an
+/// `APPROVAL_REQUESTED` ledger event). Bound to an exact proposal
+/// fingerprint: if the underlying proposal's financially meaningful
+/// content ever differs from `proposalFingerprint`, this approval can no
+/// longer authorize execution (PART 05 §30, §48). At most one `Approval`
+/// row exists per `proposalId` — a proposal is decided once.
+model Approval {
+  id                     String           @id @default(uuid())
+  proposalId             String           @unique
+  proposal               GrowthActionProposal @relation(fields: [proposalId], references: [id], onDelete: Cascade)
+  proposalFingerprint    String
+  merchantId             String
+  merchant               Merchant         @relation(fields: [merchantId], references: [id], onDelete: Cascade)
+  policyEvaluationId     String
+  policyEvaluation       PolicyEvaluation @relation(fields: [policyEvaluationId], references: [id], onDelete: Restrict)
+  evaluatedPolicyVersion Int
+  decision               ApprovalDecision
+  reason                 String?
+  /// Server-controlled actor id (PART 05 §33) — never a client-supplied
+  /// `approverId`. The demo build has exactly one controlled merchant user.
+  approverId             String
+  createdAt              DateTime         @default(now())
+  expiresAt              DateTime
+
+  executionAuthorizations ExecutionAuthorization[]
+
+  @@index([merchantId, createdAt])
+}
+
+/// The execution gate (PART 05 §37-§45): "this exact proposal has passed
+/// policy and any required approval and is eligible for a later execution
+/// layer to attempt execution." NOT itself execution — PART 05 creates no
+/// `CONSUMED` rows; that belongs entirely to PART 06. A partial unique
+/// index (see the hand-written migration) enforces at most one `ACTIVE`
+/// authorization per proposal at the database level, while still allowing
+/// historical `EXPIRED`/`REVOKED` rows to accumulate for audit (PART 05 §69).
+model ExecutionAuthorization {
+  id                     String                       @id @default(uuid())
+  proposalId             String
+  proposal               GrowthActionProposal         @relation(fields: [proposalId], references: [id], onDelete: Cascade)
+  proposalFingerprint    String
+  merchantId             String
+  merchant               Merchant                     @relation(fields: [merchantId], references: [id], onDelete: Cascade)
+  policyEvaluationId     String
+  policyEvaluation       PolicyEvaluation             @relation(fields: [policyEvaluationId], references: [id], onDelete: Restrict)
+  approvalId             String?
+  approval               Approval?                    @relation(fields: [approvalId], references: [id], onDelete: Restrict)
+  authorizedActionType   GrowthActionType
+  /// Snapshot of the exact financial bounds this authorization covers
+  /// (PART 05 §38) — the future execution layer must never re-derive these
+  /// from a possibly-changed proposal.
+  financialBounds        Json
+  issuedAt               DateTime                     @default(now())
+  expiresAt               DateTime
+  status                 ExecutionAuthorizationStatus @default(ACTIVE)
+  authorizationVersion   String                       @default("1")
+  createdAt              DateTime                     @default(now())
+
+  checkoutSessions       CheckoutSession[]
+
+  @@index([proposalId])
+  @@index([merchantId, createdAt])
+  @@index([status, expiresAt])
+}
+
+model Customer {
+  id          String   @id @default(uuid())
+  merchantId  String
+  merchant    Merchant @relation(fields: [merchantId], references: [id], onDelete: Cascade)
+  displayName String
+  email       String?
+  segment     String?
+  createdAt   DateTime @default(now())
+  updatedAt   DateTime @updatedAt
+
+  carts            Cart[]
+  orders           Order[]
+  checkoutSessions CheckoutSession[]
+
+  @@index([merchantId])
+}
+
+model Product {
+  id                  String        @id @default(uuid())
+  merchantId          String
+  merchant            Merchant      @relation(fields: [merchantId], references: [id], onDelete: Cascade)
+  name                String
+  slug                String
+  description         String
+  category            String
+  brand               String
+  status              ProductStatus @default(ACTIVE)
+  returnPolicySummary String?
+  shippingSummary     String?
+  /// PART 02 §57. `UNKNOWN` by default — a merchant must explicitly mark
+  /// eligibility, it is never assumed.
+  promotionEligibility PromotionEligibility @default(UNKNOWN)
+  createdAt           DateTime      @default(now())
+  updatedAt           DateTime      @updatedAt
+
+  variants ProductVariant[]
+  relationshipsAsSource ProductRelationship[] @relation("RelationshipSource")
+  relationshipsAsTarget ProductRelationship[] @relation("RelationshipTarget")
+
+  @@unique([merchantId, slug])
+  @@index([merchantId, category])
+}
+
+model ProductVariant {
+  id         String   @id @default(uuid())
+  productId  String
+  product    Product  @relation(fields: [productId], references: [id], onDelete: Cascade)
+  sku        String
+  title      String
+  priceMinor Int
+  currency   Currency @default(INR)
+  /// Flexible variant attributes (e.g. size, color) — genuinely variable
+  /// metadata, per PART 01 §13/§37 ("JSON may be used only where flexible
+  /// metadata is genuinely appropriate").
+  attributes Json     @default("{}")
+  active     Boolean  @default(true)
+  /// PART 02 §20-§21 — distinct from `updatedAt` (which also changes on
+  /// attribute/title edits): this specifically tracks when the *price*
+  /// was last confirmed, so Price Freshness scoring isn't skewed by
+  /// unrelated metadata edits.
+  priceUpdatedAt DateTime @default(now())
+  createdAt  DateTime @default(now())
+  updatedAt  DateTime @updatedAt
+
+  inventory  Inventory?
+  cartItems  CartItem[]
+  orderItems OrderItem[]
+
+  @@unique([productId, sku])
+  @@index([active, priceMinor])
+}
+
+model Inventory {
+  variantId         String         @id
+  variant           ProductVariant @relation(fields: [variantId], references: [id], onDelete: Cascade)
+  availableQuantity Int            @default(0)
+  updatedAt         DateTime       @updatedAt
+}
+
+model Cart {
+  id         String     @id @default(uuid())
+  merchantId String
+  merchant   Merchant   @relation(fields: [merchantId], references: [id], onDelete: Cascade)
+  customerId String?
+  customer   Customer?  @relation(fields: [customerId], references: [id], onDelete: SetNull)
+  status     CartStatus @default(ACTIVE)
+  currency   Currency   @default(INR)
+  createdAt  DateTime   @default(now())
+  updatedAt  DateTime   @updatedAt
+
+  items            CartItem[]
+  checkoutSessions CheckoutSession[]
+
+  @@index([merchantId, status])
+}
+
+model CartItem {
+  id             String         @id @default(uuid())
+  cartId         String
+  cart           Cart           @relation(fields: [cartId], references: [id], onDelete: Cascade)
+  variantId      String
+  variant        ProductVariant @relation(fields: [variantId], references: [id], onDelete: Restrict)
+  quantity       Int
+  unitPriceMinor Int
+  /// Non-zero only for the single authorized-offer-eligible line in a
+  /// commerce execution (PART 06 §25-§30, §163 — one authorized offer per
+  /// checkout, never stacked across lines).
+  lineDiscountMinor Int      @default(0)
+  currency       Currency       @default(INR)
+  /// Closed provenance vocabulary (`@razorgrowth/domain` `OrderSource`) —
+  /// PART 06 §15, §63.
+  source         String         @default("DIRECT_BUYER")
+  /// Set only for a line added/replaced by an authorized Merchant Agent
+  /// proposal (PART 06 §55-§60) — never for the buyer's own selection.
+  growthProposalId String?
+  createdAt      DateTime       @default(now())
+
+  @@index([cartId])
+}
+
+model Order {
+  id               String      @id @default(uuid())
+  merchantId       String
+  merchant         Merchant    @relation(fields: [merchantId], references: [id], onDelete: Cascade)
+  customerId       String?
+  customer         Customer?   @relation(fields: [customerId], references: [id], onDelete: SetNull)
+  status           OrderStatus @default(PENDING)
+  totalAmountMinor Int
+  currency         Currency    @default(INR)
+  /// Closed provenance vocabulary (`@razorgrowth/domain` `OrderSource`,
+  /// PART 06 §63-§65) for orders created through deterministic commerce
+  /// execution. Historical PART 01 seed rows keep a free-form legacy
+  /// value (e.g. `"buyer_agent"`) predating this closed vocabulary.
+  source           String?
+  /// Provenance linkage (PART 06 §64) for future analytics — records
+  /// which authorized proposal/authorization produced this order; never
+  /// implies a causal revenue claim on its own.
+  growthProposalId String?
+  authorizationId  String?
+  /// SHA-256 order financial fingerprint (PART 06 §42-§44,
+  /// `ORDER_FINGERPRINT_VERSION`) — PART 07 must load this authoritative
+  /// value rather than trust any client-submitted amount.
+  orderFingerprint    String?
+  fingerprintVersion  String?
+  createdAt        DateTime    @default(now())
+  updatedAt        DateTime    @updatedAt
+
+  items           OrderItem[]
+  payments        Payment[]
+  /// PART 08 §29, §189 — one-to-many as of PART 08: a bounded recovery
+  /// retry creates a new `CheckoutSession` against this SAME order.
+  checkoutSessions CheckoutSession[]
+
+  @@index([merchantId, createdAt])
+}
+
+model OrderItem {
+  id                   String         @id @default(uuid())
+  orderId              String
+  order                Order          @relation(fields: [orderId], references: [id], onDelete: Cascade)
+  variantId            String
+  variant              ProductVariant @relation(fields: [variantId], references: [id], onDelete: Restrict)
+  /// Snapshots — an order must remain historically accurate even if the
+  /// product/variant is later renamed or repriced (PART 00 §37; PART 01 §14).
+  productNameSnapshot  String
+  variantTitleSnapshot String
+  unitPriceMinor       Int
+  quantity             Int
+  lineDiscountMinor    Int            @default(0)
+  lineTotalMinor       Int
+  currency             Currency       @default(INR)
+  source               String         @default("DIRECT_BUYER")
+  growthProposalId     String?
+
+  @@index([orderId])
+}
+
+/// RazorGrowth's own internal commerce checkout state (PART 06 §39) —
+/// explicitly NOT Razorpay Checkout. PART 06 creates these and stops at
+/// `READY_FOR_PAYMENT`; PART 07 owns every later transition.
+model CheckoutSession {
+  id                 String                @id @default(uuid())
+  merchantId         String
+  merchant           Merchant              @relation(fields: [merchantId], references: [id], onDelete: Cascade)
+  customerId         String?
+  customer           Customer?             @relation(fields: [customerId], references: [id], onDelete: SetNull)
+  cartId             String
+  cart               Cart                  @relation(fields: [cartId], references: [id], onDelete: Restrict)
+  /// PART 08 §29, §189: no longer `@unique` as of PART 08 — a bounded
+  /// recovery retry creates a NEW `CheckoutSession` referencing the SAME
+  /// (immutable) `Order` and `Cart`, rather than a new Order each attempt
+  /// (PART 07's original one-checkout-per-order assumption predates
+  /// failure-first recovery). Every attempt's own `CheckoutSession` and
+  /// `Payment` row is still preserved permanently — only the mapping from
+  /// Order to CheckoutSession became one-to-many.
+  orderId            String
+  order              Order                 @relation(fields: [orderId], references: [id], onDelete: Restrict)
+  authorizationId    String
+  authorization      ExecutionAuthorization @relation(fields: [authorizationId], references: [id], onDelete: Restrict)
+  status             CheckoutSessionStatus @default(CREATED)
+  amountMinor        Int
+  currency           Currency              @default(INR)
+  /// SHA-256 order financial fingerprint, denormalized from `Order` for
+  /// convenient independent verification (PART 06 §42-§44).
+  orderFingerprint   String
+  fingerprintVersion String                @default("1")
+  /// The same workflow the authorizing proposal already established
+  /// (PART 05/06 §88) — lets the Agent Action Ledger show one continuous
+  /// timeline from proposal through checkout.
+  workflowId         String
+  createdAt          DateTime              @default(now())
+  expiresAt          DateTime
+  checkoutVersion    String                @default("1")
+
+  payments Payment[]
+
+  @@index([merchantId, createdAt])
+  @@index([orderId])
+  @@index([authorizationId])
+  @@index([status, expiresAt])
+}
+
+/// Server-side idempotency for commerce execution (PART 06 §48-§51). A
+/// retried request with the SAME key and an unchanged fingerprint returns
+/// the persisted `responseSnapshot` without re-executing anything; a
+/// changed fingerprint under the same key is a genuine conflict, never
+/// silently re-executed.
+model IdempotencyRecord {
+  id                 String   @id @default(uuid())
+  merchantId         String
+  merchant           Merchant @relation(fields: [merchantId], references: [id], onDelete: Cascade)
+  operation          String
+  idempotencyKey     String
+  requestFingerprint String
+  responseSnapshot   Json
+  createdAt          DateTime @default(now())
+
+  @@unique([merchantId, operation, idempotencyKey])
+}
+
+/// PART 07 §17-§18 — extends the PART 01 placeholder shape into a real
+/// payment record. Exactly one `Payment` per `CheckoutSession`
+/// (`@@unique([checkoutId])`, enforced at the database level, not just in
+/// application code) — PART 07 deliberately does not retry a failed
+/// attempt against the same checkout (§93, §114): recovery (PART 08) goes
+/// through a brand-new Merchant Agent RECOVERY proposal → policy → a NEW
+/// `ExecutionAuthorization` → a NEW `CheckoutSession`, never a second
+/// `Payment` row bolted onto the FAILED one directly (PART 08 §8: a
+/// failed attempt remains FAILED forever). `attemptNumber` is computed
+/// from prior `Payment` rows sharing the same `orderId` (PART 08 §9,
+/// §189) — 1 for an order's first attempt, incrementing for each
+/// subsequent bounded recovery retry — and `recoveredFromAttemptId`
+/// records the immediately-prior attempt's id for lineage.
+model Payment {
+  id         String          @id @default(uuid())
+  merchantId String
+  merchant   Merchant        @relation(fields: [merchantId], references: [id], onDelete: Cascade)
+  orderId    String
+  order      Order           @relation(fields: [orderId], references: [id], onDelete: Cascade)
+  checkoutId String?         @unique
+  checkout   CheckoutSession? @relation(fields: [checkoutId], references: [id], onDelete: Restrict)
+  attemptNumber Int          @default(1)
+  provider   PaymentProvider @default(DEMO)
+  /// Razorpay's own order object, created server-side BEFORE the buyer
+  /// ever sees a checkout UI (PART 07 §13, §58) — the anchor a webhook or
+  /// reconciliation fetch resolves back to this `Payment` row.
+  providerOrderId   String?
+  /// Set only once a specific payment attempt exists against the provider
+  /// order above (PART 07 §17) — a provider order can, in general, receive
+  /// more than one payment attempt on Razorpay's side even though this
+  /// build only ever expects one.
+  providerPaymentId String?
+  amountMinor     Int
+  currency        Currency     @default(INR)
+  state           PaymentState @default(CREATED)
+  failureCode     String?
+  failureCategory String?
+  /// Minimal reconciliation metadata only (PART 07 §62) — never a full
+  /// provider payload, never card/UPI instrument details.
+  providerMetadata Json?
+  createdAt  DateTime  @default(now())
+  updatedAt  DateTime  @updatedAt
+  authorizedAt DateTime?
+  capturedAt   DateTime?
+  failedAt     DateTime?
+  /// PART 07 §112 — a simple cooldown so `/payments/:id/reconcile` cannot
+  /// be hammered; not a production rate limiter.
+  lastReconciledAt DateTime?
+  /// PART 08 §9, §189 — the immediately-prior attempt this one recovers
+  /// from, when this is not an order's first payment attempt. Self-
+  /// referential, `onDelete: SetNull` (lineage is a convenience, never a
+  /// reason to block deleting a historical row).
+  recoveredFromAttemptId String?
+  recoveredFromAttempt   Payment? @relation("PaymentRecoveryLineage", fields: [recoveredFromAttemptId], references: [id], onDelete: SetNull)
+  recoveryAttempts       Payment[] @relation("PaymentRecoveryLineage")
+
+  providerEvents PaymentProviderEvent[]
+
+  @@index([orderId])
+  @@index([merchantId, state])
+  @@index([provider, providerOrderId])
+  @@index([provider, providerPaymentId])
+  @@index([recoveredFromAttemptId])
+}
+
+/// PART 07 §25, §85, §147 — persisted record of one provider (webhook)
+/// event, independent of whether it could be resolved to a `Payment`.
+/// `eventFingerprint` (not the raw provider event ID, which Razorpay does
+/// not guarantee as a stable top-level field on every event type — PART
+/// 07 §32) is a deterministic hash of the event's stable identifying
+/// fields plus the raw payload hash; a database-level unique constraint
+/// on it is what makes duplicate delivery idempotent (§23, §31, §87-§88),
+/// not a timestamp check.
+model PaymentProviderEvent {
+  id                String                       @id @default(uuid())
+  merchantId        String
+  merchant          Merchant                     @relation(fields: [merchantId], references: [id], onDelete: Cascade)
+  provider          PaymentProvider              @default(RAZORPAY)
+  providerEventId   String?
+  eventType         String
+  paymentId         String?
+  payment           Payment?                     @relation(fields: [paymentId], references: [id], onDelete: SetNull)
+  providerPaymentId String?
+  providerOrderId   String?
+  eventFingerprint  String
+  payloadHash       String
+  signatureVerified Boolean
+  processingStatus  PaymentEventProcessingStatus @default(RECEIVED)
+  receivedAt        DateTime                     @default(now())
+  processedAt       DateTime?
+
+  @@unique([provider, eventFingerprint])
+  @@index([merchantId, receivedAt])
+  @@index([paymentId])
+}
+
+/// Agent Action Ledger foundation (PART 00 §20, §38; PART 01 §17).
+/// `conciseReason` is an auditable explanation, never hidden
+/// chain-of-thought.
+/// PART 05 §57-§63 adds a lightweight, application-level tamper-evident
+/// hash chain, scoped per `workflowId` (never one global chain — §59: that
+/// would add locking/concurrency complexity with no real benefit here).
+/// `sequence` is 1-indexed and assigned transactionally by the centralized
+/// `appendLedgerEvent` writer (`modules/audit/ledger.ts`) — never by ad hoc
+/// inserts — so `@@unique([workflowId, sequence])` can never be violated by
+/// a race. `eventHash = SHA256(canonicalEventData + previousEventHash)`;
+/// `previousEventHash` is null only for `sequence = 1`. This is explicitly
+/// NOT a blockchain (PART 05 §63, §130) — it detects accidental or
+/// malicious alteration of already-written rows, nothing more.
+model AgentAction {
+  id                String             @id @default(uuid())
+  workflowId        String
+  agentRunId        String?
+  merchantId        String
+  merchant          Merchant           @relation(fields: [merchantId], references: [id], onDelete: Cascade)
+  actorType         AgentActorType
+  actionType        String
+  status            AgentActionStatus  @default(PROPOSED)
+  conciseReason     String
+  policyDecision    PolicyDecision?
+  relatedEntityType String?
+  relatedEntityId   String?
+  metadata          Json?
+  sequence          Int
+  previousEventHash String?
+  eventHash         String
+  ledgerHashVersion String             @default("1")
+  isSyntheticDemo   Boolean            @default(false)
+  createdAt         DateTime           @default(now())
+  executedAt        DateTime?
+
+  @@unique([workflowId, sequence])
+  @@index([workflowId])
+  @@index([merchantId, createdAt])
+  @@index([actorType])
+  @@index([status])
+  @@index([eventHash])
+}
+
+/// Deterministic, explainable readiness scoring (PART 00 §18; PART 01
+/// §18; PART 02 §30-§50). Calculated by `AgenticReadinessEngine` from
+/// real catalog/policy/inventory evidence via `CatalogQualityAnalyzer` —
+/// never LLM-generated (PART 02 §31). Stores the full dimension
+/// breakdown, evidence, and blockers so a historical score can always be
+/// explained, not just displayed as a bare number.
+model ReadinessSnapshot {
+  id                    String   @id @default(uuid())
+  merchantId            String
+  merchant              Merchant @relation(fields: [merchantId], references: [id], onDelete: Cascade)
+  overallScore          Int
+  level                 MerchantReadinessLevel
+  catalogCompleteness   Int
+  aiDiscoverability     Int
+  priceFreshness        Int
+  inventoryReliability  Int
+  policyCompleteness    Int
+  checkoutReadiness     Int
+  paymentReliability    Int
+  metadataQuality       Int
+  trustInformation      Int
+  weakestDimension      String
+  strongestDimension    String
+  /// Array of deterministic recommendation strings (see
+  /// `@razorgrowth/domain` `deriveReadinessRecommendations`).
+  recommendations       Json
+  /// Array of `ReadinessBlocker` objects (PART 02 §37), already
+  /// prioritized by `prioritizeBlockers`.
+  blockers              Json
+  /// Short list of dimension strengths worth surfacing in the UI.
+  strengths             Json
+  /// Evidence counters the engine used to compute this snapshot (e.g.
+  /// activeProducts, missingReturnPolicies) — PART 02 §32, §46: scoring
+  /// must be evidence-first, and the evidence must be inspectable, not
+  /// just the resulting number.
+  evidence              Json
+  /// PART 02 §50 — `@razorgrowth/domain` `READINESS_MODEL_VERSION`, so a
+  /// stored score is never misread against a different formula version.
+  calculationVersion    String
+  isSyntheticDemo       Boolean  @default(true)
+  createdAt             DateTime @default(now())
+
+  @@index([merchantId, createdAt])
+}
+
+/// Buyer Agent conversation state (PART 03 §50, §112-§113). Intentionally
+/// minimal per PART 00 §36 identity simplification — no buyer/customer
+/// login, one anonymous conversation per browser session, scoped to the
+/// single demo merchant.
+model BuyerConversation {
+  id         String                  @id @default(uuid())
+  merchantId String
+  merchant   Merchant                @relation(fields: [merchantId], references: [id], onDelete: Cascade)
+  status     BuyerConversationStatus @default(ACTIVE)
+  /// Normalized `BuyerIntent` snapshot (validated + normalized shape,
+  /// PART 03 §11, §25-§26) — never raw, unvalidated model output.
+  currentIntent Json?
+  createdAt  DateTime                @default(now())
+  updatedAt  DateTime                @updatedAt
+
+  messages        BuyerMessage[]
+  recommendations RecommendationRecord[]
+
+  @@index([merchantId, updatedAt])
+}
+
+model BuyerMessage {
+  id             String            @id @default(uuid())
+  conversationId String
+  conversation   BuyerConversation @relation(fields: [conversationId], references: [id], onDelete: Cascade)
+  role           BuyerMessageRole
+  content        String
+  createdAt      DateTime          @default(now())
+
+  @@index([conversationId, createdAt])
+}
+
+/// A durable record of one recommendation cycle (PART 03 §69, §113) —
+/// compact, auditable metadata only. Never stores hidden chain-of-thought
+/// or full raw provider payloads (PART 03 §27, §67).
+model RecommendationRecord {
+  id             String            @id @default(uuid())
+  conversationId String
+  conversation   BuyerConversation @relation(fields: [conversationId], references: [id], onDelete: Cascade)
+  merchantId     String
+  merchant       Merchant          @relation(fields: [merchantId], references: [id], onDelete: Cascade)
+  intentSnapshot Json
+  /// string[] of product IDs supplied to ranking as the bounded candidate
+  /// set (PART 03 §31, §95 — "0 recommendations outside the candidate set").
+  candidateProductIds   Json
+  /// string[] of product IDs in final rank order, after grounding.
+  recommendedProductIds Json
+  /// e.g. AI_RANKED / DETERMINISTIC_SINGLE_MATCH / DETERMINISTIC_FALLBACK /
+  /// NEAR_MATCH / NO_MATCH (PART 03 §160).
+  mode           String
+  aiProviderMode String
+  traceId        String
+  createdAt      DateTime          @default(now())
+
+  @@index([conversationId, createdAt])
+  @@index([merchantId, createdAt])
+}
+
+model GrowthOpportunity {
+  id                   String               @id @default(uuid())
+  merchantId           String
+  merchant             Merchant             @relation(fields: [merchantId], references: [id], onDelete: Cascade)
+  category             OpportunityCategory
+  signal               String
+  recommendation       String
+  estimatedValueMinor  Int?
+  currency             Currency?
+  valueClassification  ValueClassification  @default(OPPORTUNITY)
+  status               OpportunityStatus    @default(IDENTIFIED)
+  isSyntheticDemo       Boolean             @default(true)
+  createdAt            DateTime             @default(now())
+
+  @@index([merchantId, status])
+}
+
+/// Merchant-configured growth boundaries (PART 04 §21-§23) — a singleton
+/// per merchant. These bound what the Merchant Agent may even PROPOSE;
+/// PART 05's Policy Engine separately decides what may actually proceed
+/// (PART 04 §22: "Merchant Agent boundary <= Policy boundary", defense in
+/// depth). The agent itself can never modify this row.
+model MerchantGrowthConfig {
+  merchantId            String   @id
+  merchant              Merchant @relation(fields: [merchantId], references: [id], onDelete: Cascade)
+  growthActionsEnabled  Boolean  @default(true)
+  crossSellEnabled      Boolean  @default(true)
+  upsellEnabled         Boolean  @default(true)
+  bundleEnabled         Boolean  @default(true)
+  boundedOffersEnabled  Boolean  @default(true)
+  maxUpsellIncreaseBps  Int      @default(1500)
+  maxProposedDiscountBps Int     @default(1000)
+  maxCrossSellItems     Int      @default(3)
+  maxBundleItems        Int      @default(2)
+  currency              Currency @default(INR)
+  updatedAt             DateTime @updatedAt
+}
+
+/// Deterministic product-relationship model (PART 04 §24-§25). The
+/// Merchant Agent's bounded candidate set is generated FROM these rows —
+/// it never searches the whole catalog. Directional (source -> target);
+/// a bidirectional pairing (e.g. shoes<->socks bundle) is represented by
+/// two rows, not implied.
+model ProductRelationship {
+  id               String                  @id @default(uuid())
+  merchantId       String
+  merchant         Merchant                @relation(fields: [merchantId], references: [id], onDelete: Cascade)
+  sourceProductId  String
+  sourceProduct    Product                 @relation("RelationshipSource", fields: [sourceProductId], references: [id], onDelete: Cascade)
+  targetProductId  String
+  targetProduct    Product                 @relation("RelationshipTarget", fields: [targetProductId], references: [id], onDelete: Cascade)
+  relationshipType ProductRelationshipType
+  provenance       RelationshipProvenance  @default(DEMO_SEED)
+  createdAt        DateTime                @default(now())
+
+  @@unique([sourceProductId, targetProductId, relationshipType])
+  @@index([merchantId, sourceProductId])
+}
+
+/// A durable record of one Merchant Agent growth proposal (PART 04 §16,
+/// §114). Compact, auditable metadata only — never hidden chain-of-
+/// thought (PART 04 §148). `policyStatus` is always "NOT_EVALUATED" here;
+/// PART 05 owns real policy/approval. A validated proposal is NOT
+/// execution authorization (PART 04 §149) — future layers must
+/// revalidate authoritative commerce state before any money-affecting
+/// action.
+model GrowthActionProposal {
+  id                 String                @id @default(uuid())
+  merchantId         String
+  merchant           Merchant              @relation(fields: [merchantId], references: [id], onDelete: Cascade)
+  conversationId     String?
+  recommendationId   String?
+  primaryProductId   String
+  actionType         GrowthActionType?
+  relatedProductIds  Json
+  offerKind          OfferKind?
+  offerPercentageBps Int?
+  offerAmountMinor   Int?
+  offerCurrency      Currency?
+  offerCalculation   Json?
+  opportunity        Json?
+  evidence           Json
+  reasonCodes        Json
+  explanation        String
+  mode               GrowthProposalMode
+  status             GrowthProposalStatus
+  rejectionReason    String?
+  blockedOpportunities Json
+  traceId            String
+  /// PART 08 §19, §188 — set only for a payment-failure recovery proposal
+  /// (`actionType: RECOVERY`, distinguishing it from PART 04's buyer-
+  /// budget `RECOVERY` variant, which never sets these). Soft pointers,
+  /// same "provenance linkage, never a hard FK" convention already used
+  /// for `Order.growthProposalId`/`authorizationId` (PART 06 §64) — the
+  /// source Order/Payment/CheckoutSession are immutable historical
+  /// records this proposal references, never mutates.
+  recoveryAction     String?
+  sourceOrderId      String?
+  sourcePaymentId    String?
+  sourceCheckoutId   String?
+  /// Denormalized pointers to the latest governance records (PART 05),
+  /// updated transactionally alongside `status` — plain soft references,
+  /// same convention as `conversationId`/`recommendationId` above, so a
+  /// proposal read never needs a separate join for the common case.
+  latestPolicyDecisionId  String?
+  approvalId              String?
+  executionAuthorizationId String?
+  isSyntheticDemo    Boolean               @default(true)
+  createdAt          DateTime              @default(now())
+
+  policyEvaluations       PolicyEvaluation[]
+  approval                Approval?
+  executionAuthorizations ExecutionAuthorization[]
+
+  @@index([merchantId, createdAt])
+  @@index([conversationId])
+  @@index([sourceOrderId])
+}
