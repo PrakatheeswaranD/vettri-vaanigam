@@ -1,17 +1,14 @@
-import { FlaskConical, Moon, Sun } from "lucide-react";
+import { FlaskConical } from "lucide-react";
 import { useMerchant } from "../../hooks/use-api";
-import { useTheme } from "../../hooks/use-theme";
 import { MobileNav } from "./MobileNav";
 
 /**
  * PART 01 §38, §88 — merchant identity, a subtle TEST MODE indicator (no
- * real money moves anywhere in this system yet), a theme toggle, and
- * route-contextual space. Kept unobtrusive rather than a banner shouting
- * on every page.
+ * real money moves anywhere in this system yet), and route-contextual
+ * space. Kept unobtrusive rather than a banner shouting on every page.
  */
 export function TopBar() {
   const { data: merchant } = useMerchant();
-  const { theme, toggle } = useTheme();
 
   return (
     <header className="flex h-16 items-center justify-between border-b border-border bg-surface px-4 lg:px-6">
@@ -30,15 +27,6 @@ export function TopBar() {
           <FlaskConical size={12} />
           Test Mode
         </span>
-        <button
-          type="button"
-          onClick={toggle}
-          aria-label={theme === "dark" ? "Switch to light theme" : "Switch to dark theme"}
-          title={theme === "dark" ? "Switch to light theme" : "Switch to dark theme"}
-          className="flex h-8 w-8 items-center justify-center rounded-md border border-border text-ink-muted hover:bg-surface-subtle"
-        >
-          {theme === "dark" ? <Sun size={15} /> : <Moon size={15} />}
-        </button>
       </div>
     </header>
   );

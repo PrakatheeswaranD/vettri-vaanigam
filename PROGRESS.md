@@ -2386,7 +2386,18 @@ make frontend very strong") — dark mode was added instead (see below),
 since it is the single highest-visibility, lowest-regression-risk
 frontend upgrade available given the remaining session budget.
 
-### Dark Mode
+### Dark Mode — added, then removed per direct user request
+
+**Current state: removed.** The user explicitly asked to "remove the
+dark background and change the ui ux for white background" immediately
+after this was built and verified; it was fully reverted the same
+session (`tailwind.config.ts`, `index.css`, and `index.html` restored to
+their pre-dark-mode content; `TopBar.tsx`'s toggle button removed;
+`use-theme.ts` deleted). The application is light-only again, exactly as
+it was before this addition — no CSS custom-property indirection, no
+`.dark` class, no toggle. Kept as a historical record below (what was
+built and how) rather than deleted from this file, per this project's
+own documentation discipline of recording real decisions honestly.
 
 Real, working, applied automatically to every existing page with zero
 per-component changes — not a half-finished toggle. The color system
@@ -2480,9 +2491,9 @@ unchanged). The CI workflow is written but unexecuted (no GitHub remote
 yet). No hosted demo exists. Command palette, guided golden path, and
 SSE live updates are named-but-undone scope items (see "UI Architecture"
 above) — not defects, but honest gaps against the full 216-section
-prompt. Dark mode is done (see "Dark Mode" above) but its "not reached"
-status-chip contrast is a deliberate ~3.6:1 tradeoff, not full AA
-compliance on every muted element.
+prompt. Dark mode was built, verified, and then removed the same session
+at the user's explicit request (see "Dark Mode" above) — the app is
+light-only.
 
 ### Final Demo State
 

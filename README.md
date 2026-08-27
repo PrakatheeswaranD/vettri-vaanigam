@@ -503,13 +503,6 @@ and none of them is a fake "blocked" animation; each one is proven by a
 real integration test (`apps/api/src/sandbox.test.ts`) asserting the
 exact real gate that stopped it.
 
-The whole application also has a real dark mode (toggle in the top bar,
-persisted, no flash-of-wrong-theme): every existing page re-themes
-automatically because every component already used semantic color
-classes (`bg-surface`, `text-ink`, …) rather than raw hex — converting
-those tokens to CSS custom properties (`apps/web/src/index.css`) was the
-only change required.
-
 ## The headline differentiator
 
 **Agentic Readiness Score** — a deterministic, explainable score (0–100)

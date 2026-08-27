@@ -4,69 +4,38 @@ import type { Config } from "tailwindcss";
  * Restrained fintech-trust palette (PART 01 §34). Deliberately narrow —
  * one primary hue, neutral grays, and semantic status colors only. No
  * neon, no gradients-as-default, no glow.
- *
- * Every color is a CSS custom property (defined in `src/index.css` for
- * `:root` and `.dark`), referenced here via Tailwind's `rgb(var(...) /
- * <alpha-value>)` pattern so opacity utilities (`bg-surface/50`, etc.)
- * keep working. This is what makes dark mode automatic for every
- * existing component: they already use these semantic class names
- * (`bg-surface`, `text-ink`, `border-border`, …), never raw hex, so a
- * single variable swap under `.dark` re-themes the whole app with zero
- * per-component changes (PART 09 productization sprint — dark mode).
  */
-function withOpacity(variable: string) {
-  return `rgb(var(${variable}) / <alpha-value>)`;
-}
-
 export default {
   content: ["./index.html", "./src/**/*.{ts,tsx}"],
-  darkMode: "class",
   theme: {
     extend: {
       colors: {
         surface: {
-          DEFAULT: withOpacity("--color-surface"),
-          subtle: withOpacity("--color-surface-subtle"),
-          sunken: withOpacity("--color-surface-sunken"),
-          elevated: withOpacity("--color-surface-elevated"),
+          DEFAULT: "#ffffff",
+          subtle: "#f8fafc",
+          sunken: "#f1f5f9",
         },
         border: {
-          DEFAULT: withOpacity("--color-border"),
-          strong: withOpacity("--color-border-strong"),
+          DEFAULT: "#e2e8f0",
+          strong: "#cbd5e1",
         },
         ink: {
-          DEFAULT: withOpacity("--color-ink"),
-          muted: withOpacity("--color-ink-muted"),
-          faint: withOpacity("--color-ink-faint"),
+          DEFAULT: "#0f172a",
+          muted: "#475569",
+          faint: "#94a3b8",
         },
         brand: {
-          50: withOpacity("--color-brand-50"),
-          100: withOpacity("--color-brand-100"),
-          300: withOpacity("--color-brand-300"),
-          500: withOpacity("--color-brand-500"),
-          600: withOpacity("--color-brand-600"),
-          700: withOpacity("--color-brand-700"),
+          50: "#eef4ff",
+          100: "#dbe6fe",
+          300: "#93b4fb",
+          500: "#3b63f5",
+          600: "#2c4fde",
+          700: "#243fb4",
         },
-        success: {
-          DEFAULT: withOpacity("--color-success"),
-          subtle: withOpacity("--color-success-subtle"),
-          text: withOpacity("--color-success-text"),
-        },
-        warning: {
-          DEFAULT: withOpacity("--color-warning"),
-          subtle: withOpacity("--color-warning-subtle"),
-          text: withOpacity("--color-warning-text"),
-        },
-        danger: {
-          DEFAULT: withOpacity("--color-danger"),
-          subtle: withOpacity("--color-danger-subtle"),
-          text: withOpacity("--color-danger-text"),
-        },
-        info: {
-          DEFAULT: withOpacity("--color-info"),
-          subtle: withOpacity("--color-info-subtle"),
-          text: withOpacity("--color-info-text"),
-        },
+        success: { DEFAULT: "#16a34a", subtle: "#dcfce7", text: "#166534" },
+        warning: { DEFAULT: "#d97706", subtle: "#fef3c7", text: "#92400e" },
+        danger: { DEFAULT: "#dc2626", subtle: "#fee2e2", text: "#991b1b" },
+        info: { DEFAULT: "#0891b2", subtle: "#cffafe", text: "#155e75" },
       },
       fontFamily: {
         sans: ["Inter", "ui-sans-serif", "system-ui", "sans-serif"],

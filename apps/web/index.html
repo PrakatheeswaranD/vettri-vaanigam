@@ -11,18 +11,6 @@
       href="https://fonts.googleapis.com/css2?family=Inter:wght@400;500;600;700&family=JetBrains+Mono:wght@400;500&display=swap"
       rel="stylesheet"
     />
-    <script>
-      // Anti-FOUC: apply the persisted/system theme before React mounts —
-      // a synchronous inline script, not a React effect, so there is no
-      // flash of the wrong theme on first paint.
-      (function () {
-        try {
-          var stored = localStorage.getItem("razorgrowth-theme");
-          var dark = stored === "dark" || (stored !== "light" && window.matchMedia("(prefers-color-scheme: dark)").matches);
-          if (dark) document.documentElement.classList.add("dark");
-        } catch (e) {}
-      })();
-    </script>
   </head>
   <body>
     <div id="root"></div>
