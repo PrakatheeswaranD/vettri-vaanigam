@@ -5284,3 +5284,133 @@ live  /protocols       .well-known ✓  MCP manifest ✓  ACP endpoints ✓  x40
 live  /catalog         compiler renders
 live  /agent-gateway   signature-verified 10 · allowance-not-signed 1 · shim badges
 ```
+
+---
+
+# SECURITY REVIEW — REMEDIATION
+
+## THE THREE P0s WERE ALL REAL
+
+**Mandate forgery.** `verifySpendMandate` checked the signature against
+`mandate.publicKey` — a field inside the same untrusted request. Self-signed
+is not signed: generate a keypair, authorise ninety lakh, sign, send. Every
+guarantee built on that signature was decorative.
+
+Signatures now verify against a key the merchant has REGISTERED
+(`AgentIdentity.registeredPublicKey`), supplied to the pure verifier as
+`trustedPublicKey`. A null key refuses rather than falling back. Two new
+rejection codes distinguish "no key on file" from "wrong key". Optional
+trust-on-first-use pinning exists, is OFF by default, and is documented as
+guaranteeing CONTINUITY not identity — a first-contact impostor is still
+bounded by the unknown-agent ceiling.
+
+Pinned by a test that mints a cryptographically valid, internally
+consistent forged mandate and asserts it is refused.
+
+**ACP unauthenticated.** Every route was open, and the unsigned allowance
+was trusted on the stated assumption that "it arrives over an authenticated
+ACP channel" — an assumption that was simply false. All seven routes now
+require a merchant-issued bearer credential; agent identity comes from that
+credential, never the self-asserted `x-agent-id`. `allowance.merchant_id`
+was parsed and never compared; it is now checked, and an allowance naming
+NO merchant is refused too, because an unscoped authorisation is not a
+scoped one with the scope left blank.
+
+**x402 fabricated its own permission.** Every field was optional (`{}` was a
+valid payment), no signature was checked, and the server minted an allowance
+for exactly the amount it had just quoted, scoped to itself — authorising its
+own charge and then verifying its own authorisation. Fields are now required,
+the payload is validated against the quote, and the fabricated allowance is
+deleted outright. Settlement genuinely cannot be verified without a
+facilitator, so x402 asserts NO permission and can never auto-approve: it
+always escalates to a human. Three tests changed from asserting 200 to
+asserting 202 — they had been encoding the insecure behaviour.
+
+## P1s
+
+- A swallowed provider-order failure still returned AUTO_APPROVE, and ACP
+  marked the session `completed` with a null order id. An approval that
+  produced nothing payable is not an approval; it now steps up.
+- Gateway decisions bypassed the hash-chained ledger entirely — the one
+  class of event most likely to be disputed was the one not chained. Every
+  decision now appends.
+- A payment link handed to the buyer was being treated as merchant
+  approval. Real `stepUpStatus` / `stepUpDecidedById` fields and an
+  authenticated OWNER/APPROVER endpoint; the link is withheld until
+  approval.
+- Inventory was checked outside the transaction and never decremented —
+  two checkouts for the last unit both succeeded. Now reserved with a
+  `gte`-guarded `updateMany` inside the transaction, so the decrement IS
+  the check.
+- A VIEWER could rewrite spending policy. OWNER-only.
+- A late inconsistent event could regress a terminal CAPTURED payment to
+  UNKNOWN while its Order stayed PAID. Terminal states are no longer
+  regressed; the integrity error is still recorded.
+
+## P2/P3
+
+Canonical idempotency fingerprint (key order no longer causes false
+conflicts) with a 60s lease so a crash cannot lock a key forever;
+`settledOrderCount` actually increments so agents can become KNOWN;
+production refuses to boot on the mock gateway rather than returning
+fabricated identifiers; velocity `>` → `>=`; `.dockerignore` named
+`.pgdata` when the directory is `.dbdata`; the Dockerfile omitted the
+script `run-demo` spawns; ARCHITECTURE.md and JURY_QA.md claimed no auth
+and no protocol integration.
+
+## TWO THINGS THE FIXES EXPOSED
+
+**The test suite was passing because the system was insecure.** 88 tests
+failed the moment mandates required a registered key — every one had been
+minting its own. They now enrol an agent first, which is also a more honest
+rehearsal of a real integration.
+
+**Real inventory decrements made the suite stateful.** Seeded stock of
+0–40 units was exhausted mid-run once reservation became real, and later
+tests failed for want of stock rather than the reason under test. Raised,
+with deliberate out-of-stock variants kept for readiness evidence — moved
+off Running Shoes, because zeroing one silently turned the golden-path
+buyer-agent fixture into NO_MATCH.
+
+## REPOSITORY
+
+204 files, +17,537 lines committed to `security/review-fixes`. The review
+was right that this was the biggest submission risk: the entire ACP, x402,
+gateway, auth, migration, Docker and UI implementation was untracked and
+would have vanished from a Git submission. `.env`, `.dbdata`, `dist` and
+`node_modules` verified ignored; no secret staged.
+
+`PART_10_PRODUCTION_READINESS_CONTRACT.md` is marked SUPERSEDED rather than
+deleted — it claimed "not yet started" with a stale test count while the
+plan said no Part 10 existed at all.
+
+## VERIFICATION
+
+```
+api typecheck / lint     PASS
+web typecheck / lint     PASS
+domain typecheck / lint  PASS
+api test                 239 passed
+domain test              266 passed
+web test                  34 passed
+api build / web build    PASS
+```
+
+Total: **539 tests passing.**
+
+## NOT DONE — STATED PLAINLY
+
+- **Margin floor is not a margin floor.** It compares remaining sale price,
+  not gross margin, because the catalogue has no cost data. Renamed in the
+  comments rather than left implying a guarantee that does not exist.
+- **ACP `payment_data` is still ignored** and `delegate_payment` vaults
+  nothing; it returns an allowance-reference token that is not bound to
+  completion. It is a prototype surface and says so.
+- **No campaign orchestrator, no control-group experimentation, no
+  refunds/returns/chargebacks, no catalog publish-and-rollback, no browser
+  E2E, no OpenAPI conformance fixtures, no rate limiter, no PII redaction
+  or retention policy.** All were in the review's "missing features" list
+  and none is started.
+- **PROGRESS.md is still a 4,700-line journal.** Archiving it for
+  submission is a judgement call for the owner, not a defect to fix
+  unilaterally.
