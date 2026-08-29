@@ -18,10 +18,24 @@ import { PrismaClient, type Prisma } from "@prisma/client";
 import { fixedClock } from "@razorgrowth/domain";
 import { runReadinessAssessment } from "../src/modules/readiness/engine.js";
 import { appendLedgerEvent, type AppendLedgerEventParams } from "../src/modules/audit/ledger.js";
+import { hashPassword } from "../src/modules/auth/password.js";
 
 const prisma = new PrismaClient();
 
 const MERCHANT_SLUG = "meridian-athletics";
+/** PART 10 §1 — the one seeded, real, password-authenticated merchant
+ * user for this demo merchant. A clearly-labeled demo credential, not a
+ * secret — documented in `docs/DEMO.md` for local/demo use only. */
+const DEMO_OWNER_EMAIL = "owner@meridianathletics.demo";
+const DEMO_OWNER_PASSWORD = "MeridianDemo!2026";
+
+/** A second, deliberately under-privileged account. It exists so the
+ * RBAC boundary can be DEMONSTRATED rather than merely asserted: signing
+ * in as this user and attempting to approve a proposal returns a real
+ * 403 from `requireApprovalRole`, proving the approval gate is a server
+ * rule and not a hidden button. */
+const DEMO_VIEWER_EMAIL = "viewer@meridianathletics.demo";
+const DEMO_VIEWER_PASSWORD = "MeridianViewer!2026";
 
 /** mulberry32 — small deterministic PRNG so "randomized" seed choices
  * (which customer, which variant, which quantity) are reproducible across
@@ -91,6 +105,40 @@ const COLORS_BY_CATEGORY: Record<string, readonly string[]> = {
   Sportswear: ["Black", "Grey", "Navy"],
 };
 
+/**
+ * Descriptive traits recorded as STRUCTURED attributes.
+ *
+ * Every value here is already asserted in the product's own description
+ * ("Waterproof trail shoe", "Ultra-light training shoe") — this records
+ * those same facts in a form an AI buyer can filter and rank on, rather
+ * than leaving them buried in prose. Nothing is invented: a product
+ * appears only where its description supports the trait.
+ *
+ * This closes a real gap. A buyer preference is matched BY KEY against
+ * variant attributes, so before this the catalog stored only `color` and
+ * `size` and a preference like "lightweight" or "waterproof" could never
+ * match anything, no matter how well it was extracted. Making the catalog
+ * machine-readable is the point of the product, and this is the catalog
+ * side of it.
+ */
+const TRAITS_BY_PRODUCT: Record<string, Record<string, string>> = {
+  "Meridian Pulse Runner": { surface: "road" },
+  "Meridian Trailblaze GTX": { surface: "trail", feature: "waterproof" },
+  "Meridian Velocity Racer": { surface: "road", weight: "lightweight" },
+  "Meridian Cloudstep Comfort": { surface: "road", cushioning: "maximum" },
+  "Meridian Summit Trail": { surface: "trail" },
+  "Meridian Aero Lightweight": { surface: "road", weight: "lightweight" },
+  "Meridian Windshield Jacket": { feature: "wind-resistant" },
+  "Meridian Flex Shorts": { weight: "lightweight" },
+  "Meridian CoolMax Running Socks": { feature: "breathable" },
+  "Meridian Cushion Crew Socks": { cushioning: "maximum" },
+  "Meridian Merino Trail Socks": { surface: "trail" },
+  "Meridian InsulaFlask 750": { feature: "insulated" },
+  "Meridian ReflectBand Armband": { feature: "reflective" },
+  "Meridian AeroCap Running Hat": { weight: "lightweight" },
+  "Meridian GripFit Gloves": { feature: "touchscreen" },
+};
+
 const CUSTOMERS: { displayName: string; email: string; segment: string }[] = [
   { displayName: "Ananya Rao", email: "ananya.rao@example.com", segment: "vip" },
   { displayName: "Rohan Mehta", email: "rohan.mehta@example.com", segment: "frequent_buyer" },
@@ -140,6 +188,12 @@ async function resetDemoMerchant(merchantSlug: string) {
   await prisma.product.deleteMany({ where: { merchantId } });
   await prisma.customer.deleteMany({ where: { merchantId } });
   await prisma.merchantPolicy.deleteMany({ where: { merchantId } });
+  // PART 10 §1 — MerchantUser must be deleted AFTER growthActionProposal
+  // (line above), since deleting a proposal cascades to its Approval row,
+  // and Approval.approverId RESTRICTs deletion of the MerchantUser it
+  // references. Session cascades from MerchantUser, so no separate step
+  // is needed for it.
+  await prisma.merchantUser.deleteMany({ where: { merchantId } });
   await prisma.merchant.delete({ where: { id: merchantId } });
 }
 
@@ -181,6 +235,24 @@ async function main() {
       defaultCurrency: "INR",
       businessCategory: "Sports & Running Retail",
       status: "ACTIVE",
+    },
+  });
+
+  console.log("[seed] creating merchant owner account...");
+  await prisma.merchantUser.create({
+    data: {
+      merchantId: merchant.id,
+      email: DEMO_OWNER_EMAIL,
+      passwordHash: await hashPassword(DEMO_OWNER_PASSWORD),
+      role: "OWNER",
+    },
+  });
+  await prisma.merchantUser.create({
+    data: {
+      merchantId: merchant.id,
+      email: DEMO_VIEWER_EMAIL,
+      passwordHash: await hashPassword(DEMO_VIEWER_PASSWORD),
+      role: "VIEWER",
     },
   });
 
@@ -281,8 +353,16 @@ async function main() {
       // Metadata Quality / AI Discoverability evidence honestly.
       const hasAttributes = globalVariantIndex % 9 !== 4;
 
-      // Every 13th variant: discontinued (inactive).
-      const isActive = globalVariantIndex % 13 !== 6;
+      // Every 13th variant: discontinued (inactive) — EXCEPT when the
+      // product has only one variant. Deactivating a single-variant
+      // product's only variant leaves an ACTIVE product with no
+      // purchasable variant and therefore no price, which the growth
+      // engine correctly reports as MISSING_PRICE. That is a data-quality
+      // bug, not realistic merchant behaviour: a merchant discontinuing
+      // their only variant would archive the product too. It made
+      // "Meridian AeroCap Running Hat" permanently unsellable and blocked
+      // every relationship pointing at it.
+      const isActive = p.sizes.length === 1 ? true : globalVariantIndex % 13 !== 6;
 
       const colors = COLORS_BY_CATEGORY[p.category];
       const color = colors ? pick(colors) : null;
@@ -294,7 +374,7 @@ async function main() {
           title: `${p.name} — ${size}${color ? ` (${color})` : ""}`,
           priceMinor,
           currency: "INR",
-          attributes: hasAttributes ? { size, ...(color ? { color } : {}) } : {},
+          attributes: hasAttributes ? { size, ...(color ? { color } : {}), ...(TRAITS_BY_PRODUCT[p.name] ?? {}) } : {},
           active: isActive,
           priceUpdatedAt,
         },
@@ -305,7 +385,22 @@ async function main() {
       // Forced additionally for the PART 04 blocked-opportunity demo product.
       const hasKnownInventory = globalVariantIndex % 8 !== 3 && !PRODUCTS_WITH_FORCED_UNKNOWN_INVENTORY.has(p.name);
       if (hasKnownInventory) {
-        const availableQuantity = int(0, 40);
+        // Stock levels are now REAL: checkout reserves and decrements them
+        // inside the transaction, so a seeded 0-40 units was exhausted part
+        // way through a full test run and later checkouts started failing
+        // for want of stock rather than for the reason under test.
+        //
+        // Some variants are still deliberately ZERO, because a genuinely
+        // out-of-stock product is evidence the readiness engine needs and
+        // removing it would flatter the score.
+        //
+        // Running Shoes are excluded: they are the category every buyer-agent
+        // fixture searches ("black size-9 under ₹6,000"), and zeroing one
+        // silently turned a golden-path match into NO_MATCH. Out-of-stock
+        // evidence comes from the other four categories instead, so the
+        // signal survives without breaking the demo it is meant to describe.
+        const deliberatelyOutOfStock = p.category !== "Running Shoes" && globalVariantIndex % 9 === 5;
+        const availableQuantity = deliberatelyOutOfStock ? 0 : int(500, 900);
         await prisma.inventory.create({
           data: { variantId: variant.id, availableQuantity, updatedAt: priceUpdatedAt },
         });
@@ -674,15 +769,128 @@ async function main() {
     return { merchantId: merchant.id, sourceProductId, targetProductId, relationshipType, provenance: "DEMO_SEED" as const };
   };
 
+  // Coverage matters here, not just the scripted cases. With only the six
+  // Pulse Runner rows plus one Summit Trail row, 23 of 25 products
+  // returned NO_OPPORTUNITY ("no relevant growth candidate") — so anyone
+  // exploring the catalog hit a dead end ~92% of the time, and the
+  // Merchant Agent looked broken when it was in fact correct and simply
+  // had nothing to reason over.
+  //
+  // Every product below therefore has at least two outgoing
+  // relationships, modelled on how this catalog actually fits together:
+  // shoes pair with socks/hydration/accessories, apparel bundles with
+  // apparel, and same-category items ladder upward in price.
+  //
+  // UPSELL_ALTERNATIVE rows are deliberately kept inside
+  // `maxUpsellIncreaseBps` (1500 = 15%) so they survive validation — with
+  // ONE intentional exception, Pulse Runner -> Velocity Racer (+78%),
+  // retained from the original seed because PART 04 §125-§130 wants a
+  // real over-ceiling upsell that deterministic validation must reject.
+  //
+  // Pulse Runner -> QuickBelt (COMPLEMENTARY) is likewise retained: the
+  // belt has forced UNKNOWN inventory, so it demonstrates the
+  // readiness -> growth link (a genuine relationship blocked by missing
+  // commerce data) rather than being quietly dropped.
   await prisma.productRelationship.createMany({
     data: [
+      // --- Running shoes: pair with socks, hydration, accessories -----
+      relationship("Meridian Cloudstep Comfort", "Meridian CoolMax Running Socks", "COMPLEMENTARY"),
+      relationship("Meridian Cloudstep Comfort", "Meridian FlowFit Handheld Bottle", "COMPLEMENTARY"),
+      relationship("Meridian Cloudstep Comfort", "Meridian StrideLace Kit", "COMPLEMENTARY"),
+      relationship("Meridian Cloudstep Comfort", "Meridian Pulse Runner", "UPSELL_ALTERNATIVE"), // +4.7%
+
       relationship("Meridian Pulse Runner", "Meridian CoolMax Running Socks", "COMPLEMENTARY"),
       relationship("Meridian Pulse Runner", "Meridian FlowFit Handheld Bottle", "COMPLEMENTARY"),
-      relationship("Meridian Pulse Runner", "Meridian QuickBelt Hydration Belt", "COMPLEMENTARY"),
-      relationship("Meridian Pulse Runner", "Meridian Aero Lightweight", "UPSELL_ALTERNATIVE"),
-      relationship("Meridian Pulse Runner", "Meridian Velocity Racer", "UPSELL_ALTERNATIVE"),
+      relationship("Meridian Pulse Runner", "Meridian QuickBelt Hydration Belt", "COMPLEMENTARY"), // blocked-by-data case
+      relationship("Meridian Pulse Runner", "Meridian Aero Lightweight", "UPSELL_ALTERNATIVE"), // +4.4%
+      relationship("Meridian Pulse Runner", "Meridian Velocity Racer", "UPSELL_ALTERNATIVE"), // +78% — must be rejected
       relationship("Meridian Pulse Runner", "Meridian Cushion Crew Socks", "BUNDLE_COMPATIBLE"),
+
+      relationship("Meridian Aero Lightweight", "Meridian No-Show Performance Socks", "COMPLEMENTARY"),
+      relationship("Meridian Aero Lightweight", "Meridian InsulaFlask 750", "COMPLEMENTARY"),
+      relationship("Meridian Aero Lightweight", "Meridian AeroCap Running Hat", "COMPLEMENTARY"),
+      relationship("Meridian Aero Lightweight", "Meridian Cushion Crew Socks", "BUNDLE_COMPATIBLE"),
+
+      relationship("Meridian Trailblaze GTX", "Meridian Merino Trail Socks", "COMPLEMENTARY"),
+      relationship("Meridian Trailblaze GTX", "Meridian TrailPack Hydration Vest", "COMPLEMENTARY"),
+      relationship("Meridian Trailblaze GTX", "Meridian GripFit Gloves", "COMPLEMENTARY"),
+      relationship("Meridian Trailblaze GTX", "Meridian Summit Trail", "UPSELL_ALTERNATIVE"), // +5.4%
+
       relationship("Meridian Summit Trail", "Meridian CoolMax Running Socks", "COMPLEMENTARY"),
+      relationship("Meridian Summit Trail", "Meridian Merino Trail Socks", "COMPLEMENTARY"),
+      relationship("Meridian Summit Trail", "Meridian TrailPack Hydration Vest", "COMPLEMENTARY"),
+      relationship("Meridian Summit Trail", "Meridian ReflectBand Armband", "COMPLEMENTARY"),
+
+      relationship("Meridian Velocity Racer", "Meridian No-Show Performance Socks", "COMPLEMENTARY"),
+      relationship("Meridian Velocity Racer", "Meridian FlowFit Handheld Bottle", "COMPLEMENTARY"),
+      relationship("Meridian Velocity Racer", "Meridian PulseTrack Chest Strap", "COMPLEMENTARY"),
+
+      // --- Socks: pair back to shoes and apparel ---------------------
+      relationship("Meridian No-Show Performance Socks", "Meridian Cloudstep Comfort", "COMPLEMENTARY"),
+      relationship("Meridian No-Show Performance Socks", "Meridian DriFit Training Tee", "COMPLEMENTARY"),
+      relationship("Meridian No-Show Performance Socks", "Meridian CoolMax Running Socks", "UPSELL_ALTERNATIVE"), // +14.0%
+
+      relationship("Meridian CoolMax Running Socks", "Meridian Pulse Runner", "COMPLEMENTARY"),
+      relationship("Meridian CoolMax Running Socks", "Meridian Flex Shorts", "COMPLEMENTARY"),
+      relationship("Meridian CoolMax Running Socks", "Meridian Cushion Crew Socks", "UPSELL_ALTERNATIVE"), // +12.5%
+
+      relationship("Meridian Cushion Crew Socks", "Meridian Aero Lightweight", "COMPLEMENTARY"),
+      relationship("Meridian Cushion Crew Socks", "Meridian Compression Base Layer", "COMPLEMENTARY"),
+
+      relationship("Meridian Merino Trail Socks", "Meridian Trailblaze GTX", "COMPLEMENTARY"),
+      relationship("Meridian Merino Trail Socks", "Meridian ThermaCore Half-Zip", "COMPLEMENTARY"),
+
+      // --- Hydration -------------------------------------------------
+      relationship("Meridian FlowFit Handheld Bottle", "Meridian Pulse Runner", "COMPLEMENTARY"),
+      relationship("Meridian FlowFit Handheld Bottle", "Meridian AeroCap Running Hat", "COMPLEMENTARY"),
+
+      relationship("Meridian InsulaFlask 750", "Meridian Trailblaze GTX", "COMPLEMENTARY"),
+      relationship("Meridian InsulaFlask 750", "Meridian FlowFit Handheld Bottle", "COMPLEMENTARY"),
+      relationship("Meridian InsulaFlask 750", "Meridian QuickBelt Hydration Belt", "UPSELL_ALTERNATIVE"), // +8.4%
+
+      relationship("Meridian QuickBelt Hydration Belt", "Meridian Trailblaze GTX", "COMPLEMENTARY"),
+      relationship("Meridian QuickBelt Hydration Belt", "Meridian ReflectBand Armband", "COMPLEMENTARY"),
+
+      relationship("Meridian TrailPack Hydration Vest", "Meridian Summit Trail", "COMPLEMENTARY"),
+      relationship("Meridian TrailPack Hydration Vest", "Meridian Cushion Crew Socks", "COMPLEMENTARY"),
+      relationship("Meridian TrailPack Hydration Vest", "Meridian Trailblaze GTX", "COMPLEMENTARY"),
+
+      // --- Accessories -----------------------------------------------
+      relationship("Meridian StrideLace Kit", "Meridian Cloudstep Comfort", "COMPLEMENTARY"),
+      relationship("Meridian StrideLace Kit", "Meridian CoolMax Running Socks", "COMPLEMENTARY"),
+
+      relationship("Meridian ReflectBand Armband", "Meridian Windshield Jacket", "COMPLEMENTARY"),
+      relationship("Meridian ReflectBand Armband", "Meridian ThermaCore Half-Zip", "COMPLEMENTARY"),
+
+      relationship("Meridian AeroCap Running Hat", "Meridian DriFit Training Tee", "COMPLEMENTARY"),
+      relationship("Meridian AeroCap Running Hat", "Meridian StrideLace Kit", "COMPLEMENTARY"),
+
+      relationship("Meridian GripFit Gloves", "Meridian ThermaCore Half-Zip", "COMPLEMENTARY"),
+      relationship("Meridian GripFit Gloves", "Meridian Windshield Jacket", "COMPLEMENTARY"),
+
+      relationship("Meridian PulseTrack Chest Strap", "Meridian Compression Base Layer", "COMPLEMENTARY"),
+      relationship("Meridian PulseTrack Chest Strap", "Meridian Velocity Racer", "COMPLEMENTARY"),
+
+      // --- Sportswear ------------------------------------------------
+      relationship("Meridian DriFit Training Tee", "Meridian Cushion Crew Socks", "COMPLEMENTARY"),
+      relationship("Meridian DriFit Training Tee", "Meridian Cloudstep Comfort", "COMPLEMENTARY"),
+      relationship("Meridian DriFit Training Tee", "Meridian Flex Shorts", "BUNDLE_COMPATIBLE"),
+
+      relationship("Meridian Flex Shorts", "Meridian CoolMax Running Socks", "COMPLEMENTARY"),
+      relationship("Meridian Flex Shorts", "Meridian DriFit Training Tee", "BUNDLE_COMPATIBLE"),
+      relationship("Meridian Flex Shorts", "Meridian Compression Base Layer", "UPSELL_ALTERNATIVE"), // +14.2%
+
+      relationship("Meridian Compression Base Layer", "Meridian ThermaCore Half-Zip", "COMPLEMENTARY"),
+      relationship("Meridian Compression Base Layer", "Meridian Momentum Leggings", "UPSELL_ALTERNATIVE"), // +12.5%
+
+      relationship("Meridian Momentum Leggings", "Meridian ThermaCore Half-Zip", "COMPLEMENTARY"),
+      relationship("Meridian Momentum Leggings", "Meridian Merino Trail Socks", "COMPLEMENTARY"),
+
+      relationship("Meridian ThermaCore Half-Zip", "Meridian Cushion Crew Socks", "COMPLEMENTARY"),
+      relationship("Meridian ThermaCore Half-Zip", "Meridian Windshield Jacket", "UPSELL_ALTERNATIVE"), // +8.7%
+
+      relationship("Meridian Windshield Jacket", "Meridian ReflectBand Armband", "COMPLEMENTARY"),
+      relationship("Meridian Windshield Jacket", "Meridian ThermaCore Half-Zip", "COMPLEMENTARY"),
     ],
   });
 

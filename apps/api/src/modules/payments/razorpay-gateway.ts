@@ -11,6 +11,7 @@
  */
 import type { ClientCompletionParams, CreatePaymentOrderParams, PaymentGateway, PaymentGatewayPublicConfig, ProviderOrder, ProviderPaymentInfo } from "./gateway.js";
 import { ProviderGatewayError } from "./gateway.js";
+import type { CreatePaymentLinkParams, ProviderPaymentLink } from "./gateway.js";
 import { verifyClientCompletionSignature, verifyWebhookSignature as verifyWebhookSignatureHmac } from "./razorpay-signature.js";
 
 export interface RazorpayConfig {
@@ -136,6 +137,51 @@ export function createRazorpayGateway(config: RazorpayConfig): PaymentGateway {
         errorDescription: body.error_description,
         capturedAt: body.captured ? new Date() : null,
       };
+    },
+
+    async listPaymentsForOrder(providerOrderId: string): Promise<ProviderPaymentInfo[]> {
+      const body = await requestJson<{ items: RazorpayPaymentResponse[] }>(
+        `${config.apiBaseUrl}/orders/${encodeURIComponent(providerOrderId)}/payments`,
+        { method: "GET", headers: { Authorization: authHeader } },
+        config.timeoutMs,
+      );
+      return (body.items ?? []).map((p) => ({
+        providerPaymentId: p.id,
+        providerOrderId: p.order_id,
+        amountMinor: p.amount,
+        currency: p.currency,
+        providerStatus: p.status,
+        method: p.method,
+        errorCode: p.error_code,
+        errorDescription: p.error_description,
+        capturedAt: p.captured ? new Date() : null,
+      }));
+    },
+
+    async createPaymentLink(params: CreatePaymentLinkParams): Promise<ProviderPaymentLink> {
+      const body = await requestJson<{ id: string; short_url: string }>(
+        `${config.apiBaseUrl}/payment_links`,
+        {
+          method: "POST",
+          headers: { Authorization: authHeader, "Content-Type": "application/json" },
+          body: JSON.stringify({
+            amount: params.amountMinor,
+            currency: params.currency,
+            description: params.description,
+            reference_id: params.referenceId,
+            // No `customer` block at all. The merchant is the one
+            // approving, and we hold no contact details for a buyer agent —
+            // Razorpay rejects an empty customer object outright
+            // ("faulty key: customer"), so the field is omitted rather than
+            // sent hollow.
+            notify: { sms: false, email: false },
+            reminder_enable: false,
+            notes: { referenceId: params.referenceId, source: "anumati-step-up" },
+          }),
+        },
+        config.timeoutMs,
+      );
+      return { providerPaymentLinkId: body.id, shortUrl: body.short_url };
     },
 
     verifyClientCompletion(params: ClientCompletionParams): boolean {

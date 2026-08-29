@@ -2,7 +2,7 @@ import type { FastifyInstance } from "fastify";
 import { paginationQuerySchema, agentActorTypeSchema, agentActionStatusSchema } from "@razorgrowth/contracts";
 import { z } from "zod";
 import { prisma } from "../../db/client.js";
-import { getDemoMerchantId } from "../authorization/demo-context.js";
+import { getAuthenticatedMerchantId } from "../authorization/demo-context.js";
 import { getWorkflowTrace, listLedgerEntries, verifyLedgerWorkflow } from "./service.js";
 
 const listQuerySchema = paginationQuerySchema.extend({
@@ -15,7 +15,7 @@ const workflowParamsSchema = z.object({ workflowId: z.string().uuid() });
 
 export function registerLedgerRoutes(app: FastifyInstance, prefix: string): void {
   app.get(`${prefix}/ledger`, async (request) => {
-    const merchantId = await getDemoMerchantId(prisma);
+    const merchantId = getAuthenticatedMerchantId(request);
     const query = listQuerySchema.parse(request.query);
     return listLedgerEntries(prisma, { merchantId, ...query });
   });

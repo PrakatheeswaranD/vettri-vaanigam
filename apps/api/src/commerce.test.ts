@@ -11,9 +11,8 @@
 import { randomUUID } from "node:crypto";
 import { afterAll, beforeAll, describe, expect, it } from "vitest";
 import type { FastifyInstance } from "fastify";
-import { buildApp } from "./app.js";
+import { buildAuthedTestApp, getTestMerchantId } from "./test-helpers/test-app.js";
 import { prisma } from "./db/client.js";
-import { getDemoMerchantId } from "./modules/authorization/demo-context.js";
 import { proposeGrowthAction } from "./modules/merchant-agent/service.js";
 import { createFixtureProvider } from "./modules/agents/providers/fixture-provider.js";
 
@@ -38,8 +37,7 @@ async function cheapestActiveVariant(pid: string): Promise<string> {
 }
 
 beforeAll(async () => {
-  app = buildApp();
-  await app.ready();
+  app = await buildAuthedTestApp();
 });
 
 afterAll(async () => {
@@ -48,7 +46,7 @@ afterAll(async () => {
 });
 
 async function proposeCrossSellWithDiscount(percentageBps: number | null) {
-  const merchantId = await getDemoMerchantId(prisma);
+  const merchantId = await getTestMerchantId(prisma);
   const pulseRunner = await productId("Meridian Pulse Runner");
   const provider = createFixtureProvider(
     {

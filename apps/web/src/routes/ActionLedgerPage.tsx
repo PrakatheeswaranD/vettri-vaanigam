@@ -16,6 +16,7 @@ import { AgentActionStatusBadge, PolicyDecisionBadge } from "../components/ui/St
 import { DemoDataBadge } from "../components/ui/DemoDataBadge";
 import { formatDateTime } from "../lib/format";
 import { ApiError } from "../lib/api-client";
+import { PageHeader } from "../components/layout/PageHeader";
 
 const ACTOR_LABEL: Record<string, string> = {
   BUYER_AGENT: "Buyer Agent",
@@ -120,11 +121,10 @@ export default function ActionLedgerPage() {
     <div className="space-y-6">
       <div className="flex flex-col gap-4 sm:flex-row sm:items-center sm:justify-between">
         <div>
-          <h1 className="text-lg font-semibold text-ink">Agent Action Ledger</h1>
-          <p className="mt-1 max-w-2xl text-sm text-ink-muted">
-            A traceable, tamper-evident record of every agent-driven action: what was proposed, what policy decided,
-            who approved it, and what was authorized. Concise auditable reasons only — never hidden model reasoning.
-          </p>
+          <PageHeader
+          title={"Audit Log"}
+          lead={"The tamper-evident record, for an auditor. Every entry is chained to the one before it, so a changed or deleted row is detectable."}
+        />
         </div>
         <div className="flex gap-2">
           <select

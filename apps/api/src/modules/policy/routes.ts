@@ -1,14 +1,15 @@
 /**
  * PART 05 governance API — deliberately narrow (§34, §107-§108). Every
- * route resolves the single controlled demo merchant server-side
- * (`getDemoMerchantId`) exactly like every other module; no route ever
- * accepts a client-supplied merchant/approver identity (§33, §98).
+ * route resolves the authenticated merchant server-side
+ * (`getAuthenticatedMerchantId`, PART 10 §1); no route ever accepts a
+ * client-supplied merchant/approver identity (§33, §98).
  */
 import type { FastifyInstance } from "fastify";
 import { z } from "zod";
 import { approvalDecisionSchema, approvalRequestBodySchema, policyEvaluateRequestSchema } from "@razorgrowth/contracts";
 import { prisma } from "../../db/client.js";
-import { getDemoMerchantId } from "../authorization/demo-context.js";
+import { getAuthenticatedMerchantId } from "../authorization/demo-context.js";
+import { requireApprovalRole } from "../auth/middleware.js";
 import { evaluateProposalPolicy, getPolicyDecision } from "./service.js";
 import { issueExecutionAuthorization, getExecutionAuthorization } from "./authorization-service.js";
 import { decideApproval, listPendingApprovalItems } from "./approval-service.js";
@@ -24,7 +25,7 @@ export function registerPolicyRoutes(app: FastifyInstance, prefix: string): void
   // itself, so `evaluateProposalPolicy` never depends on the authorization
   // service (avoids a circular dependency between the two services).
   app.post(`${prefix}/policy/evaluate`, async (request) => {
-    const merchantId = await getDemoMerchantId(prisma);
+    const merchantId = getAuthenticatedMerchantId(request);
     const body = policyEvaluateRequestSchema.parse(request.body);
     const decision = await evaluateProposalPolicy(prisma, merchantId, body.proposalId);
     const authorization = decision.outcome === "ALLOW" ? await issueExecutionAuthorization(prisma, merchantId, body.proposalId) : null;
@@ -32,29 +33,31 @@ export function registerPolicyRoutes(app: FastifyInstance, prefix: string): void
   });
 
   app.get(`${prefix}/policy/decisions/:id`, async (request) => {
-    const merchantId = await getDemoMerchantId(prisma);
+    const merchantId = getAuthenticatedMerchantId(request);
     const params = idParamsSchema.parse(request.params);
     return getPolicyDecision(prisma, merchantId, params.id);
   });
 
   app.post(`${prefix}/approvals/:proposalId/approve`, async (request) => {
-    const merchantId = await getDemoMerchantId(prisma);
+    requireApprovalRole(request);
+    const merchantId = getAuthenticatedMerchantId(request);
     const params = proposalParamsSchema.parse(request.params);
     const body = approvalRequestBodySchema.parse(request.body ?? {});
-    const approval = await decideApproval(prisma, merchantId, params.proposalId, approvalDecisionSchema.parse("APPROVED"), body.reason);
+    const approval = await decideApproval(prisma, merchantId, params.proposalId, approvalDecisionSchema.parse("APPROVED"), body.reason, request.merchantUserId);
     const authorization = await issueExecutionAuthorization(prisma, merchantId, params.proposalId);
     return { approval, authorization };
   });
 
   app.post(`${prefix}/approvals/:proposalId/reject`, async (request) => {
-    const merchantId = await getDemoMerchantId(prisma);
+    requireApprovalRole(request);
+    const merchantId = getAuthenticatedMerchantId(request);
     const params = proposalParamsSchema.parse(request.params);
     const body = approvalRequestBodySchema.parse(request.body ?? {});
-    return { approval: await decideApproval(prisma, merchantId, params.proposalId, approvalDecisionSchema.parse("REJECTED"), body.reason) };
+    return { approval: await decideApproval(prisma, merchantId, params.proposalId, approvalDecisionSchema.parse("REJECTED"), body.reason, request.merchantUserId) };
   });
 
   app.get(`${prefix}/approvals/pending`, async (request) => {
-    const merchantId = await getDemoMerchantId(prisma);
+    const merchantId = getAuthenticatedMerchantId(request);
     const query = pendingQuerySchema.parse(request.query);
     return { items: await listPendingApprovalItems(prisma, merchantId, query.limit) };
   });
@@ -63,13 +66,13 @@ export function registerPolicyRoutes(app: FastifyInstance, prefix: string): void
   // automatic attempt (right after ALLOW/approve) failed revalidation and
   // the underlying condition has since been fixed (PART 05 §43, §151).
   app.post(`${prefix}/execution-authorizations/:proposalId/issue`, async (request) => {
-    const merchantId = await getDemoMerchantId(prisma);
+    const merchantId = getAuthenticatedMerchantId(request);
     const params = proposalParamsSchema.parse(request.params);
     return issueExecutionAuthorization(prisma, merchantId, params.proposalId);
   });
 
   app.get(`${prefix}/execution-authorizations/:id`, async (request) => {
-    const merchantId = await getDemoMerchantId(prisma);
+    const merchantId = getAuthenticatedMerchantId(request);
     const params = idParamsSchema.parse(request.params);
     return getExecutionAuthorization(prisma, merchantId, params.id);
   });

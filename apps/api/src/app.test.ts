@@ -9,14 +9,13 @@
  */
 import { afterAll, beforeAll, describe, expect, it } from "vitest";
 import type { FastifyInstance } from "fastify";
-import { buildApp } from "./app.js";
+import { buildAuthedTestApp } from "./test-helpers/test-app.js";
 import { prisma } from "./db/client.js";
 
 let app: FastifyInstance;
 
 beforeAll(async () => {
-  app = buildApp();
-  await app.ready();
+  app = await buildAuthedTestApp();
 });
 
 afterAll(async () => {

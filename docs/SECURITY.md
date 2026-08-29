@@ -1,6 +1,6 @@
 # Security Model
 
-This document describes the security posture of RazorGrowth AI, scoped
+This document describes the security posture of Anumati, scoped
 honestly per [`PART_00_MASTER_ENGINEERING_CONTRACT.md`](../PART_00_MASTER_ENGINEERING_CONTRACT.md)
 §23: the strongest rigor is concentrated on the demonstrated financial
 flow (AI proposal → policy → approval → checkout → Razorpay payment →

@@ -3,7 +3,7 @@ import { z } from "zod";
 import { commerceExecutionRequestSchema, paginationQuerySchema } from "@razorgrowth/contracts";
 import { AppError } from "../../http/errors.js";
 import { prisma } from "../../db/client.js";
-import { getDemoMerchantId } from "../authorization/demo-context.js";
+import { getAuthenticatedMerchantId } from "../authorization/demo-context.js";
 import { listTransactions } from "./service.js";
 import { executeAuthorizedSelection } from "./execution-service.js";
 import { findCheckoutById } from "./checkout-repository.js";
@@ -14,7 +14,7 @@ const idParamsSchema = z.object({ id: z.string().uuid() });
 
 export function registerTransactionRoutes(app: FastifyInstance, prefix: string): void {
   app.get(`${prefix}/transactions`, async (request) => {
-    const merchantId = await getDemoMerchantId(prisma);
+    const merchantId = getAuthenticatedMerchantId(request);
     const query = paginationQuerySchema.parse(request.query);
     return listTransactions(prisma, { merchantId, ...query });
   });
@@ -31,13 +31,13 @@ export function registerTransactionRoutes(app: FastifyInstance, prefix: string):
  */
 export function registerCommerceRoutes(app: FastifyInstance, prefix: string): void {
   app.post(`${prefix}/commerce/checkout`, async (request) => {
-    const merchantId = await getDemoMerchantId(prisma);
+    const merchantId = getAuthenticatedMerchantId(request);
     const body = commerceExecutionRequestSchema.parse(request.body);
     return executeAuthorizedSelection(prisma, merchantId, null, body);
   });
 
   app.get(`${prefix}/commerce/checkouts/:id`, async (request) => {
-    const merchantId = await getDemoMerchantId(prisma);
+    const merchantId = getAuthenticatedMerchantId(request);
     const params = idParamsSchema.parse(request.params);
     const checkout = await findCheckoutById(prisma, merchantId, params.id);
     if (!checkout) throw AppError.notFound(`Checkout not found: ${params.id}`);
@@ -45,7 +45,7 @@ export function registerCommerceRoutes(app: FastifyInstance, prefix: string): vo
   });
 
   app.get(`${prefix}/commerce/orders/:id`, async (request) => {
-    const merchantId = await getDemoMerchantId(prisma);
+    const merchantId = getAuthenticatedMerchantId(request);
     const params = idParamsSchema.parse(request.params);
     const order = await findOrderById(prisma, merchantId, params.id);
     if (!order) throw AppError.notFound(`Order not found: ${params.id}`);

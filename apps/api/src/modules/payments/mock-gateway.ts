@@ -10,7 +10,7 @@
  * stubbed-out `return true`.
  */
 import { randomUUID } from "node:crypto";
-import type { ClientCompletionParams, CreatePaymentOrderParams, PaymentGateway, PaymentGatewayPublicConfig, ProviderOrder, ProviderPaymentInfo } from "./gateway.js";
+import type { CreatePaymentLinkParams, ProviderPaymentLink, ClientCompletionParams, CreatePaymentOrderParams, PaymentGateway, PaymentGatewayPublicConfig, ProviderOrder, ProviderPaymentInfo } from "./gateway.js";
 import { ProviderGatewayError } from "./gateway.js";
 import { verifyClientCompletionSignature, verifyWebhookSignature as verifyWebhookSignatureHmac } from "./razorpay-signature.js";
 
@@ -66,6 +66,22 @@ export class MockPaymentGateway implements PaymentGateway {
    * a given status (used for reconciliation tests). */
   seedPayment(info: ProviderPaymentInfo): void {
     this.payments.set(info.providerPaymentId, info);
+  }
+
+  async listPaymentsForOrder(providerOrderId: string): Promise<ProviderPaymentInfo[]> {
+    if (this.queuedFetchError) {
+      const err = this.queuedFetchError;
+      this.queuedFetchError = null;
+      throw err;
+    }
+    return [...this.payments.values()].filter((p) => p.providerOrderId === providerOrderId);
+  }
+
+  /** Deterministic stand-in: a stable fake link so the Step-Up Gate can be
+   * exercised end to end without a live provider call. */
+  async createPaymentLink(_params: CreatePaymentLinkParams): Promise<ProviderPaymentLink> {
+    const id = `plink_mock_${randomUUID().replace(/-/g, "").slice(0, 14)}`;
+    return { providerPaymentLinkId: id, shortUrl: `https://rzp.io/i/${id}` };
   }
 
   verifyClientCompletion(params: ClientCompletionParams): boolean {

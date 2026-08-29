@@ -23,6 +23,7 @@ import { fileURLToPath } from "node:url";
 import { needsClarification, mergeIntentSignal } from "@razorgrowth/domain";
 import { extractAndNormalizeIntent } from "../src/modules/buyer-agent/intent-extraction.js";
 import { getAIProvider } from "../src/modules/agents/provider-factory.js";
+import { EVAL_REQUEST_INTERVAL_MS, throttle } from "./eval-throttle.js";
 
 const __dirname = path.dirname(fileURLToPath(import.meta.url));
 const CASES_PATH = path.resolve(__dirname, "../../../evals/buyer-intent/cases.json");
@@ -48,6 +49,10 @@ interface EvalCase {
 interface Dataset {
   datasetVersion: string;
   knownCategories: string[];
+  /** The merchant's real variant-attribute keys and value formats. Held in
+   * the dataset rather than read from the database so the suite stays
+   * hermetic and reproducible, exactly like knownCategories. */
+  knownAttributes?: Record<string, string[]>;
   cases: EvalCase[];
 }
 
@@ -80,9 +85,15 @@ async function main() {
   let overallExactMatches = 0;
 
   const failures: string[] = [];
+  console.log(
+    provider.mode === "DEMO_RULE_BASED"
+      ? ""
+      : `Throttling to ${(60_000 / EVAL_REQUEST_INTERVAL_MS).toFixed(0)} req/min so provider rate limits are not scored as model failures.\n`,
+  );
 
   for (const testCase of dataset.cases) {
-    const outcome = await extractAndNormalizeIntent(provider, testCase.message, dataset.knownCategories);
+    await throttle(provider.mode);
+    const outcome = await extractAndNormalizeIntent(provider, testCase.message, dataset.knownCategories, dataset.knownAttributes ?? {});
     if (!outcome.ok) {
       failures.push(`${testCase.id}: extraction failed outright (${outcome.errorCode})`);
       continue;
@@ -147,7 +158,7 @@ async function main() {
 
   console.log("=== Intent Extraction Evaluation ===");
   console.log(`Dataset version: ${dataset.datasetVersion} | Cases: ${dataset.cases.length}`);
-  console.log(`Provider mode: ${provider.mode}${provider.mode === "DEMO_RULE_BASED" ? " (CONTRACT eval — deterministic rule-based extractor, not a live model)" : " (LIVE evaluation — real Anthropic model)"}`);
+  console.log(`Provider mode: ${provider.mode}${provider.mode === "DEMO_RULE_BASED" ? " (CONTRACT eval — deterministic rule-based extractor, not a live model)" : ` (LIVE evaluation — real ${provider.mode === "LIVE_GEMINI" ? "Gemini" : "Anthropic"} model)`}`);
   console.log("");
   console.log(`Category accuracy:            ${pct(categoryCorrect, categoryChecked)} (${categoryCorrect}/${categoryChecked})`);
   console.log(`Budget accuracy:               ${pct(budgetCorrect, budgetChecked)} (${budgetCorrect}/${budgetChecked})`);
@@ -162,7 +173,7 @@ async function main() {
 
   if (provider.mode === "DEMO_RULE_BASED") {
     console.log("\nLIVE MODEL EVALUATION NOT EXECUTED — AI_PROVIDER_API_KEY is not configured in this environment.");
-    console.log("Set AI_PROVIDER_API_KEY and rerun this command to evaluate the real Anthropic-backed extractor.");
+    console.log("Set a live provider (AI_PROVIDER=gemini with GEMINI_API_KEY, or AI_PROVIDER=anthropic with AI_PROVIDER_API_KEY) and rerun to evaluate the real model-backed extractor.");
   }
 }
 

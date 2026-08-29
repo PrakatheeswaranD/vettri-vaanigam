@@ -1,5 +1,6 @@
 import type { AgentActionStatus, AgentActorType, PrismaClient } from "@prisma/client";
 import type { LedgerVerificationResultDTO, WorkflowFinancialOutcomeDTO, WorkflowTraceDTO } from "@razorgrowth/contracts";
+import { SUPPORTED_CURRENCIES } from "@razorgrowth/domain";
 import { listAgentActions } from "./repository.js";
 import { toAgentActionDTO } from "./mapper.js";
 import { verifyWorkflowLedger } from "./ledger.js";
@@ -71,5 +72,71 @@ export async function getWorkflowTrace(prisma: PrismaClient, workflowId: string)
     steps,
     financialOutcome: deriveFinancialOutcome(events.map((e) => e.actionType)),
     ledgerIntegrity: { valid: integrity.valid, eventCount: integrity.eventCount, brokenAtSequence: integrity.brokenAtSequence },
+    growthEffect: await deriveGrowthEffect(prisma, events),
+  };
+}
+
+type SupportedCurrency = (typeof SUPPORTED_CURRENCIES)[number];
+
+interface OpportunityJson {
+  currentBasketMinor?: number;
+  potentialBasketMinor?: number;
+  opportunityDeltaMinor?: number;
+  currency?: string;
+}
+
+function toSupportedCurrency(value: string | undefined): SupportedCurrency | null {
+  return SUPPORTED_CURRENCIES.includes(value as SupportedCurrency) ? (value as SupportedCurrency) : null;
+}
+
+/**
+ * Truthful commercial effect for one workflow (Part 11 §47).
+ *
+ * The potential figures are the Merchant Agent's own opportunity
+ * calculation (OPPORTUNITY — unrealized). `capturedBasketMinor` is
+ * populated ONLY from a real `Payment` row in state `CAPTURED`, so a
+ * potential basket can never be rendered as money that actually arrived.
+ * Returns null — never a zero-filled placeholder — when this workflow
+ * produced no proposal carrying an opportunity calculation.
+ */
+async function deriveGrowthEffect(
+  prisma: PrismaClient,
+  events: { relatedEntityType: string | null; relatedEntityId: string | null }[],
+): Promise<WorkflowTraceDTO["growthEffect"]> {
+  const proposalId = events.find((e) => e.relatedEntityType === "GrowthActionProposal")?.relatedEntityId;
+  if (!proposalId) return null;
+
+  const proposal = await prisma.growthActionProposal.findUnique({
+    where: { id: proposalId },
+    select: { id: true, opportunity: true },
+  });
+  const opp = proposal?.opportunity as OpportunityJson | null | undefined;
+  if (
+    !opp ||
+    typeof opp.currentBasketMinor !== "number" ||
+    typeof opp.potentialBasketMinor !== "number" ||
+    typeof opp.opportunityDeltaMinor !== "number"
+  ) {
+    return null;
+  }
+
+  // An unrecognized currency means we cannot label these amounts
+  // correctly, so we show nothing rather than guess a denomination.
+  const currency = toSupportedCurrency(opp.currency);
+  if (!currency) return null;
+
+  // OBSERVED only: a captured payment on the order this proposal produced.
+  const capturedPayment = await prisma.payment.findFirst({
+    where: { state: "CAPTURED", order: { growthProposalId: proposalId } },
+    select: { amountMinor: true },
+    orderBy: { attemptNumber: "desc" },
+  });
+
+  return {
+    baseBasketMinor: opp.currentBasketMinor,
+    opportunityDeltaMinor: opp.opportunityDeltaMinor,
+    potentialBasketMinor: opp.potentialBasketMinor,
+    capturedBasketMinor: capturedPayment?.amountMinor ?? null,
+    currency,
   };
 }

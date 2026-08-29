@@ -5,8 +5,24 @@
  * `ApiError` instead of a generic network error.
  */
 import type { ApiErrorDTO } from "@razorgrowth/contracts";
+import { clearToken, getToken } from "./auth-storage";
 
 const API_BASE_URL = import.meta.env.VITE_API_BASE_URL ?? "http://localhost:4000/api/v1";
+
+function authHeaders(): Record<string, string> {
+  const token = getToken();
+  return token ? { authorization: `Bearer ${token}` } : {};
+}
+
+/** A 401 means the session is gone (never logged in, expired, or
+ * revoked) — clear it client-side so `RequireAuth` immediately redirects
+ * to `/login`, rather than looping on the same failed request. */
+async function toApiError(response: Response): Promise<ApiError | Error> {
+  const body = (await response.json().catch(() => null)) as ApiErrorDTO | null;
+  if (response.status === 401) clearToken();
+  if (body?.error) return new ApiError(response.status, body);
+  return new Error(`Request failed with status ${response.status}`);
+}
 
 export class ApiError extends Error {
   readonly code: string;
@@ -37,31 +53,18 @@ function buildUrl(path: string, params?: QueryParams): string {
 }
 
 export async function apiGet<T>(path: string, params?: QueryParams): Promise<T> {
-  const response = await fetch(buildUrl(path, params));
-  if (!response.ok) {
-    const body = (await response.json().catch(() => null)) as ApiErrorDTO | null;
-    if (body?.error) {
-      throw new ApiError(response.status, body);
-    }
-    throw new Error(`Request to ${path} failed with status ${response.status}`);
-  }
+  const response = await fetch(buildUrl(path, params), { headers: authHeaders() });
+  if (!response.ok) throw await toApiError(response);
   return response.json() as Promise<T>;
 }
 
 export async function apiPost<T>(path: string, body?: unknown): Promise<T> {
   const response = await fetch(buildUrl(path), {
     method: "POST",
-    ...(body !== undefined
-      ? { headers: { "content-type": "application/json" }, body: JSON.stringify(body) }
-      : {}),
+    headers: body !== undefined ? { "content-type": "application/json", ...authHeaders() } : authHeaders(),
+    ...(body !== undefined ? { body: JSON.stringify(body) } : {}),
   });
-  if (!response.ok) {
-    const errorBody = (await response.json().catch(() => null)) as ApiErrorDTO | null;
-    if (errorBody?.error) {
-      throw new ApiError(response.status, errorBody);
-    }
-    throw new Error(`Request to ${path} failed with status ${response.status}`);
-  }
+  if (!response.ok) throw await toApiError(response);
   if (response.status === 204) return undefined as T;
   return response.json() as Promise<T>;
 }
@@ -69,15 +72,19 @@ export async function apiPost<T>(path: string, body?: unknown): Promise<T> {
 export async function apiPatch<T>(path: string, body: unknown): Promise<T> {
   const response = await fetch(buildUrl(path), {
     method: "PATCH",
-    headers: { "content-type": "application/json" },
+    headers: { "content-type": "application/json", ...authHeaders() },
     body: JSON.stringify(body),
   });
-  if (!response.ok) {
-    const errorBody = (await response.json().catch(() => null)) as ApiErrorDTO | null;
-    if (errorBody?.error) {
-      throw new ApiError(response.status, errorBody);
-    }
-    throw new Error(`Request to ${path} failed with status ${response.status}`);
-  }
+  if (!response.ok) throw await toApiError(response);
+  return response.json() as Promise<T>;
+}
+
+export async function apiPut<T>(path: string, body: unknown): Promise<T> {
+  const response = await fetch(buildUrl(path), {
+    method: "PUT",
+    headers: { "content-type": "application/json", ...authHeaders() },
+    body: JSON.stringify(body),
+  });
+  if (!response.ok) throw await toApiError(response);
   return response.json() as Promise<T>;
 }

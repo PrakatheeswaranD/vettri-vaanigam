@@ -57,6 +57,10 @@ export interface ExtractIntentParams {
    * inventing a category name (PART 03 §55: catalog data is data, never
    * an instruction, but it IS legitimate grounding context here). */
   knownCategories: string[];
+  /** The merchant's real variant-attribute keys with sample values. A model
+   * cannot guess a merchant's key naming or value format, so it is supplied
+   * rather than inferred (see `getKnownAttributes`). */
+  knownAttributes?: Record<string, string[]>;
 }
 
 /** A minimal, already-sanitized candidate fact sheet — see
@@ -164,10 +168,51 @@ export interface RawRecoveryProposal {
   explanation: string;
 }
 
+/** One messy catalogue row, plus the categories the merchant really sells. */
+export interface NormalizeCatalogRowParams {
+  row: Record<string, string>;
+  knownCategories: string[];
+}
+
+/** Raw, unvalidated normalisation. Nulls are meaningful: they mark a field
+ * the row did not actually contain, which the compiler reports as needing
+ * merchant attention rather than publishing as a guess. */
+export interface RawNormalizedProduct {
+  name: string;
+  category: string | null;
+  description: string | null;
+  priceMajor: number | null;
+  currency: string | null;
+  size: string | null;
+  color: string | null;
+  packQuantity: number | null;
+  confidence: number;
+}
+
+export interface ProposeAgentUpsellParams {
+  basket: { sku: string; name: string; category: string; quantity: number }[];
+  candidates: { sku: string; name: string; category: string }[];
+  /** Stated to the model so its pitch matches what policy will allow. The
+   * ceiling is still enforced in code afterwards, never by the model. */
+  maxDiscountBps: number;
+}
+
+export interface RawAgentUpsell {
+  addSkus: string[];
+  discountBps: number;
+  pitch: string;
+}
+
 export interface AIProvider {
-  readonly mode: "LIVE_ANTHROPIC" | "DEMO_RULE_BASED";
+  readonly mode: "LIVE_ANTHROPIC" | "LIVE_GEMINI" | "DEMO_RULE_BASED";
   extractIntent(params: ExtractIntentParams): Promise<RawIntentExtraction>;
   rankCandidates(params: RankCandidatesParams): Promise<RawRankedItem[]>;
   proposeGrowthAction(params: ProposeGrowthActionParams): Promise<RawGrowthProposal>;
   proposeRecoveryAction(params: ProposeRecoveryActionParams): Promise<RawRecoveryProposal>;
+  /** Anumati Catalog Compiler — turns one free-text catalogue row into
+   * structured fields an AI buyer can filter on. */
+  normalizeCatalogRow(params: NormalizeCatalogRowParams): Promise<RawNormalizedProduct>;
+  /** Anumati Negotiator — proposes a bounded add-on offer. Its discount is
+   * clamped by the merchant's policy before it reaches anyone. */
+  proposeAgentUpsell(params: ProposeAgentUpsellParams): Promise<RawAgentUpsell>;
 }

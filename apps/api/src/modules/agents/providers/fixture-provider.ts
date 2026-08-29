@@ -16,6 +16,10 @@ import type {
   RawIntentExtraction,
   RawRankedItem,
   RawRecoveryProposal,
+  NormalizeCatalogRowParams,
+  RawNormalizedProduct,
+  ProposeAgentUpsellParams,
+  RawAgentUpsell,
 } from "../ai-provider.js";
 
 export interface FixtureProviderScript {
@@ -23,6 +27,8 @@ export interface FixtureProviderScript {
   rankCandidates?: (params: RankCandidatesParams) => Promise<RawRankedItem[]> | RawRankedItem[];
   proposeGrowthAction?: (params: ProposeGrowthActionParams) => Promise<RawGrowthProposal> | RawGrowthProposal;
   proposeRecoveryAction?: (params: ProposeRecoveryActionParams) => Promise<RawRecoveryProposal> | RawRecoveryProposal;
+  normalizeCatalogRow?: (params: NormalizeCatalogRowParams) => Promise<RawNormalizedProduct> | RawNormalizedProduct;
+  proposeAgentUpsell?: (params: ProposeAgentUpsellParams) => Promise<RawAgentUpsell> | RawAgentUpsell;
 }
 
 export function createFixtureProvider(script: FixtureProviderScript, mode: AIProvider["mode"] = "LIVE_ANTHROPIC"): AIProvider {
@@ -51,6 +57,18 @@ export function createFixtureProvider(script: FixtureProviderScript, mode: AIPro
         throw new Error("Fixture provider: proposeRecoveryAction was not scripted for this test.");
       }
       return script.proposeRecoveryAction(params);
+    },
+    async normalizeCatalogRow(params) {
+      if (!script.normalizeCatalogRow) {
+        throw new Error("Fixture provider: normalizeCatalogRow was not scripted for this test.");
+      }
+      return script.normalizeCatalogRow(params);
+    },
+    async proposeAgentUpsell(params) {
+      if (!script.proposeAgentUpsell) {
+        throw new Error("Fixture provider: proposeAgentUpsell was not scripted for this test.");
+      }
+      return script.proposeAgentUpsell(params);
     },
   };
 }

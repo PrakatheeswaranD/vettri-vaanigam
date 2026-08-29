@@ -14,3 +14,4 @@ export * from "./commerce.js";
 export * from "./payments.js";
 export * from "./recovery.js";
 export * from "./sandbox.js";
+export * from "./auth.js";

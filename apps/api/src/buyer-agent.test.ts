@@ -11,18 +11,16 @@
  */
 import { afterAll, beforeAll, describe, expect, it } from "vitest";
 import type { FastifyInstance } from "fastify";
-import { buildApp } from "./app.js";
+import { buildAuthedTestApp, getTestMerchantId } from "./test-helpers/test-app.js";
 import { prisma } from "./db/client.js";
 import { handleBuyerMessage } from "./modules/buyer-agent/service.js";
-import { getDemoMerchantId } from "./modules/authorization/demo-context.js";
 import { AIProviderError } from "./modules/agents/ai-provider.js";
 import { createFixtureProvider } from "./modules/agents/providers/fixture-provider.js";
 
 let app: FastifyInstance;
 
 beforeAll(async () => {
-  app = buildApp();
-  await app.ready();
+  app = await buildAuthedTestApp();
 });
 
 afterAll(async () => {
@@ -162,7 +160,7 @@ describe("POST /api/v1/buyer-agent/messages — prompt injection (§103, §133)"
 
 describe("handleBuyerMessage — AI provider failure (§104)", () => {
   it("degrades gracefully to AI_UNAVAILABLE without crashing when the provider throws on every attempt", async () => {
-    const merchantId = await getDemoMerchantId(prisma);
+    const merchantId = await getTestMerchantId(prisma);
     const failingProvider = createFixtureProvider(
       {
         extractIntent: () => {
@@ -185,7 +183,7 @@ describe("handleBuyerMessage — AI provider failure (§104)", () => {
     // unresolved guess through as-is rather than dropping the constraint,
     // so it honestly filters to zero DB rows instead of silently
     // broadening to an unrelated category.
-    const merchantId = await getDemoMerchantId(prisma);
+    const merchantId = await getTestMerchantId(prisma);
     const provider = createFixtureProvider(
       {
         extractIntent: () => ({
@@ -209,7 +207,7 @@ describe("handleBuyerMessage — AI provider failure (§104)", () => {
   });
 
   it("never lets a hallucinated product ID from the ranking model reach the buyer", async () => {
-    const merchantId = await getDemoMerchantId(prisma);
+    const merchantId = await getTestMerchantId(prisma);
     const hallucinatingProvider = createFixtureProvider(
       {
         extractIntent: () => ({

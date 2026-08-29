@@ -6,6 +6,7 @@ import { EmptyState, ErrorState, Skeleton } from "../components/ui/States";
 import { PaymentStateBadge } from "../components/ui/StatusBadge";
 import { formatDateTime, formatMoney } from "../lib/format";
 import { ApiError } from "../lib/api-client";
+import { PageHeader } from "../components/layout/PageHeader";
 
 const SOURCE_LABEL: Record<string, string> = {
   DIRECT_BUYER: "Direct",
@@ -24,12 +25,10 @@ export default function TransactionsPage() {
   return (
     <div className="space-y-6">
       <div>
-        <h1 className="text-lg font-semibold text-ink">Transactions</h1>
-        <p className="mt-1 text-sm text-ink-muted">
-          Order and payment history. Rows labeled DEMO are seeded demo data; MOCK rows come from the automated
-          test suite's deterministic provider double. A RAZORPAY row means a real Razorpay Test Mode payment
-          was completed — no real money is ever involved.
-        </p>
+        <PageHeader
+          title={"Payments"}
+          lead={"Orders and their payment outcomes, including anything that failed and how it was recovered."}
+        />
       </div>
 
       {isLoading ? (

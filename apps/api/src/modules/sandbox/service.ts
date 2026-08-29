@@ -25,6 +25,7 @@ import { proposeGrowthAction } from "../merchant-agent/service.js";
 import { evaluateProposalPolicy } from "../policy/service.js";
 import { issueExecutionAuthorization } from "../policy/authorization-service.js";
 import { getMerchantPolicy } from "../policy/repository.js";
+import { runMandateForgeryAttack, runMandateReplayAttack, runPriceTamperingAttack } from "./gateway-attacks.js";
 import { SANDBOX_ATTACK_PRESETS } from "./presets.js";
 
 async function findSeededProduct(prisma: PrismaClient, merchantId: string, name: string) {
@@ -268,6 +269,12 @@ export function listSandboxPresets() {
 
 export async function runSandboxAttack(prisma: PrismaClient, merchantId: string, attackId: SandboxAttackId): Promise<SandboxRunResultDTO> {
   switch (attackId) {
+    case "MANDATE_FORGERY":
+      return runMandateForgeryAttack(merchantId);
+    case "MANDATE_REPLAY":
+      return runMandateReplayAttack(merchantId);
+    case "PRICE_TAMPERING":
+      return runPriceTamperingAttack(prisma, merchantId);
     case "FINANCIAL_LIMIT_50_PERCENT_DISCOUNT":
       return runFinancialLimitAttack(prisma, merchantId);
     case "APPROVAL_BYPASS":

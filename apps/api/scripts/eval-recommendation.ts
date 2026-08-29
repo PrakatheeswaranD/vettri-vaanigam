@@ -22,13 +22,14 @@ import { readFile } from "node:fs/promises";
 import path from "node:path";
 import { fileURLToPath } from "node:url";
 import { prisma } from "../src/db/client.js";
-import { getDemoMerchantId } from "../src/modules/authorization/demo-context.js";
+import { DEMO_MERCHANT_SLUG } from "../src/modules/authorization/demo-context.js";
 import { searchCandidateProducts } from "../src/modules/buyer-agent/catalog-gateway.js";
 import { evaluateCandidates } from "../src/modules/buyer-agent/candidate-evaluation.js";
 import { buildRecommendations } from "../src/modules/buyer-agent/recommendation-service.js";
 import { getAIProvider } from "../src/modules/agents/provider-factory.js";
 import { createFixtureProvider } from "../src/modules/agents/providers/fixture-provider.js";
 import { emptyIntent, isPurchasable, type AvailabilityState, type BuyerIntent } from "@razorgrowth/domain";
+import { throttle } from "./eval-throttle.js";
 
 const __dirname = path.dirname(fileURLToPath(import.meta.url));
 const CASES_PATH = path.resolve(__dirname, "../../../evals/recommendation/cases.json");
@@ -61,7 +62,11 @@ function toIntent(c: EvalCase): BuyerIntent {
 
 async function main() {
   const dataset = JSON.parse(await readFile(CASES_PATH, "utf-8")) as { datasetVersion: string; cases: EvalCase[] };
-  const merchantId = await getDemoMerchantId(prisma);
+  const merchant = await prisma.merchant.findUnique({ where: { slug: DEMO_MERCHANT_SLUG } });
+  if (!merchant) {
+    throw new Error(`Seeded demo merchant "${DEMO_MERCHANT_SLUG}" not found. Has "pnpm db:seed" been run?`);
+  }
+  const merchantId = merchant.id;
   const provider = getAIProvider();
 
   let totalRecommendations = 0;
@@ -73,6 +78,7 @@ async function main() {
 
   for (const c of dataset.cases) {
     const intent = toIntent(c);
+    await throttle(provider.mode);
     const products = await searchCandidateProducts(prisma, merchantId, { category: intent.category });
     const evaluated = evaluateCandidates(products, intent);
     const outcome = await buildRecommendations(provider, evaluated, intent);
@@ -130,7 +136,7 @@ async function main() {
 
   console.log("=== Recommendation Quality Evaluation ===");
   console.log(`Dataset version: ${dataset.datasetVersion} | Cases: ${dataset.cases.length} + 1 adversarial scenario`);
-  console.log(`Provider mode: ${provider.mode}${provider.mode === "DEMO_RULE_BASED" ? " (CONTRACT eval — no live AI ranking call is made for this provider mode)" : " (LIVE evaluation — real Anthropic ranking calls made)"}`);
+  console.log(`Provider mode: ${provider.mode}${provider.mode === "DEMO_RULE_BASED" ? " (CONTRACT eval — no live AI ranking call is made for this provider mode)" : ` (LIVE evaluation — real ${provider.mode === "LIVE_GEMINI" ? "Gemini" : "Anthropic"} ranking calls made)`}`);
   console.log("");
   console.log(`Hard Constraint Violation Rate (post-validation): ${pct(hardConstraintViolations, totalRecommendations)} (${hardConstraintViolations}/${totalRecommendations}) — target 0%`);
   console.log(`Unknown Product Hallucination Rate (post-validation): ${pct(hallucinatedProductIds, totalRecommendations)} (${hallucinatedProductIds}/${totalRecommendations}) — target 0%`);
@@ -144,7 +150,7 @@ async function main() {
 
   if (provider.mode === "DEMO_RULE_BASED") {
     console.log("\nLIVE MODEL EVALUATION NOT EXECUTED — AI_PROVIDER_API_KEY is not configured in this environment.");
-    console.log("Set AI_PROVIDER_API_KEY and rerun this command to evaluate real Anthropic-backed ranking quality.");
+    console.log("Set a live provider (AI_PROVIDER=gemini with GEMINI_API_KEY, or AI_PROVIDER=anthropic with AI_PROVIDER_API_KEY) and rerun to evaluate real model-backed ranking quality.");
   }
 
   await prisma.$disconnect();

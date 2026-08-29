@@ -1,12 +1,14 @@
 import { useState } from "react";
 import { Link } from "react-router-dom";
-import { Package, Search, SlidersHorizontal } from "lucide-react";
-import { useCatalog, useCatalogCategories } from "../hooks/use-api";
+import { CheckCircle2, AlertTriangle, Package, Search, SlidersHorizontal } from "lucide-react";
+import { useCatalog, useCatalogCategories, useCatalogQualitySummary } from "../hooks/use-api";
 import { Card, CardBody } from "../components/ui/Card";
 import { EmptyState, ErrorState, Skeleton } from "../components/ui/States";
 import { ProductReadinessBadge } from "../components/readiness/ProductReadinessBadge";
 import { formatMoney } from "../lib/format";
 import { ApiError } from "../lib/api-client";
+import { PageHeader } from "../components/layout/PageHeader";
+import { CatalogCompiler } from "../components/catalog/CatalogCompiler";
 
 const AVAILABILITY_OPTIONS = [
   { value: "", label: "Any availability" },
@@ -27,6 +29,7 @@ export default function CatalogPage() {
   const [page, setPage] = useState(1);
 
   const { data: categories } = useCatalogCategories();
+  const { data: quality } = useCatalogQualitySummary();
   const { data, isLoading, isError, error, refetch } = useCatalog({
     page,
     limit: 12,
@@ -43,8 +46,12 @@ export default function CatalogPage() {
     <div className="space-y-6">
       <div className="flex flex-col gap-4 sm:flex-row sm:items-center sm:justify-between">
         <div>
-          <h1 className="text-lg font-semibold text-ink">Catalog</h1>
-          <p className="mt-1 text-sm text-ink-muted">Agent-readable product catalog for Meridian Athletics.</p>
+          <PageHeader
+          title={"Products"}
+          lead={"Your catalogue as an AI agent sees it — the price, stock and details it reads before deciding whether it can buy."}
+        />
+
+      <CatalogCompiler />
         </div>
         <div className="flex flex-col gap-2 sm:flex-row">
           <div className="relative">
@@ -85,6 +92,27 @@ export default function CatalogPage() {
           </button>
         </div>
       </div>
+
+      {quality ? (
+        <div className="grid grid-cols-3 gap-3">
+          <div className="rounded-card bg-surface-subtle px-4 py-3">
+            <p className="text-xl font-semibold text-ink">{quality.activeProducts}</p>
+            <p className="text-xs text-ink-muted">Products</p>
+          </div>
+          <div className="rounded-card bg-success-subtle px-4 py-3">
+            <p className="flex items-center gap-1.5 text-xl font-semibold text-success-text">
+              <CheckCircle2 size={16} /> {quality.agentReadyProducts}
+            </p>
+            <p className="text-xs text-success-text">Agent Ready</p>
+          </div>
+          <div className="rounded-card bg-warning-subtle px-4 py-3">
+            <p className="flex items-center gap-1.5 text-xl font-semibold text-warning-text">
+              <AlertTriangle size={16} /> {quality.partiallyReadyProducts + quality.notReadyProducts}
+            </p>
+            <p className="text-xs text-warning-text">Needs Attention</p>
+          </div>
+        </div>
+      ) : null}
 
       {showFilters ? (
         <Card>

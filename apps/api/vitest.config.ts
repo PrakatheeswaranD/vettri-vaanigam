@@ -5,6 +5,11 @@ export default defineConfig({
     environment: "node",
     include: ["src/**/*.test.ts"],
     testTimeout: 15000,
+    // Hard refusal to run against a non-local database. These tests reset
+    // merchant data, so pointing DATABASE_URL at a hosted instance and
+    // running them would destroy it — easy to do by accident, because
+    // .env is shared between running the app and running the tests.
+    globalSetup: ["./src/test-helpers/vitest-setup.ts"],
     // The local PGlite-socket dev database (scripts/db-server.mjs) handles
     // a burst of concurrent connections unreliably (see PROGRESS.md) — it
     // is a single-process dev shim, not real Postgres. Running test files

@@ -9,7 +9,6 @@
  * what Razorpay actually signed (PART 07 §26, §117).
  */
 import type { FastifyInstance } from "fastify";
-import { getDemoMerchantId } from "../authorization/demo-context.js";
 import { prisma } from "../../db/client.js";
 import { processRazorpayWebhook } from "./webhook-service.js";
 
@@ -20,11 +19,10 @@ export function registerPaymentWebhookRoutes(app: FastifyInstance, prefix: strin
     });
 
     instance.post(`${prefix}/payments/webhooks/razorpay`, async (request, reply) => {
-      const merchantId = await getDemoMerchantId(prisma);
       const rawBody = request.body as Buffer;
       const signatureHeader = request.headers["x-razorpay-signature"] as string | undefined;
 
-      const result = await processRazorpayWebhook(prisma, merchantId, rawBody, signatureHeader);
+      const result = await processRazorpayWebhook(prisma, rawBody, signatureHeader);
 
       // PART 07 §29, §89 — a fast, minimal-detail response regardless of
       // outcome; no internal state or secret ever appears here. An invalid

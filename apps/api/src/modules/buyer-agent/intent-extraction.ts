@@ -50,6 +50,40 @@ function normalizeCurrency(raw: string | null | undefined): CurrencyCode | null 
 }
 
 /**
+ * True when the buyer named a currency that is not the one this merchant
+ * prices in.
+ *
+ * Note this is a stricter test than `normalizeCurrency` returning null.
+ * `SUPPORTED_CURRENCY_CODES` says which codes we can PARSE; it does not
+ * say which currency the catalogue is priced in. USD parses cleanly and is
+ * still not comparable to an INR price list without a rate.
+ *
+ * Naming no currency at all is different again: "under 4500" is safely
+ * read in the merchant's own currency. The danger is only when a
+ * DIFFERENT currency is named — the amount would otherwise survive while
+ * the currency is discarded, so "$50" silently becomes ₹50 and filters the
+ * catalogue on a number the buyer never said. Dropping the budget is the
+ * only honest option: there is no rate to convert with, and inventing one
+ * would put a fabricated figure into a financial constraint.
+ */
+function statedANonMerchantCurrency(raw: string | null | undefined, merchantCurrency: string): boolean {
+  if (!raw) return false;
+  return raw.trim().toUpperCase() !== merchantCurrency.toUpperCase();
+}
+
+/** Currency markers that are unambiguously NOT this merchant's. Checked
+ * against the buyer's raw message rather than the model's `currency`
+ * field, because the model frequently reads "Under $50" as a bare amount
+ * and reports no currency at all — leaving nothing for
+ * `statedANonMerchantCurrency` to catch. Financial truth is deterministic
+ * code's job, so the guard does not depend on the model noticing. */
+const FOREIGN_CURRENCY_PATTERN = /[$€£¥]|\b(usd|eur|gbp|jpy|aud|cad|chf|cny|sgd|aed)\b/i;
+
+function messageNamesForeignCurrency(message: string): boolean {
+  return FOREIGN_CURRENCY_PATTERN.test(message);
+}
+
+/**
  * Match the extractor's free-text category guess against what the
  * merchant ACTUALLY sells (PART 03 §25, §30). No fuzzy guessing beyond
  * case-insensitive exact/substring/singular match — an unresolved guess is
@@ -93,12 +127,16 @@ export async function extractAndNormalizeIntent(
   provider: AIProvider,
   message: string,
   knownCategories: string[],
+  knownAttributes: Record<string, string[]> = {},
+  /** The currency this merchant prices in. A budget named in any other
+   * currency is dropped rather than compared against it. */
+  merchantCurrency: string = "INR",
 ): Promise<IntentExtractionOutcome> {
   let lastErrorCode: "AI_PROVIDER_UNAVAILABLE" | "AI_TIMEOUT" | "AI_OUTPUT_INVALID" = "AI_OUTPUT_INVALID";
 
   for (let attempt = 0; attempt <= MAX_AI_RETRIES; attempt++) {
     try {
-      const raw = await provider.extractIntent({ message, knownCategories });
+      const raw = await provider.extractIntent({ message, knownCategories, knownAttributes });
       const parsed = rawIntentSchema.safeParse(raw);
       if (!parsed.success) {
         lastErrorCode = "AI_OUTPUT_INVALID";
@@ -108,10 +146,17 @@ export async function extractAndNormalizeIntent(
 
       const data = parsed.data;
       const currency = normalizeCurrency(data.currency);
+      const foreignCurrency = statedANonMerchantCurrency(data.currency, merchantCurrency) || messageNamesForeignCurrency(message);
+      if (foreignCurrency) {
+        logger.warn(
+          { event: "buyer_agent.foreign_currency_budget_dropped", stated: data.currency, merchantCurrency },
+          "Buyer stated a currency this merchant does not transact in; budget dropped rather than reinterpreted",
+        );
+      }
       const signal: PartialIntentSignal = {
         category: normalizeCategory(data.category, knownCategories),
-        budgetMinMinor: normalizeBudgetAmount(data.budgetMinMajor),
-        budgetMaxMinor: normalizeBudgetAmount(data.budgetMaxMajor),
+        budgetMinMinor: foreignCurrency ? null : normalizeBudgetAmount(data.budgetMinMajor),
+        budgetMaxMinor: foreignCurrency ? null : normalizeBudgetAmount(data.budgetMaxMajor),
         currency,
         quantity: data.quantity && Number.isInteger(data.quantity) && data.quantity > 0 ? data.quantity : null,
         requiredAttributes: boundAttributeMap(data.requiredAttributes),

@@ -12,6 +12,8 @@ import { ProductReadinessBadge } from "../readiness/ProductReadinessBadge";
 import { formatMoney } from "../../lib/format";
 import { REASON_CODE_TEXT } from "./reason-code-text";
 
+/** Read-only on purpose. There is no purchase affordance here: a buyer
+ * agent buys through the gateway, not by clicking a merchant console. */
 export function RecommendationCard({ recommendation }: { recommendation: RecommendedProductDTO }) {
   const variant = recommendation.product.variants.find((v) => v.variantId === recommendation.variantId);
   const isNearMatch = recommendation.matchType === "NEAR_MATCH";
@@ -75,6 +77,7 @@ export function RecommendationCard({ recommendation }: { recommendation: Recomme
             View details
           </Link>
         </div>
+
       </CardBody>
     </Card>
   );

@@ -105,12 +105,30 @@ Inventory has never been recorded for this product").
 
 ## "Do you support ACP/AP2/UCP/x402?"
 
-No, and we don't claim to. We built one clean internal
-`CommerceGateway`/`PaymentGateway` boundary that is protocol-shaped —
-narrow, named methods, no generic execute-anything surface — so a future
-protocol adapter could sit behind it without changing calling code. We
-did not implement or certify any external protocol, and the README says
-so explicitly.
+Partly, and the difference matters.
+
+**ACP — built against the published spec.** Real endpoints
+(`/checkout_sessions`, update, complete, cancel, `delegate_payment`), the
+stateful session lifecycle, bearer authentication with merchant-issued
+agent credentials, and real idempotency-key semantics including the
+spec's `IdempotencyKeyRequired` / `IdempotencyInFlight` outcomes.
+
+**AP2 — a compatibility shim.** It accepts the documented cart-mandate
+envelope and normalises it correctly. It does NOT verify SD-JWT
+verifiable credentials, so an AP2 mandate is accepted on its shape, never
+on its cryptography.
+
+**x402 — challenge/response real, settlement simulated.** The
+402 → retry-with-X-PAYMENT exchange is genuinely implemented, and the
+payload is validated strictly against the quote we issued. But no
+facilitator is called and nothing settles on-chain, so nobody has
+verified the money exists — which is why an x402 intent can never be
+auto-approved here and always escalates to a human.
+
+**UCP — not implemented.**
+
+Every one of those labels is returned by the API and rendered in the
+console, so the distinction cannot quietly disappear from a demo.
 
 ## "Is this production-ready?"
 

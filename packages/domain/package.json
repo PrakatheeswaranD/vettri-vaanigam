@@ -3,7 +3,7 @@
   "version": "0.1.0",
   "private": true,
   "type": "module",
-  "description": "Deterministic domain primitives shared across RazorGrowth AI apps: money, identifiers, payment state machine, statuses.",
+  "description": "Deterministic domain primitives shared across Anumati apps: money, identifiers, payment state machine, statuses.",
   "main": "./dist/index.js",
   "types": "./dist/index.d.ts",
   "exports": {

@@ -1,0 +1,30 @@
+# Never ship secrets into an image layer.
+.env
+.env.*
+!.env.example
+
+node_modules
+**/node_modules
+**/dist
+**/.turbo
+**/coverage
+
+# Local PGlite dev-database data — never belongs in a production image.
+# The local PGlite data directory is .dbdata, not .pgdata — the old name
+# matched nothing, so an 80MB local database was being sent to the daemon
+# as build context on every build.
+.dbdata
+**/.dbdata
+
+.git
+.github
+*.log
+**/*.tsbuildinfo
+.vscode
+.idea
+.claude
+
+# Docs and contracts are not needed at runtime.
+*.md
+docs/
+evals/

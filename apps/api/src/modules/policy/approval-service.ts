@@ -1,12 +1,15 @@
 /**
- * Approval Service (PART 05 §29-§36, §70, §92, §98).
+ * Approval Service (PART 05 §29-§36, §70, §92, §98; PART 10 §1).
  *
  * The ONLY place a human approval decision is recorded. `approverId` is
- * always a server-controlled constant (PART 05 §33) — never a value the
- * client sends, so a request cannot forge who "approved" something. Every
- * decision is bound to the exact proposal fingerprint that was true at
- * policy-evaluation time (§30); if the proposal ever differs from that,
- * approval is refused rather than silently applied to different terms.
+ * always server-derived from the authenticated session (the route layer
+ * passes `request.merchantUserId`) — never a value the client sends in
+ * the request body, so a request cannot forge who "approved" something.
+ * RBAC (`requireApprovalRole`) is enforced at the route layer before this
+ * function is ever called. Every decision is bound to the exact proposal
+ * fingerprint that was true at policy-evaluation time (§30); if the
+ * proposal ever differs from that, approval is refused rather than
+ * silently applied to different terms.
  */
 import { randomUUID } from "node:crypto";
 import type { ApprovalDecisionDTO, ApprovalDTO, GrowthActionProposalDTO, PolicyDecisionDTO } from "@razorgrowth/contracts";
@@ -28,10 +31,6 @@ import {
 import { fingerprintFromProposal } from "./service.js";
 import type { PrismaClient } from "@prisma/client";
 
-/** PART 00 §36 identity simplification — one controlled merchant user, no
- * production auth. Never sourced from client input (PART 05 §33). */
-const DEMO_APPROVER_ID = "demo-merchant-owner";
-
 const CONFLICT_ERROR_CODE = "P2002";
 
 function isApprovalUniqueConflict(err: unknown): boolean {
@@ -49,6 +48,7 @@ export async function decideApproval(
   proposalId: string,
   decision: ApprovalDecisionDTO,
   reason: string | undefined,
+  approverId: string,
 ): Promise<ApprovalDTO> {
   const proposal = await findProposalForGovernance(prisma, merchantId, proposalId);
   if (!proposal) throw AppError.notFound(`Growth action proposal not found: ${proposalId}`);
@@ -95,7 +95,7 @@ export async function decideApproval(
         evaluatedPolicyVersion: policyEvaluation.evaluatedPolicyVersion,
         decision,
         reason: reason ?? null,
-        approverId: DEMO_APPROVER_ID,
+        approverId,
         expiresAt,
       });
 

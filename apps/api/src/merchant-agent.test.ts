@@ -7,19 +7,22 @@
  * `proposeGrowthAction` with a scripted fixture provider.
  *
  * Assumes the local dev database is up and seeded (same as app.test.ts) —
- * uses the real deterministic seed relationships (PART 04 seed additions):
- * Meridian Pulse Runner -> {CoolMax Socks, FlowFit Bottle, QuickBelt Belt
- * (forced UNKNOWN inventory), Aero Lightweight (valid upsell), Velocity
- * Racer (upsell exceeding the uplift ceiling), Cushion Crew Socks (bundle)}.
+ * uses the real deterministic seed relationships. Every catalog product
+ * now has at least one relationship so a demo never dead-ends on "no
+ * growth candidate"; the Pulse Runner set remains the scripted one these
+ * tests rely on: Meridian Pulse Runner -> {CoolMax Socks, FlowFit Bottle,
+ * QuickBelt Belt (forced UNKNOWN inventory), Aero Lightweight (valid
+ * upsell), Velocity Racer (upsell exceeding the uplift ceiling), Cushion
+ * Crew Socks (bundle)}.
  *
  * Product IDs are looked up by name at runtime, never hardcoded — seeded
  * UUIDs are random per reseed.
  */
 import { afterAll, beforeAll, describe, expect, it } from "vitest";
+import { randomUUID } from "node:crypto";
 import type { FastifyInstance } from "fastify";
-import { buildApp } from "./app.js";
+import { buildAuthedTestApp, getTestMerchantId } from "./test-helpers/test-app.js";
 import { prisma } from "./db/client.js";
-import { getDemoMerchantId } from "./modules/authorization/demo-context.js";
 import { proposeGrowthAction } from "./modules/merchant-agent/service.js";
 import { createFixtureProvider } from "./modules/agents/providers/fixture-provider.js";
 
@@ -31,8 +34,7 @@ async function productId(name: string): Promise<string> {
 }
 
 beforeAll(async () => {
-  app = buildApp();
-  await app.ready();
+  app = await buildAuthedTestApp();
 });
 
 afterAll(async () => {
@@ -76,13 +78,42 @@ describe("POST /api/v1/merchant-agent/growth/proposals — golden path", () => {
   });
 
   it("returns NO_OPPORTUNITY honestly for a product with no configured relationships", async () => {
-    const noRelProduct = await productId("Meridian StrideLace Kit");
-    const res = await postProposal({ primaryProductId: noRelProduct });
-    expect(res.statusCode).toBe(200);
-    const body = res.json();
-    expect(body.status).toBe("REJECTED_VALIDATION");
-    expect(body.mode).toBe("NO_OPPORTUNITY");
-    expect(body.actionType).toBeNull();
+    // Creates its own relationship-free product rather than relying on a
+    // seeded one having none. The seed now gives every catalog product at
+    // least one relationship (so a demo never dead-ends on
+    // "no growth candidate"), and a test that silently depends on a gap in
+    // demo data would break every time that data improved — while still
+    // claiming to test the engine. This asserts the BEHAVIOUR instead.
+    const merchantId = await getTestMerchantId(prisma);
+    const isolated = await prisma.product.create({
+      data: {
+        merchantId,
+        name: `Relationship-free probe ${randomUUID()}`,
+        slug: `relationship-free-probe-${randomUUID()}`,
+        description: "Created by this test; has no ProductRelationship rows by construction.",
+        category: "Test",
+        brand: "Meridian",
+        returnPolicySummary: "30-day returns.",
+        shippingSummary: "Ships in 2 days.",
+        promotionEligibility: "ELIGIBLE",
+        variants: { create: [{ sku: `PROBE-${randomUUID()}`, title: "One Size", priceMinor: 10_000 }] },
+      },
+      include: { variants: true },
+    });
+    await prisma.inventory.create({
+      data: { variantId: isolated.variants[0]!.id, availableQuantity: 5 },
+    });
+
+    try {
+      const res = await postProposal({ primaryProductId: isolated.id });
+      expect(res.statusCode).toBe(200);
+      const body = res.json();
+      expect(body.status).toBe("REJECTED_VALIDATION");
+      expect(body.mode).toBe("NO_OPPORTUNITY");
+      expect(body.actionType).toBeNull();
+    } finally {
+      await prisma.product.delete({ where: { id: isolated.id } });
+    }
   });
 
   it("rejects a 404 for an unknown product id rather than crashing", async () => {
@@ -104,7 +135,7 @@ describe("POST /api/v1/merchant-agent/growth/proposals — golden path", () => {
 
 describe("proposeGrowthAction — deterministic bounds enforced by validation (§35, §58, §102)", () => {
   it("rejects an upsell whose uplift far exceeds the configured ceiling instead of clamping it", async () => {
-    const merchantId = await getDemoMerchantId(prisma);
+    const merchantId = await getTestMerchantId(prisma);
     const pulseRunner = await productId("Meridian Pulse Runner");
     // Force the AI path so the "invalid proposal" rejection is exercised
     // (the deterministic path never proposes something out of bounds in
@@ -132,7 +163,7 @@ describe("proposeGrowthAction — deterministic bounds enforced by validation (�
   });
 
   it("never lets a hallucinated product ID become an authoritative proposal", async () => {
-    const merchantId = await getDemoMerchantId(prisma);
+    const merchantId = await getTestMerchantId(prisma);
     const pulseRunner = await productId("Meridian Pulse Runner");
     const provider = createFixtureProvider(
       {
@@ -157,7 +188,7 @@ describe("proposeGrowthAction — deterministic bounds enforced by validation (�
   });
 
   it("rejects a discount above the merchant's configured ceiling — never silently clamped (§58)", async () => {
-    const merchantId = await getDemoMerchantId(prisma);
+    const merchantId = await getTestMerchantId(prisma);
     const pulseRunner = await productId("Meridian Pulse Runner");
     const provider = createFixtureProvider(
       {
@@ -178,7 +209,7 @@ describe("proposeGrowthAction — deterministic bounds enforced by validation (�
   });
 
   it("ignores an injection attempt embedded in the buyer preference data and still only proposes a real candidate", async () => {
-    const merchantId = await getDemoMerchantId(prisma);
+    const merchantId = await getTestMerchantId(prisma);
     const pulseRunner = await productId("Meridian Pulse Runner");
     // Even if a malicious preference string reached the provider, the
     // provider here just echoes a normal, valid proposal — the point is
@@ -201,7 +232,7 @@ describe("proposeGrowthAction — deterministic bounds enforced by validation (�
   });
 
   it("degrades gracefully to a deterministic fallback when the AI provider throws on every attempt", async () => {
-    const merchantId = await getDemoMerchantId(prisma);
+    const merchantId = await getTestMerchantId(prisma);
     const pulseRunner = await productId("Meridian Pulse Runner");
     const provider = createFixtureProvider(
       {
@@ -237,7 +268,7 @@ describe("recovery offer — a real NEAR_MATCH Buyer Agent outcome (PART 04 §15
     // The Buyer Agent response doesn't carry a recommendationId directly,
     // but persists one RecommendationRecord per response — look it up by
     // conversationId to get the id this test needs.
-    const merchantId = await getDemoMerchantId(prisma);
+    const merchantId = await getTestMerchantId(prisma);
     const record = await prisma.recommendationRecord.findFirstOrThrow({
       where: { conversationId: buyerBody.conversationId, merchantId },
       orderBy: { createdAt: "desc" },
@@ -270,7 +301,7 @@ describe("recovery offer — a real NEAR_MATCH Buyer Agent outcome (PART 04 §15
 
 describe("readiness → growth connection surfaces a real dimension score (PART 04 §49-§51, §88)", () => {
   it("attaches the merchant's actual current readiness dimension score to a blocked opportunity, never a fabricated delta", async () => {
-    const merchantId = await getDemoMerchantId(prisma);
+    const merchantId = await getTestMerchantId(prisma);
     const pulseRunner = await productId("Meridian Pulse Runner");
     const snapshot = await prisma.readinessSnapshot.findFirst({ where: { merchantId }, orderBy: { createdAt: "desc" } });
     expect(snapshot).toBeTruthy();

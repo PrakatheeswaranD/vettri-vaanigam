@@ -358,6 +358,46 @@ export async function executeAuthorizedSelection(
       });
       await setOrderFingerprint(tx, order.id, orderFingerprint, ORDER_FINGERPRINT_VERSION);
 
+      // INVENTORY IS RESERVED HERE, INSIDE THE TRANSACTION.
+      //
+      // The availability check happens during rehydration, BEFORE this
+      // transaction opens, and nothing decremented anything. Two checkouts
+      // for the last unit both passed that check and both created orders —
+      // a textbook oversell that no amount of downstream governance would
+      // have caught, because both orders were individually valid.
+      //
+      // `updateMany` with a `gte` guard makes the decrement itself the
+      // check: the row is only written if the stock is still there when the
+      // write lands, and a count of 0 means someone else took it first.
+      for (const line of totals.lines) {
+        const reserved = await tx.inventory.updateMany({
+          where: { variantId: line.variantId, availableQuantity: { gte: line.quantity } },
+          data: { availableQuantity: { decrement: line.quantity } },
+        });
+
+        if (reserved.count === 0) {
+          // A count of 0 has TWO causes and they are not the same fact:
+          //   - a row exists but no longer has the stock  -> someone won the race
+          //   - no row exists at all                      -> stock was never recorded
+          // Treating both as "out of stock" would refuse every variant the
+          // merchant has not inventoried, which is a different (and much
+          // broader) product decision than fixing an oversell.
+          const tracked = await tx.inventory.findUnique({ where: { variantId: line.variantId } });
+          if (tracked) {
+            // Throwing inside the transaction rolls back the order and cart
+            // too, so a lost race leaves nothing half-created.
+            throw new AppError(
+              "INSUFFICIENT_INVENTORY",
+              "That stock was taken by another order while this checkout was being created. Nothing was reserved or charged.",
+            );
+          }
+          logger.warn(
+            { event: "commerce.inventory_untracked", variantId: line.variantId },
+            "Checkout proceeded without reserving stock: this variant has no inventory record, so availability is genuinely unknown",
+          );
+        }
+      }
+
       const checkoutId = randomUUID();
       const expiresAt = new Date(now.getTime() + CHECKOUT_VALIDITY_MINUTES * 60_000);
       const checkout = await createCheckoutSession(tx, {

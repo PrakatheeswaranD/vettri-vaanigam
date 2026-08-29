@@ -15,6 +15,12 @@ function providerReturning(extractIntent: AIProvider["extractIntent"]): AIProvid
     proposeRecoveryAction: async () => {
       throw new Error("not used in these tests");
     },
+    normalizeCatalogRow: async () => {
+      throw new Error("not used in these tests");
+    },
+    proposeAgentUpsell: async () => {
+      throw new Error("not used in these tests");
+    },
   };
 }
 

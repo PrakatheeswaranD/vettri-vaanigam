@@ -61,6 +61,20 @@ export interface ProviderPaymentInfo {
   capturedAt: Date | null;
 }
 
+export interface CreatePaymentLinkParams {
+  amountMinor: number;
+  currency: string;
+  /** Shown to the human approving it — says which agent asked and why. */
+  description: string;
+  /** Our own reference, so a paid link can be tied back to its decision. */
+  referenceId: string;
+}
+
+export interface ProviderPaymentLink {
+  providerPaymentLinkId: string;
+  shortUrl: string;
+}
+
 export interface ClientCompletionParams {
   providerOrderId: string;
   providerPaymentId: string;
@@ -83,6 +97,30 @@ export interface PaymentGateway {
   createPaymentOrder(params: CreatePaymentOrderParams): Promise<ProviderOrder>;
 
   fetchPayment(providerPaymentId: string): Promise<ProviderPaymentInfo>;
+
+  /**
+   * Creates a hosted payment link for the Step-Up Gate.
+   *
+   * An agent intent above the merchant's auto-approve ceiling is not
+   * refused — it drops to a link a human approves, mirroring how UPI
+   * AutoPay escalates above its own auto-debit limit. Returning a link
+   * rather than charging is the entire point: the gateway never converts
+   * "too big to approve automatically" into "charged anyway".
+   */
+  createPaymentLink(params: CreatePaymentLinkParams): Promise<ProviderPaymentLink>;
+
+  /** Every payment the provider has recorded against one provider ORDER,
+   * newest-relevant first is NOT guaranteed — the caller decides which one
+   * is authoritative.
+   *
+   * This exists because a payment can be stranded: the customer completes
+   * checkout, but the browser closes before the callback and the webhook
+   * is missed or never configured. We then hold a provider ORDER id and no
+   * provider PAYMENT id, so `fetchPayment` has nothing to look up and the
+   * row sits at CREATED forever even though the provider considers it
+   * paid. Looking up by order is the only way back to the truth
+   * (PART 07 §61). */
+  listPaymentsForOrder(providerOrderId: string): Promise<ProviderPaymentInfo[]>;
 
   /** Verifies the HMAC relation Razorpay's documented client-checkout
    * integration requires between `providerOrderId`, `providerPaymentId`,

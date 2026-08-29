@@ -63,8 +63,8 @@ export default function BreakTheAgentPage() {
   return (
     <div className="space-y-6">
       <div>
-        <h1 className="flex items-center gap-2 text-xl font-semibold text-ink">
-          <Swords size={20} className="text-danger" />
+        <h1 className="flex items-center gap-2 text-2xl font-bold tracking-tight text-ink">
+          <Swords size={22} className="text-danger" />
           Break the Agent
         </h1>
         <p className="mt-1 max-w-2xl text-sm text-ink-muted">

@@ -2,7 +2,7 @@ import type { FastifyInstance } from "fastify";
 import { z } from "zod";
 import { paginationQuerySchema, availabilityStateSchema } from "@razorgrowth/contracts";
 import { prisma } from "../../db/client.js";
-import { getDemoMerchantId } from "../authorization/demo-context.js";
+import { getAuthenticatedMerchantId } from "../authorization/demo-context.js";
 import { AppError } from "../../http/errors.js";
 import { getCatalogProduct, getCatalogQualitySummary, listCatalogCategories, listCatalogProducts } from "./service.js";
 
@@ -20,23 +20,23 @@ const productParamsSchema = z.object({
 
 export function registerCatalogRoutes(app: FastifyInstance, prefix: string): void {
   app.get(`${prefix}/catalog/products`, async (request) => {
-    const merchantId = await getDemoMerchantId(prisma);
+    const merchantId = getAuthenticatedMerchantId(request);
     const query = listQuerySchema.parse(request.query);
     return listCatalogProducts(prisma, { merchantId, ...query });
   });
 
-  app.get(`${prefix}/catalog/categories`, async () => {
-    const merchantId = await getDemoMerchantId(prisma);
+  app.get(`${prefix}/catalog/categories`, async (request) => {
+    const merchantId = getAuthenticatedMerchantId(request);
     return { items: await listCatalogCategories(prisma, merchantId) };
   });
 
-  app.get(`${prefix}/catalog/quality-summary`, async () => {
-    const merchantId = await getDemoMerchantId(prisma);
+  app.get(`${prefix}/catalog/quality-summary`, async (request) => {
+    const merchantId = getAuthenticatedMerchantId(request);
     return getCatalogQualitySummary(prisma, merchantId);
   });
 
   app.get(`${prefix}/catalog/products/:id`, async (request) => {
-    const merchantId = await getDemoMerchantId(prisma);
+    const merchantId = getAuthenticatedMerchantId(request);
     const params = productParamsSchema.safeParse(request.params);
     if (!params.success) {
       throw AppError.validation("Invalid product id.");

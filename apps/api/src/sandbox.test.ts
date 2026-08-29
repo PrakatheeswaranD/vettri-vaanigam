@@ -6,14 +6,13 @@
  */
 import { afterAll, beforeAll, describe, expect, it } from "vitest";
 import type { FastifyInstance } from "fastify";
-import { buildApp } from "./app.js";
+import { buildAuthedTestApp } from "./test-helpers/test-app.js";
 import { prisma } from "./db/client.js";
 
 let app: FastifyInstance;
 
 beforeAll(async () => {
-  app = buildApp();
-  await app.ready();
+  app = await buildAuthedTestApp();
 });
 
 afterAll(async () => {
@@ -31,8 +30,12 @@ describe("GET /api/v1/sandbox/break-the-agent/presets", () => {
     const res = await app.inject({ method: "GET", url: "/api/v1/sandbox/break-the-agent/presets" });
     expect(res.statusCode).toBe(200);
     const body = res.json();
+    // The bound exists to stop this becoming a free-text attacker surface,
+    // not to fix a number. It was raised from 8 to 12 when the three
+    // gateway attacks (mandate forgery, replay, price tampering) were
+    // added — each still targets one real deterministic boundary.
     expect(body.presets.length).toBeGreaterThanOrEqual(5);
-    expect(body.presets.length).toBeLessThanOrEqual(8);
+    expect(body.presets.length).toBeLessThanOrEqual(12);
     const ids = body.presets.map((p: { id: string }) => p.id);
     expect(new Set(ids).size).toBe(ids.length); // no duplicates
   });

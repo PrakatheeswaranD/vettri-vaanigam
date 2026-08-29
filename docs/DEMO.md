@@ -1,6 +1,6 @@
 # Demo Script
 
-Operational instructions for running the RazorGrowth AI demo reproducibly.
+Operational instructions for running the Anumati demo reproducibly.
 Every step below was actually driven through the running application in
 this repository's own verification pass — nothing here is aspirational.
 

@@ -8,9 +8,8 @@
 import { randomUUID } from "node:crypto";
 import { afterAll, beforeAll, describe, expect, it } from "vitest";
 import type { FastifyInstance } from "fastify";
-import { buildApp } from "./app.js";
+import { buildAuthedTestApp, getTestMerchantId } from "./test-helpers/test-app.js";
 import { prisma } from "./db/client.js";
-import { getDemoMerchantId } from "./modules/authorization/demo-context.js";
 import { proposeGrowthAction } from "./modules/merchant-agent/service.js";
 import { evaluateAndProposeRecovery } from "./modules/merchant-agent/recovery-service.js";
 import { createFixtureProvider } from "./modules/agents/providers/fixture-provider.js";
@@ -33,8 +32,7 @@ async function cheapestActiveVariant(pid: string): Promise<string> {
 }
 
 beforeAll(async () => {
-  app = buildApp();
-  await app.ready();
+  app = await buildAuthedTestApp();
 });
 
 afterAll(async () => {
@@ -43,7 +41,7 @@ afterAll(async () => {
 });
 
 async function proposeCrossSell() {
-  const merchantId = await getDemoMerchantId(prisma);
+  const merchantId = await getTestMerchantId(prisma);
   const pulseRunner = await productId("Meridian Pulse Runner");
   const provider = createFixtureProvider(
     {
@@ -217,7 +215,7 @@ describe("Recovery — full failure-to-capture E2E (PART 08 §142, §203)", () =
 
 describe("Recovery — deterministic eligibility boundaries (PART 08 §143-§149, §196)", () => {
   it("denies recovery once the maximum attempt limit is reached", async () => {
-    const merchantId = await getDemoMerchantId(prisma);
+    const merchantId = await getTestMerchantId(prisma);
     await prisma.merchantPolicy.update({ where: { merchantId }, data: { maxRecoveryAttempts: 1 } });
     try {
       const failed = await buildFailedPayment();
@@ -355,7 +353,7 @@ describe("Recovery — AI grounding (PART 08 §84-§85, §133-§135, §151-§152
       },
       "LIVE_ANTHROPIC",
     );
-    const proposal = await evaluateAndProposeRecovery(prisma, await getDemoMerchantId(prisma), failed.paymentId, provider);
+    const proposal = await evaluateAndProposeRecovery(prisma, await getTestMerchantId(prisma), failed.paymentId, provider);
     expect(proposal.status).toBe("PROPOSED");
     expect(proposal.recoveryAction).toBe("RETRY_SAME_CHECKOUT"); // deterministic fallback, never the hallucinated action
     expect(proposal.mode).toBe("DETERMINISTIC_FALLBACK");
@@ -373,7 +371,7 @@ describe("Recovery — AI grounding (PART 08 §84-§85, §133-§135, §151-§152
       },
       "LIVE_ANTHROPIC",
     );
-    await evaluateAndProposeRecovery(prisma, await getDemoMerchantId(prisma), failed.paymentId, provider);
+    await evaluateAndProposeRecovery(prisma, await getTestMerchantId(prisma), failed.paymentId, provider);
     const json = JSON.stringify(capturedParams);
     expect(json).not.toMatch(/signature/i);
     expect(json).not.toMatch(/webhookSecret|keySecret/i);

@@ -30,7 +30,8 @@ import { PolicyDecisionBadge } from "../ui/StatusBadge";
 import { formatBps, formatDateTime, formatMoney } from "../../lib/format";
 import { ApiError } from "../../lib/api-client";
 import { useGrowthProposal } from "../../hooks/use-merchant-agent";
-import { useAgentProduct } from "../../hooks/use-api";
+import { useAgentProduct, useMerchantPolicy } from "../../hooks/use-api";
+import { DiscountAuthorityBar } from "../policy/DiscountAuthorityBar";
 import { useExecuteCheckout } from "../../hooks/use-commerce";
 import { CheckoutSummary } from "../commerce/CheckoutSummary";
 import {
@@ -109,9 +110,22 @@ function ExplainabilityStrip({ status }: { status: string }) {
   );
 }
 
+/** Truncated, monospace rendering of a proposal fingerprint — never the
+ * full hash inline (it's long and not meant to be read character-by-
+ * character), just enough to visually compare two fingerprints side by
+ * side (PART 05 §31-§32, §44). */
+function FingerprintTag({ label, value }: { label: string; value: string }) {
+  return (
+    <span className="inline-flex items-center gap-1.5 rounded-full bg-surface-sunken px-2 py-0.5 text-[11px] text-ink-muted">
+      {label}: <span className="font-mono text-ink">{value.slice(0, 8)}…{value.slice(-4)}</span>
+    </span>
+  );
+}
+
 function PolicyDecisionCard({ proposalId }: { proposalId: string }) {
   const { data: proposal } = useGrowthProposal(proposalId);
   const { data: decision } = usePolicyDecision(proposal?.latestPolicyDecisionId ?? null);
+  const { data: policy } = useMerchantPolicy();
   if (!decision) return null;
 
   return (
@@ -122,8 +136,19 @@ function PolicyDecisionCard({ proposalId }: { proposalId: string }) {
         <span className="rounded-full bg-surface-sunken px-2 py-0.5 text-[11px] font-medium text-ink-muted">
           policy v{decision.evaluatedPolicyVersion}
         </span>
+        <FingerprintTag label="Proposal fingerprint" value={decision.proposalFingerprint} />
       </CardHeader>
-      <CardBody className="space-y-2">
+      <CardBody className="space-y-3">
+        {policy && decision.evaluatedValues.requestedDiscountBps !== null ? (
+          <div className="rounded-card bg-surface-subtle p-3">
+            <p className="mb-1 text-xs font-semibold uppercase tracking-wide text-ink-faint">Discount authority</p>
+            <DiscountAuthorityBar
+              autoApprovalBps={policy.autoApprovalDiscountBps}
+              maxBps={policy.maxDiscountBps}
+              requestedBps={decision.evaluatedValues.requestedDiscountBps}
+            />
+          </div>
+        ) : null}
         <ul className="space-y-1">
           {decision.reasonCodes.map((code) => (
             <li key={code} className="flex items-start gap-1.5 text-sm text-ink-muted">
@@ -165,8 +190,17 @@ function pickPurchasableVariantId(product: { variants: { variantId: string; pric
   return sorted[0]?.variantId ?? null;
 }
 
-function ExecutionAuthorizationCard({ authorizationId, primaryProductId }: { authorizationId: string; primaryProductId: string }) {
+function ExecutionAuthorizationCard({
+  authorizationId,
+  primaryProductId,
+  policyDecisionId,
+}: {
+  authorizationId: string;
+  primaryProductId: string;
+  policyDecisionId: string | null;
+}) {
   const { data: authorization } = useExecutionAuthorization(authorizationId);
+  const { data: decision } = usePolicyDecision(policyDecisionId ?? null);
   const { data: product } = useAgentProduct(primaryProductId);
   const executeCheckout = useExecuteCheckout();
   const [quantity, setQuantity] = useState(1);
@@ -176,6 +210,7 @@ function ExecutionAuthorizationCard({ authorizationId, primaryProductId }: { aut
 
   const variantId = pickPurchasableVariantId(product);
   const alreadyConsumed = authorization.status === "CONSUMED";
+  const fingerprintMatch = decision ? decision.proposalFingerprint === authorization.proposalFingerprint : null;
 
   return (
     <div className="space-y-4">
@@ -183,6 +218,19 @@ function ExecutionAuthorizationCard({ authorizationId, primaryProductId }: { aut
         <CardHeader className="flex flex-wrap items-center gap-2">
           <CardTitle>Execution authorization</CardTitle>
           <span className="rounded-full bg-info-subtle px-2 py-0.5 text-[11px] font-medium text-info-text">{authorization.status}</span>
+          <FingerprintTag label="Authorized fingerprint" value={authorization.proposalFingerprint} />
+          {fingerprintMatch !== null ? (
+            <span
+              className={
+                fingerprintMatch
+                  ? "inline-flex items-center gap-1 rounded-full bg-success-subtle px-2 py-0.5 text-[11px] font-medium text-success-text"
+                  : "inline-flex items-center gap-1 rounded-full bg-danger-subtle px-2 py-0.5 text-[11px] font-medium text-danger-text"
+              }
+            >
+              <ShieldCheck size={11} />
+              {fingerprintMatch ? "Matches policy decision — verified" : "FINGERPRINT MISMATCH"}
+            </span>
+          ) : null}
         </CardHeader>
         <CardBody className="grid gap-2 text-sm sm:grid-cols-2">
           <div className="flex items-center gap-2 text-ink-muted">
@@ -412,7 +460,11 @@ export function GrowthProposalPanel({ proposal: initialProposal }: { proposal: G
 
       {proposal.latestPolicyDecisionId ? <PolicyDecisionCard proposalId={proposal.id} /> : null}
       {proposal.executionAuthorizationId ? (
-        <ExecutionAuthorizationCard authorizationId={proposal.executionAuthorizationId} primaryProductId={proposal.primaryProductId} />
+        <ExecutionAuthorizationCard
+          authorizationId={proposal.executionAuthorizationId}
+          primaryProductId={proposal.primaryProductId}
+          policyDecisionId={proposal.latestPolicyDecisionId}
+        />
       ) : null}
 
       {proposal.reasonCodes.length > 0 ? (

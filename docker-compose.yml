@@ -1,0 +1,68 @@
+# Full production-shaped stack: real Postgres, API, and web.
+#
+# This exists mainly so you can validate item #1 (real Postgres) BEFORE
+# paying for a managed database. The local PGlite dev shim
+# (`pnpm db:up`) is not represented here on purpose — the whole point is
+# to run against a real Postgres server.
+#
+#   cp .env.example .env      # then fill in real values
+#   docker compose up --build
+#
+# Web is served at http://localhost:8080, API at http://localhost:4000.
+
+services:
+  postgres:
+    image: postgres:16-alpine
+    environment:
+      POSTGRES_USER: razorgrowth
+      POSTGRES_PASSWORD: ${POSTGRES_PASSWORD:-razorgrowth_local_dev}
+      POSTGRES_DB: razorgrowth
+    ports:
+      - "5433:5432" # 5433 on the host so it never collides with `pnpm db:up`
+    volumes:
+      - postgres-data:/var/lib/postgresql/data
+    healthcheck:
+      # The API's migration step fails if it starts before Postgres is
+      # accepting connections, so this gate is load-bearing, not cosmetic.
+      test: ["CMD-SHELL", "pg_isready -U razorgrowth -d razorgrowth"]
+      interval: 5s
+      timeout: 5s
+      retries: 10
+
+  api:
+    build:
+      context: .
+      dockerfile: apps/api/Dockerfile
+    environment:
+      NODE_ENV: production
+      PORT: 4000
+      DATABASE_URL: postgresql://razorgrowth:${POSTGRES_PASSWORD:-razorgrowth_local_dev}@postgres:5432/razorgrowth?schema=public
+      WEB_ORIGIN: ${WEB_ORIGIN:-http://localhost:8080}
+      LOG_LEVEL: ${LOG_LEVEL:-info}
+      SESSION_VALIDITY_HOURS: ${SESSION_VALIDITY_HOURS:-12}
+      # Leave unset to run on the deterministic mock gateway. Set all
+      # three together — partial Razorpay config is rejected at startup.
+      RAZORPAY_KEY_ID: ${RAZORPAY_KEY_ID:-}
+      RAZORPAY_KEY_SECRET: ${RAZORPAY_KEY_SECRET:-}
+      RAZORPAY_WEBHOOK_SECRET: ${RAZORPAY_WEBHOOK_SECRET:-}
+      AI_PROVIDER_API_KEY: ${AI_PROVIDER_API_KEY:-}
+    ports:
+      - "4000:4000"
+    depends_on:
+      postgres:
+        condition: service_healthy
+
+  web:
+    build:
+      context: .
+      dockerfile: apps/web/Dockerfile
+      args:
+        # Build-time only — see apps/web/Dockerfile.
+        VITE_API_BASE_URL: ${VITE_API_BASE_URL:-http://localhost:4000/api/v1}
+    ports:
+      - "8080:80"
+    depends_on:
+      - api
+
+volumes:
+  postgres-data:

@@ -11,6 +11,7 @@ export type ErrorCode =
   | "VALIDATION_ERROR"
   | "NOT_FOUND"
   | "UNAUTHORIZED"
+  | "FORBIDDEN"
   | "POLICY_DENIED"
   | "CONFLICT"
   | "INTERNAL_ERROR"
@@ -39,11 +40,16 @@ export type ErrorCode =
   | "PAYMENT_PROVIDER_ERROR"
   | "PAYMENT_NOT_CONFIGURED"
   | "PAYMENT_VERIFICATION_FAILED"
-  | "FINANCIAL_INTEGRITY_ERROR";
+  | "FINANCIAL_INTEGRITY_ERROR"
+  | "IDEMPOTENCY_KEY_REQUIRED"
+  | "IDEMPOTENCY_KEY_REUSED"
+  | "IDEMPOTENCY_IN_FLIGHT"
+  | "SESSION_NOT_MUTABLE";
 
 const STATUS_BY_CODE: Record<ErrorCode, number> = {
   VALIDATION_ERROR: 400,
   UNAUTHORIZED: 401,
+  FORBIDDEN: 403,
   POLICY_DENIED: 403,
   NOT_FOUND: 404,
   CONFLICT: 409,
@@ -70,6 +76,14 @@ const STATUS_BY_CODE: Record<ErrorCode, number> = {
   PAYMENT_NOT_CONFIGURED: 503,
   PAYMENT_VERIFICATION_FAILED: 400,
   FINANCIAL_INTEGRITY_ERROR: 409,
+  // ACP (TECH_SPEC §2.1) names these outcomes explicitly, so they get
+  // their own codes rather than being flattened into VALIDATION_ERROR /
+  // CONFLICT — an agent branching on the code needs to tell "you forgot a
+  // key" apart from "your retry is still running".
+  IDEMPOTENCY_KEY_REQUIRED: 400,
+  IDEMPOTENCY_KEY_REUSED: 409,
+  IDEMPOTENCY_IN_FLIGHT: 409,
+  SESSION_NOT_MUTABLE: 409,
 };
 
 export class AppError extends Error {
@@ -96,6 +110,14 @@ export class AppError extends Error {
 
   static conflict(message: string, safeContext?: Record<string, unknown>): AppError {
     return new AppError("CONFLICT", message, safeContext);
+  }
+
+  static unauthorized(message: string, safeContext?: Record<string, unknown>): AppError {
+    return new AppError("UNAUTHORIZED", message, safeContext);
+  }
+
+  static forbidden(message: string, safeContext?: Record<string, unknown>): AppError {
+    return new AppError("FORBIDDEN", message, safeContext);
   }
 }
 

@@ -18,7 +18,7 @@ import type { AIProvider } from "../agents/ai-provider.js";
 import { getAIProvider } from "../agents/provider-factory.js";
 import { appendLedgerEvent } from "../audit/ledger.js";
 import { extractAndNormalizeIntent } from "./intent-extraction.js";
-import { getKnownCategories, searchCandidateProducts } from "./catalog-gateway.js";
+import { getKnownCategories, getKnownAttributes, searchCandidateProducts } from "./catalog-gateway.js";
 import { evaluateCandidates } from "./candidate-evaluation.js";
 import { buildRecommendations, type RecommendationOutcome } from "./recommendation-service.js";
 import { toDomainIntent, toIntentDTO } from "./intent-mapper.js";
@@ -114,10 +114,13 @@ export async function handleBuyerMessage(
   const userMessage = await appendMessage(prisma, conversationId, "BUYER", params.message);
   logger.info({ event: "buyer_agent.request_received", conversationId, traceId }, "Buyer Agent request received");
 
-  const knownCategories = await getKnownCategories(prisma, params.merchantId);
+  const [knownCategories, knownAttributes] = await Promise.all([
+    getKnownCategories(prisma, params.merchantId),
+    getKnownAttributes(prisma, params.merchantId),
+  ]);
   const priorIntent = toDomainIntent((conversationRow.currentIntent as unknown as BuyerIntentDTO | null) ?? null);
 
-  const extraction = await extractAndNormalizeIntent(provider, params.message, knownCategories);
+  const extraction = await extractAndNormalizeIntent(provider, params.message, knownCategories, knownAttributes);
 
   if (!extraction.ok) {
     logger.warn({ event: "buyer_agent.intent_extraction_unavailable", conversationId, traceId, errorCode: extraction.errorCode }, "Intent extraction unavailable");

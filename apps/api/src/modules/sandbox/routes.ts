@@ -1,7 +1,7 @@
 import type { FastifyInstance } from "fastify";
 import { sandboxRunRequestSchema } from "@razorgrowth/contracts";
 import { prisma } from "../../db/client.js";
-import { getDemoMerchantId } from "../authorization/demo-context.js";
+import { getAuthenticatedMerchantId } from "../authorization/demo-context.js";
 import { listSandboxPresets, runSandboxAttack } from "./service.js";
 
 /**
@@ -18,7 +18,7 @@ export function registerSandboxRoutes(app: FastifyInstance, prefix: string): voi
   });
 
   app.post(`${prefix}/sandbox/break-the-agent/run`, async (request) => {
-    const merchantId = await getDemoMerchantId(prisma);
+    const merchantId = getAuthenticatedMerchantId(request);
     const body = sandboxRunRequestSchema.parse(request.body);
     return runSandboxAttack(prisma, merchantId, body.attackId);
   });

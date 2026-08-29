@@ -12,6 +12,7 @@ import { Card } from "../components/ui/Card";
 import { EmptyState, ErrorState, Skeleton } from "../components/ui/States";
 import { ApiError } from "../lib/api-client";
 import { GrowthProposalPanel } from "../components/merchant-agent/GrowthProposalPanel";
+import { PageHeader } from "../components/layout/PageHeader";
 
 export default function ApprovalsPage() {
   const { data, isLoading, isError, error, refetch } = usePendingApprovals();
@@ -19,11 +20,10 @@ export default function ApprovalsPage() {
   return (
     <div className="space-y-6">
       <div>
-        <h1 className="text-lg font-semibold text-ink">Approval Center</h1>
-        <p className="mt-1 max-w-2xl text-sm text-ink-muted">
-          Growth proposals that deterministic policy has gated for human review — nothing here has been executed,
-          and nothing here is authorized until you decide.
-        </p>
+        <PageHeader
+          title={"Waiting for You"}
+          lead={"Purchases too large for your automatic limit. Nothing here has been charged — each one is waiting on your decision."}
+        />
       </div>
 
       {isLoading ? (

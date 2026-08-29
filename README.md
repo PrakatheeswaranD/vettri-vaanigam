@@ -1,8 +1,33 @@
-# RazorGrowth AI
+# Anumati
+## AI Growth & Agentic Commerce
 
-An AI-native merchant growth and agentic-commerce platform for Track 01 —
-**AI Growth & Agentic Commerce**. RazorGrowth AI turns a merchant into an
-AI-ready, measurable, safely transactable business.
+> Make merchant commerce AI-readable, AI-buyable and growth-enabled while
+> deterministic systems retain financial authority.
+
+Anumati is a specialist merchant capability for Track 01 —
+**AI Growth & Agentic Commerce**. It gives a merchant an intelligent
+commerce worker that can understand buyer demand, discover grounded growth
+opportunities, and move commerce workflows forward — while deterministic
+software keeps every financial decision.
+
+**AI reasons. Deterministic systems retain financial authority.**
+
+### Who is responsible for what
+
+| Actor | Responsibility | Never does |
+| --- | --- | --- |
+| **AI** (Buyer Agent, Merchant Agent) | Interprets buyer language into structured intent; ranks a bounded candidate set; proposes cross-sell / upsell / bundle / bounded-offer / recovery actions | Never moves money, approves its own proposal, overrides policy, or asserts payment state |
+| **Deterministic systems** (validation, Policy Engine, authorization, payment state machine, recovery eligibility) | Validate every proposal against schema and catalog truth; decide ALLOW / REQUIRE_APPROVAL / DENY; issue narrowly-scoped execution authorization; compute every authoritative amount server-side | Never delegate a financial decision to a model |
+| **Humans** (merchant OWNER / APPROVER) | Approve or reject any proposal policy routes to them; configure the guardrails the Policy Engine reads | Approval is recorded against a real authenticated identity, never a placeholder |
+| **Razorpay / provider** | Executes payment; supplies the only evidence that can move a payment to CAPTURED | Never trusted from a browser callback alone — signature-verified webhook or server-side fetch only |
+
+> **Product-thinking note.** Anumati is *Agent-Studio-shaped* — one
+> merchant-facing specialist capability with declared triggers,
+> capabilities, and prohibited capabilities (see
+> `packages/domain/src/specialist-manifest.ts`). It is **not** integrated
+> with, registered in, or certified by Razorpay Agent Studio, and the
+> manifest in this repo is an internal product abstraction, not Agent
+> Studio's format.
 
 > **The LLM never moves money directly.** Every financial action follows
 > `LLM → proposal → schema validation → deterministic policy → authorization
@@ -534,7 +559,7 @@ Two supporting pillars back it up:
 
 ## Agent-Readable Commerce
 
-Beyond the human-facing catalog, RazorGrowth AI exposes a dedicated
+Beyond the human-facing catalog, Anumati exposes a dedicated
 structured representation designed for AI-buyer consumption —
 `GET /api/v1/agent-commerce/catalog` and `/agent-commerce/catalog/:id`.
 This is not a re-serialization of the human DTO: it adds freshness

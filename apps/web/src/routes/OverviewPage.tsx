@@ -1,6 +1,6 @@
 import type { ReactNode } from "react";
 import { Link } from "react-router-dom";
-import { ArrowRight, Gauge, Package, ScrollText, TrendingUp, XCircle, CheckCircle2 } from "lucide-react";
+import { ArrowRight, Gauge, Package, ScrollText, TrendingUp, XCircle, CheckCircle2, Workflow } from "lucide-react";
 import { READINESS_DIMENSIONS, READINESS_DIMENSION_LABEL } from "@razorgrowth/domain";
 import {
   useCatalogQualitySummary,
@@ -16,6 +16,12 @@ import { ValueTag } from "../components/ui/ValueTag";
 import { AgentActionStatusBadge } from "../components/ui/StatusBadge";
 import { DimensionBar } from "../components/readiness/DimensionBar";
 import { ReadinessLevelBadge } from "../components/readiness/ReadinessLevelBadge";
+import { ScoreRing } from "../components/readiness/ScoreRing";
+import { CapabilityStrip } from "../components/capabilities/CapabilityStrip";
+import { GatewayPulse } from "../components/gateway/GatewayPulse";
+import { ConnectedSystems } from "../components/capabilities/ConnectedSystems";
+import { ActivityFeed } from "../features/activity/ActivityFeed";
+import { LatestWorkflowStrip } from "../features/trust-trace/LatestWorkflowStrip";
 import { formatDateTime, formatMoney } from "../lib/format";
 
 export default function OverviewPage() {
@@ -27,16 +33,60 @@ export default function OverviewPage() {
 
   return (
     <div className="space-y-6">
-      <div>
-        <h1 className="text-lg font-semibold text-ink">Overview</h1>
-        <p className="mt-1 max-w-2xl text-sm text-ink-muted">
-          Command center for Meridian Athletics — how AI-ready this catalog is, where the revenue opportunities
-          are, and what's actually happened.
+      {/* Hero — product identity (spec §6): what this is, in one glance */}
+      <div className="rounded-card border border-border bg-gradient-to-br from-brand-50 to-surface px-6 py-6">
+        <p className="text-xs font-semibold uppercase tracking-wide text-brand-600">Anumati</p>
+        <h1 className="mt-1 text-2xl font-bold tracking-tight text-ink">Agent Commerce Gateway</h1>
+        <p className="mt-1.5 max-w-2xl text-sm text-ink-muted">
+          Be safely payable by any AI buyer agent, on any protocol — every financial action stays
+          explainable, bounded, and governed before money ever moves.
         </p>
+        <p className="mt-2 text-xs font-medium text-ink-muted">
+          AI reasons. Deterministic systems retain financial authority —{" "}
+          <span className="text-ink">the LLM never moves money directly.</span>
+        </p>
+        <div className="mt-4 flex flex-wrap gap-2">
+          <Link
+            to="/growth"
+            className="rounded-md bg-brand-600 px-3 py-1.5 text-sm font-medium text-white hover:bg-brand-700"
+          >
+            View Growth Opportunities
+          </Link>
+          <Link
+            to="/ai-buyer"
+            className="rounded-md border border-border bg-surface px-3 py-1.5 text-sm font-medium text-ink hover:bg-surface-subtle"
+          >
+            Open Agent’s-Eye View
+          </Link>
+          <Link
+            to="/readiness"
+            className="rounded-md border border-border bg-surface px-3 py-1.5 text-sm font-medium text-ink hover:bg-surface-subtle"
+          >
+            Inspect Readiness
+          </Link>
+          <Link
+            to="/trust-trace"
+            className="rounded-md border border-border bg-surface px-3 py-1.5 text-sm font-medium text-ink hover:bg-surface-subtle"
+          >
+            View Trust Trace
+          </Link>
+        </div>
       </div>
 
-      {/* Agentic Readiness */}
+      {/* System Capability Summary (spec §6, §8) */}
       <Card>
+        <CardHeader>
+          <CardTitle>System Capability Summary</CardTitle>
+        </CardHeader>
+        <CardBody>
+          <CapabilityStrip />
+
+      <GatewayPulse />
+        </CardBody>
+      </Card>
+
+      {/* Agentic Readiness */}
+      <Card className="hover:shadow-popover">
         <CardHeader className="flex flex-wrap items-center gap-2">
           <CardTitle>Agentic Readiness</CardTitle>
           {readiness.data ? <ReadinessLevelBadge level={readiness.data.snapshot.level} /> : null}
@@ -51,17 +101,16 @@ export default function OverviewPage() {
             <EmptyState icon={<Gauge size={18} />} title="Readiness has not been calculated yet" />
           ) : (
             <div className="grid gap-6 md:grid-cols-[auto_1fr]">
-              <div className="flex flex-col items-center justify-center gap-1 rounded-card bg-surface-subtle px-8 py-6">
-                <span className="text-4xl font-bold tabular-nums text-ink">{readiness.data.snapshot.overallScore}</span>
-                <span className="text-xs text-ink-faint">out of 100</span>
+              <div className="flex flex-col items-center justify-center gap-2 rounded-card bg-surface-subtle px-6 py-6">
+                <ScoreRing score={readiness.data.snapshot.overallScore} />
                 {readiness.data.delta ? (
                   <span
                     className={
                       readiness.data.delta.overallScoreDelta > 0
-                        ? "mt-1 text-xs font-medium text-success-text"
+                        ? "text-xs font-medium text-success-text"
                         : readiness.data.delta.overallScoreDelta < 0
-                          ? "mt-1 text-xs font-medium text-danger-text"
-                          : "mt-1 text-xs font-medium text-ink-faint"
+                          ? "text-xs font-medium text-danger-text"
+                          : "text-xs font-medium text-ink-faint"
                     }
                   >
                     {readiness.data.delta.overallScoreDelta > 0 ? "+" : ""}
@@ -157,6 +206,33 @@ export default function OverviewPage() {
                 ))}
               </ul>
             )}
+          </CardBody>
+        </Card>
+      </div>
+
+      {/* Latest Commerce Workflow (spec §6) */}
+      <Card>
+        <CardHeader className="flex items-center gap-2">
+          <Workflow size={16} className="text-ink-faint" />
+          <CardTitle>Latest Commerce Workflow</CardTitle>
+        </CardHeader>
+        <CardBody>
+          <LatestWorkflowStrip />
+        </CardBody>
+      </Card>
+
+      {/* Connected Systems + Agent Activity (spec §7, §28) */}
+      <div className="grid gap-6 lg:grid-cols-2">
+        <ConnectedSystems />
+        <Card>
+          <CardHeader className="flex items-center justify-between">
+            <CardTitle>Agent Activity</CardTitle>
+            <Link to="/action-ledger" className="text-xs text-brand-600 hover:text-brand-700">
+              Full audit ledger
+            </Link>
+          </CardHeader>
+          <CardBody>
+            <ActivityFeed limit={8} />
           </CardBody>
         </Card>
       </div>

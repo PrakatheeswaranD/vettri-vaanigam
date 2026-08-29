@@ -28,9 +28,17 @@ const envSchema = z.object({
   // a clearly-labeled deterministic rule-based provider (PART 03 §10) so
   // the golden-path demo never depends on live network access or a paid
   // API key. Set this only to exercise the real LLM-backed extraction.
+  // Explicit provider selection rather than "whichever key happens to be
+  // set": with more than one live provider available, an implicit rule
+  // makes it genuinely unclear which model answered a given request —
+  // exactly the wrong ambiguity when a judge asks "what produced this?".
+  // `demo` forces the deterministic extractor even when keys are present.
+  AI_PROVIDER: z.enum(["auto", "anthropic", "gemini", "demo"]).default("auto"),
   AI_PROVIDER_API_KEY: z.string().min(1).optional(),
   AI_PROVIDER_MODEL: z.string().min(1).default("claude-haiku-4-5-20251001"),
   AI_PROVIDER_TIMEOUT_MS: z.coerce.number().int().positive().default(8000),
+  GEMINI_API_KEY: z.string().min(1).optional(),
+  GEMINI_MODEL: z.string().min(1).default("gemini-3.6-flash"),
   // --- Razorpay Test Mode (PART 07 §11-§12) ---
   // Absent by design in most environments: without these three, real
   // payment initiation returns a safe "not configured" error while every
@@ -43,6 +51,8 @@ const envSchema = z.object({
   RAZORPAY_WEBHOOK_SECRET: z.string().min(1).optional(),
   RAZORPAY_API_BASE_URL: z.string().min(1).default("https://api.razorpay.com/v1"),
   RAZORPAY_TIMEOUT_MS: z.coerce.number().int().positive().default(10000),
+  // --- Merchant identity/auth (PART 10 §1) ---
+  SESSION_VALIDITY_HOURS: z.coerce.number().int().positive().default(12),
 });
 
 const parsed = envSchema.safeParse(process.env);

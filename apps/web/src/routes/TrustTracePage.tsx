@@ -8,7 +8,7 @@
  */
 import { useMemo, useState } from "react";
 import { ShieldCheck, ShieldX, Sparkles } from "lucide-react";
-import { Link } from "react-router-dom";
+import { Link, useSearchParams } from "react-router-dom";
 import { useLedger } from "../hooks/use-api";
 import { useWorkflowTrace } from "../hooks/use-policy";
 import { Card, CardBody, CardHeader, CardTitle } from "../components/ui/Card";
@@ -18,8 +18,10 @@ import { ApiError } from "../lib/api-client";
 import { TrustTracePipeline } from "../features/trust-trace/TrustTracePipeline";
 import { TrustTraceDetailDrawer } from "../features/trust-trace/TrustTraceDetailDrawer";
 import { FinancialAuthorityStrip } from "../features/trust-trace/FinancialAuthorityStrip";
+import { GrowthEffectPanel } from "../features/trust-trace/GrowthEffectPanel";
 import { TrustBoundaryLegend } from "../features/trust-trace/ActorClassBadge";
 import { buildTrustTraceModel } from "../features/trust-trace/model";
+import { PageHeader } from "../components/layout/PageHeader";
 
 const OUTCOME_LABEL: Record<string, string> = {
   PENDING: "Pending",
@@ -42,9 +44,11 @@ export default function TrustTracePage() {
     return ids;
   }, [recent]);
 
+  const [searchParams] = useSearchParams();
+  const linkedWorkflowId = searchParams.get("workflowId");
   const [workflowId, setWorkflowId] = useState<string | null>(null);
   const [workflowInput, setWorkflowInput] = useState("");
-  const activeWorkflowId = workflowId ?? recentWorkflowIds[0] ?? null;
+  const activeWorkflowId = workflowId ?? linkedWorkflowId ?? recentWorkflowIds[0] ?? null;
   const [selectedStageId, setSelectedStageId] = useState<string | null>(null);
 
   const { data: trace, isLoading, isError, error, refetch } = useWorkflowTrace(activeWorkflowId);
@@ -54,11 +58,10 @@ export default function TrustTracePage() {
   return (
     <div className="space-y-6">
       <div>
-        <h1 className="text-xl font-semibold text-ink">Trust Trace</h1>
-        <p className="mt-1 max-w-2xl text-sm text-ink-muted">
-          What happened, who decided it, and whether the AI ever had financial authority — reconstructed entirely from
-          the real Agent Action Ledger for one workflow.
-        </p>
+        <PageHeader
+          title={"Order Trail"}
+          lead={"Follow a single order end to end: what was asked, which rule decided it, who approved it, and what the payment provider confirmed."}
+        />
       </div>
 
       <FinancialAuthorityStrip />
@@ -90,7 +93,7 @@ export default function TrustTracePage() {
         </CardHeader>
         <CardBody className="flex flex-wrap gap-2">
           {recentWorkflowIds.length === 0 ? (
-            <p className="text-sm text-ink-muted">No workflows yet — use the AI Buyer or Growth page to start one.</p>
+            <p className="text-sm text-ink-muted">No workflows yet — run the demo from the Agent Gateway page to create one.</p>
           ) : (
             recentWorkflowIds.slice(0, 8).map((id) => (
               <button
@@ -117,7 +120,7 @@ export default function TrustTracePage() {
           <CardBody>
             <EmptyState
               title="No workflow to trace yet"
-              description="Start the golden path from the AI Buyer or Growth page — a Trust Trace appears the moment a proposal exists."
+              description="Run the demo from the Agent Gateway page — a Trust Trace appears the moment a governed workflow exists."
               icon={<Sparkles size={18} />}
             />
           </CardBody>
@@ -162,6 +165,8 @@ export default function TrustTracePage() {
               </div>
             </CardBody>
           </Card>
+
+          {trace?.growthEffect ? <GrowthEffectPanel effect={trace.growthEffect} /> : null}
 
           {selectedStage ? <TrustTraceDetailDrawer stage={selectedStage} onClose={() => setSelectedStageId(null)} /> : null}
 

@@ -156,6 +156,27 @@ function deriveStatus(events: WorkflowTraceStepDTO[]): TrustTraceStageStatus {
   return "IN_PROGRESS";
 }
 
+/**
+ * A stage's actor class normally comes from its last event, but provider
+ * evidence outranks that.
+ *
+ * A payment stage ends on `PAYMENT_CAPTURED` / `PAYMENT_FAILED`, which
+ * this system records under `PAYMENT_SYSTEM` because our own code wrote
+ * the row. Labelling the stage "Deterministic" on that basis is
+ * misleading: the state changed only because a signature-verified
+ * provider event arrived earlier in the same stage. The provider is where
+ * that stage's TRUTH came from, and saying so is the whole claim — payment
+ * state is never something this application decided for itself.
+ *
+ * So: if any event in a stage came from a provider actor, the stage is
+ * PROVIDER.
+ */
+function deriveActorClass(events: WorkflowTraceStepDTO[]): TrustTraceActorClass | null {
+  if (events.some((e) => ACTOR_CLASS[e.actor] === "PROVIDER")) return "PROVIDER";
+  const last = events[events.length - 1];
+  return last ? (ACTOR_CLASS[last.actor] ?? null) : null;
+}
+
 function buildStage(id: string, group: RawGroup, events: WorkflowTraceStepDTO[], label?: string): TrustTraceStage {
   const status = deriveStatus(events);
   const last = events[events.length - 1] ?? null;
@@ -164,7 +185,7 @@ function buildStage(id: string, group: RawGroup, events: WorkflowTraceStepDTO[],
     label: label ?? GROUP_LABEL[group],
     status,
     actor: last?.actor ?? null,
-    actorClass: last ? (ACTOR_CLASS[last.actor] ?? null) : null,
+    actorClass: deriveActorClass(events),
     timestamp: last?.timestamp ?? null,
     headline: last?.conciseReason ?? "This stage was never reached — an earlier stage stopped the chain.",
     events,

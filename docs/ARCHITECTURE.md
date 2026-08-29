@@ -1,6 +1,6 @@
 # Architecture
 
-Concise reference for how RazorGrowth AI is actually built. Product intent
+Concise reference for how Anumati is actually built. Product intent
 and the full financial-safety rationale live in
 [`PART_00_MASTER_ENGINEERING_CONTRACT.md`](../PART_00_MASTER_ENGINEERING_CONTRACT.md);
 this document is the "how", not the "why".
@@ -1058,12 +1058,24 @@ beyond `MerchantPolicy.maxRecoveryAttempts` anywhere in this codebase.
 No recovery action beyond `RETRY_SAME_CHECKOUT` — the taxonomy and the
 Merchant Agent proposal machinery are built generically enough to add
 more without re-plumbing the AI call, but nothing in this demo needs a
-second one yet. No authentication beyond the single resolved demo
-merchant, no third AI actor anywhere in the commerce, payment, or
+second one yet. No third AI actor anywhere in the commerce, payment, or
 recovery path (`grep -rli "anthropic\|AIProvider"
 apps/api/src/modules/commerce/ apps/api/src/modules/payments/` returns
-nothing), no ACP/AP2/UCP/x402 protocol integration, and no full tax/
-shipping/warehouse-reservation platform. No scheduled job proactively
+nothing), and no full tax/shipping/warehouse-reservation platform.
+
+Authentication and protocol integration DO now exist, and the sentence
+that used to deny both was left behind by the Anumati work rather than
+being true:
+
+- Merchant users authenticate with opaque server-side sessions and are
+  role-scoped (OWNER/APPROVER/VIEWER); buyer agents authenticate to the
+  ACP surface with merchant-issued credentials.
+- ACP is implemented against the published spec (sessions, idempotency,
+  delegate_payment). AP2 and x402 are compatibility SHIMS and are
+  labelled as such in the API response, the console and this document.
+  x402 implements the 402/X-PAYMENT exchange but does NOT settle: no
+  facilitator is called, so an x402 intent can never be auto-approved and
+  always escalates to a human. No scheduled job proactively
 expires stale approvals/authorizations/checkout sessions; expiry is
 checked lazily, exactly when the relevant action is attempted, which is
 correct for this demo's scale (see the README's Limitations section). No

@@ -75,7 +75,7 @@ export default function ProductDetailPage() {
                   <span className="text-xs font-medium text-brand-600">{product.category}</span>
                   <ProductReadinessBadge state={product.readiness} />
                 </div>
-                <h1 className="text-xl font-semibold text-ink">{product.name}</h1>
+                <h1 className="text-2xl font-bold tracking-tight text-ink">{product.name}</h1>
                 <p className="text-sm text-ink-faint">{product.brand}</p>
               </div>
               <p className="text-sm text-ink-muted">{product.description}</p>
@@ -172,7 +172,7 @@ function AgentView({ productId }: { productId: string }) {
           <p className="text-ink-muted">
             The structured commerce representation an AI buyer would read for this product —{" "}
             <code className="rounded bg-surface px-1 py-0.5 text-xs">GET /api/v1/agent-commerce/catalog/{productId}</code>.
-            Not a claim of ACP/AP2/UCP/x402 protocol compliance — RazorGrowth AI's own internal representation.
+            Not a claim of ACP/AP2/UCP/x402 protocol compliance — Anumati's own internal representation.
           </p>
         </CardBody>
       </Card>

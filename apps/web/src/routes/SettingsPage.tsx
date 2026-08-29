@@ -8,6 +8,7 @@
  * `evaluatePolicy` reads.
  */
 import { useEffect, useState } from "react";
+import { Link } from "react-router-dom";
 import { Lock, Settings as SettingsIcon } from "lucide-react";
 import { useMerchantPolicy } from "../hooks/use-api";
 import { useUpdateMerchantPolicy } from "../hooks/use-policy";
@@ -15,6 +16,29 @@ import { Card, CardBody, CardHeader, CardTitle } from "../components/ui/Card";
 import { ErrorState, Skeleton } from "../components/ui/States";
 import { formatDateTime } from "../lib/format";
 import { ApiError } from "../lib/api-client";
+import { CapabilitiesPanel } from "../components/capabilities/CapabilitiesPanel";
+import { AgentAuthorityTable } from "../components/capabilities/AgentAuthorityTable";
+import { BusinessTriggers } from "../components/capabilities/BusinessTriggers";
+import { CapabilityStrip } from "../components/capabilities/CapabilityStrip";
+import { ConnectedSystems } from "../components/capabilities/ConnectedSystems";
+import { AutonomyModes } from "../components/capabilities/AutonomyModes";
+import { RecoveryGuardrails } from "../components/capabilities/RecoveryGuardrails";
+import { ReviewAndActivate } from "../components/capabilities/ReviewAndActivate";
+import { DiscountAuthorityBar } from "../components/policy/DiscountAuthorityBar";
+import { PageHeader } from "../components/layout/PageHeader";
+
+type SettingsTab = "commerce-data" | "capabilities" | "guardrails" | "review";
+
+/** The merchant CONFIGURE lifecycle (spec §8): commerce data →
+ * capabilities → guardrails → review. Rendered as ordered tabs rather
+ * than a onboarding wizard, because every step is independently
+ * re-visitable configuration, not a one-time setup flow. */
+const CONFIG_STEPS: { id: SettingsTab; label: string }[] = [
+  { id: "commerce-data", label: "Commerce Data" },
+  { id: "capabilities", label: "Capabilities" },
+  { id: "guardrails", label: "Guardrails" },
+  { id: "review", label: "Review" },
+];
 
 interface FormState {
   maxDiscountPercent: string;
@@ -36,6 +60,7 @@ function minorToRupeeString(minor: number): string {
 }
 
 export default function SettingsPage() {
+  const [tab, setTab] = useState<SettingsTab>("commerce-data");
   const { data: policy, isLoading, isError, error, refetch } = useMerchantPolicy();
   const update = useUpdateMerchantPolicy();
   const [form, setForm] = useState<FormState | null>(null);
@@ -72,10 +97,18 @@ export default function SettingsPage() {
   return (
     <div className="space-y-6">
       <div>
-        <h1 className="text-lg font-semibold text-ink">Policy Center</h1>
-        <p className="mt-1 max-w-2xl text-sm text-ink-muted">
-          Merchant-defined financial boundaries. These limits are enforced by a deterministic, independently-tested
-          Policy Engine — never by the AI itself, and never by the frontend.
+        <PageHeader
+          title={"Rules"}
+          lead={"The limits a human has set. These are read by the real system on every decision — nothing here is display-only."}
+        />
+        <p className="mt-2 max-w-2xl rounded-card border border-border bg-surface-subtle px-3 py-2 text-sm text-ink-muted">
+          These govern this merchant&rsquo;s <span className="font-medium text-ink">own</span> agents. What{" "}
+          <span className="font-medium text-ink">outside</span> buyer agents may do — ceilings, blocked categories, the
+          negotiator envelope, velocity — is a separate policy in the{" "}
+          <Link to="/agent-gateway" className="font-medium text-brand-600 hover:underline">
+            Agent Gateway
+          </Link>
+          . Two audiences, two policies, deliberately not merged.
         </p>
       </div>
 
@@ -93,7 +126,55 @@ export default function SettingsPage() {
         </CardBody>
       </Card>
 
-      {isLoading || !form ? (
+      {/* The CONFIGURE lifecycle, as four ordered steps (spec §8) */}
+      <div className="flex gap-1 overflow-x-auto border-b border-border">
+        {CONFIG_STEPS.map((step, i) => (
+          <button
+            key={step.id}
+            type="button"
+            onClick={() => setTab(step.id)}
+            className={
+              "flex shrink-0 items-center gap-1.5 border-b-2 px-3 py-2 text-sm font-medium " +
+              (tab === step.id ? "border-brand-600 text-brand-700" : "border-transparent text-ink-muted hover:text-ink")
+            }
+          >
+            <span
+              className={
+                "flex h-4 w-4 items-center justify-center rounded-full text-[10px] font-semibold " +
+                (tab === step.id ? "bg-brand-600 text-white" : "bg-surface-sunken text-ink-faint")
+              }
+            >
+              {i + 1}
+            </span>
+            {step.label}
+          </button>
+        ))}
+      </div>
+
+      {tab === "commerce-data" ? (
+        <div className="space-y-6">
+          <ConnectedSystems />
+          <Card>
+            <CardHeader>
+              <CardTitle>System Capability Summary</CardTitle>
+            </CardHeader>
+            <CardBody>
+              <CapabilityStrip />
+            </CardBody>
+          </Card>
+        </div>
+      ) : tab === "capabilities" ? (
+        <div className="space-y-6">
+          <CapabilitiesPanel />
+          <div className="grid gap-6 lg:grid-cols-2">
+            <BusinessTriggers />
+            <AgentAuthorityTable />
+          </div>
+          <AutonomyModes />
+        </div>
+      ) : tab === "review" ? (
+        <ReviewAndActivate />
+      ) : isLoading || !form ? (
         <Skeleton className="h-96 w-full" />
       ) : isError || !policy ? (
         <Card>
@@ -106,10 +187,24 @@ export default function SettingsPage() {
         <form onSubmit={handleSubmit} className="space-y-6">
           <Card>
             <CardHeader className="flex flex-wrap items-center justify-between gap-2">
-              <CardTitle>Discount boundaries</CardTitle>
+              <CardTitle>Discount authority</CardTitle>
               <span className="rounded-full bg-surface-sunken px-2 py-0.5 text-[11px] font-medium text-ink-muted">
                 Policy version {policy.policyVersion}
               </span>
+            </CardHeader>
+            <CardBody>
+              <DiscountAuthorityBar
+                autoApprovalBps={policy.autoApprovalDiscountBps}
+                maxBps={policy.maxDiscountBps}
+              />
+            </CardBody>
+          </Card>
+
+          <RecoveryGuardrails />
+
+          <Card>
+            <CardHeader>
+              <CardTitle>Discount boundaries</CardTitle>
             </CardHeader>
             <CardBody className="grid gap-4 sm:grid-cols-2">
               <PercentField

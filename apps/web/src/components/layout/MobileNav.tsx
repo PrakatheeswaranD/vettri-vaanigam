@@ -1,7 +1,7 @@
 import { useState } from "react";
 import { NavLink } from "react-router-dom";
 import { clsx } from "clsx";
-import { Menu, X, Zap } from "lucide-react";
+import { Menu, X, ShieldCheck } from "lucide-react";
 import { NAV_SECTIONS } from "./nav-items";
 
 export function MobileNav() {
@@ -29,10 +29,10 @@ export function MobileNav() {
           <div className="relative flex w-64 flex-col bg-surface shadow-popover">
             <div className="flex h-16 items-center justify-between border-b border-border px-4">
               <div className="flex items-center gap-2">
-                <div className="flex h-7 w-7 items-center justify-center rounded-md bg-brand-500 text-white">
-                  <Zap size={16} />
+                <div className="flex h-7 w-7 items-center justify-center rounded-lg bg-brand-600 text-white">
+                  <ShieldCheck size={15} />
                 </div>
-                <span className="text-sm font-semibold text-ink">RazorGrowth AI</span>
+                <span className="text-sm font-semibold text-ink">Anumati</span>
               </div>
               <button
                 type="button"
@@ -55,7 +55,7 @@ export function MobileNav() {
                         onClick={() => setOpen(false)}
                         className={({ isActive }) =>
                           clsx(
-                            "flex items-center gap-2.5 rounded-md px-3 py-2 text-sm font-medium",
+                            "flex gap-2.5 rounded-lg px-3 py-2 text-sm font-medium",
                             isActive ? "bg-brand-50 text-brand-700" : "text-ink-muted hover:bg-surface-subtle hover:text-ink",
                           )
                         }

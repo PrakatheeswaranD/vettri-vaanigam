@@ -33,6 +33,10 @@ import type {
   RawIntentExtraction,
   RawRankedItem,
   RawRecoveryProposal,
+  NormalizeCatalogRowParams,
+  RawNormalizedProduct,
+  ProposeAgentUpsellParams,
+  RawAgentUpsell,
 } from "../ai-provider.js";
 
 const KNOWN_COLORS = ["black", "white", "grey", "gray", "blue", "red", "navy"];
@@ -269,6 +273,85 @@ export function createDemoRuleBasedProvider(): AIProvider {
           action === "RETRY_SAME_CHECKOUT"
             ? `Attempt ${params.currentAttemptNumber} failed with a retryable category (${params.failureCategory}); retrying the same checkout.`
             : "No safe recovery action is available.",
+      };
+    },
+
+    /**
+     * Deterministic catalogue normalisation.
+     *
+     * Genuinely does the work rather than throwing: the whole demo has to
+     * run with no API key, and a compiler that only functions with a live
+     * model would be untestable and undemoable. It parses the common
+     * shapes ("500ml", "combo of 2", "Rs. 1,499") with regexes, and — like
+     * the model — returns null rather than guessing when a field is absent.
+     */
+    async normalizeCatalogRow(params: NormalizeCatalogRowParams): Promise<RawNormalizedProduct> {
+      const joined = Object.values(params.row).join(" ");
+      const get = (...keys: string[]): string | null => {
+        for (const key of Object.keys(params.row)) {
+          if (keys.some((k) => key.toLowerCase().replace(/[^a-z]/g, "") === k)) {
+            const value = params.row[key]?.trim();
+            if (value) return value;
+          }
+        }
+        return null;
+      };
+
+      const rawName = get("name", "product", "productname", "title", "item") ?? joined.slice(0, 80);
+      // Marketing noise is not part of a product name.
+      const name = rawName
+        .replace(/\b(festive|offer|sale|best ?seller|new|hot|combo of \d+|\d+\s*% ?off)\b/gi, "")
+        .replace(/[!*]+/g, " ")
+        .replace(/\s{2,}/g, " ")
+        .trim();
+
+      const priceRaw = get("price", "mrp", "amount", "cost") ?? joined;
+      const priceMatch = priceRaw.match(/(?:rs\.?|inr|₹)?\s*([0-9][0-9,]*(?:\.[0-9]{1,2})?)/i);
+      const priceMajor = priceMatch ? Number(priceMatch[1]!.replace(/,/g, "")) : null;
+
+      const categoryRaw = (get("category", "type", "dept", "department") ?? "").toLowerCase();
+      const category =
+        params.knownCategories.find((c) => c.toLowerCase() === categoryRaw) ??
+        params.knownCategories.find((c) => categoryRaw.includes(c.toLowerCase()) || c.toLowerCase().includes(categoryRaw)) ??
+        params.knownCategories.find((c) => joined.toLowerCase().includes(c.toLowerCase())) ??
+        null;
+
+      const sizeMatch = joined.match(/\b(\d+\s?(?:ml|l|g|kg)|UK\s?\d+|one size|[SML]\/[SML]|XL|XXL|\b[SML]\b)/i);
+      const packMatch = joined.match(/\b(?:combo|pack|set)\s*of\s*(\d+)|\b(\d+)\s*(?:pack|pcs|pieces)\b/i);
+      const colorMatch = joined.match(/\b(black|blue|grey|gray|navy|red|white|green)\b/i);
+
+      return {
+        name: name.length > 0 ? name : rawName.trim(),
+        category,
+        description: get("description", "desc", "details"),
+        priceMajor: priceMajor !== null && Number.isFinite(priceMajor) ? priceMajor : null,
+        currency: /\bUSD\b|\$/.test(joined) ? "USD" : /₹|\brs\.?\b|\binr\b/i.test(joined) ? "INR" : null,
+        size: sizeMatch ? sizeMatch[1]!.replace(/\s+/g, "").toUpperCase() : null,
+        color: colorMatch ? colorMatch[1]![0]!.toUpperCase() + colorMatch[1]!.slice(1).toLowerCase() : null,
+        packQuantity: packMatch ? Number(packMatch[1] ?? packMatch[2]) : null,
+        confidence: category && priceMajor !== null ? 0.9 : 0.5,
+      };
+    },
+
+    /**
+     * Deterministic negotiator: offers the single cheapest candidate in a
+     * DIFFERENT category to the basket (a genuine complement rather than a
+     * competing near-duplicate), at half the permitted ceiling.
+     *
+     * Half rather than the maximum on purpose — a negotiator that always
+     * offers the largest discount it is allowed is not negotiating, it is
+     * just leaking margin, and it would make the clamp untestable because
+     * proposal and ceiling would be indistinguishable.
+     */
+    async proposeAgentUpsell(params: ProposeAgentUpsellParams): Promise<RawAgentUpsell> {
+      const basketCategories = new Set(params.basket.map((b) => b.category));
+      const complement = params.candidates.find((c) => !basketCategories.has(c.category));
+      if (!complement) return { addSkus: [], discountBps: 0, pitch: "No add-on in the catalogue genuinely complements this basket." };
+
+      return {
+        addSkus: [complement.sku],
+        discountBps: Math.floor(params.maxDiscountBps / 2),
+        pitch: `Adding ${complement.name} completes this order, and the merchant will take a little off the total for the larger basket.`,
       };
     },
   };

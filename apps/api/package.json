@@ -3,7 +3,7 @@
   "version": "0.1.0",
   "private": true,
   "type": "module",
-  "description": "RazorGrowth AI backend — Fastify API, domain services, Prisma/PostgreSQL.",
+  "description": "Anumati backend \u2014 Fastify API, agent gateway, Prisma/PostgreSQL.",
   "scripts": {
     "dev": "tsx watch src/server.ts",
     "build": "tsc -p tsconfig.json",
@@ -14,10 +14,16 @@
     "db:generate": "prisma generate --schema prisma/schema.prisma",
     "db:migrate": "dotenv -e ../../.env -- prisma migrate deploy --schema prisma/schema.prisma",
     "db:migrate:deploy": "dotenv -e ../../.env -- prisma migrate deploy --schema prisma/schema.prisma",
+    "//db:deploy": "Container/CI variant: reads DATABASE_URL from the real process environment instead of a .env file, which does not exist in a production image.",
+    "db:deploy": "prisma migrate deploy --schema prisma/schema.prisma",
+    "//db:seed:env": "Container variant of db:seed, same reasoning as db:deploy.",
+    "db:seed:env": "node --import tsx prisma/seed.ts",
     "db:seed": "node --env-file=../../.env --import tsx prisma/seed.ts",
     "db:reset": "dotenv -e ../../.env -- prisma migrate reset --schema prisma/schema.prisma --force --skip-generate",
     "eval:intent": "node --env-file=../../.env --import tsx scripts/eval-intent.ts",
-    "eval:recommendation": "node --env-file=../../.env --import tsx scripts/eval-recommendation.ts"
+    "eval:recommendation": "node --env-file=../../.env --import tsx scripts/eval-recommendation.ts",
+    "demo:golden-path": "node --env-file=../../.env --import tsx scripts/demo-golden-path.ts",
+    "demo:agent-swarm": "node --env-file=../../.env --import tsx scripts/demo-agent-swarm.ts"
   },
   "prisma": {
     "seed": "node --env-file=../../.env --import tsx prisma/seed.ts"

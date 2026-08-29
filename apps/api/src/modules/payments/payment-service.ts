@@ -16,9 +16,9 @@ import { findCheckoutById, updateCheckoutStatus } from "../commerce/checkout-rep
 import { setOrderStatus } from "../commerce/order-repository.js";
 import { computeOrderFingerprint } from "../commerce/order-fingerprint.js";
 import { getPaymentGateway } from "./gateway-factory.js";
-import { ProviderGatewayError, type PaymentGateway, type PaymentGatewayPublicConfig } from "./gateway.js";
+import { ProviderGatewayError, type PaymentGateway, type PaymentGatewayPublicConfig, type ProviderPaymentInfo } from "./gateway.js";
 import { normalizeRazorpayFailure } from "./failure-mapper.js";
-import { applyPaymentTransition, createPayment, findPaymentByCheckoutId, findPaymentById, touchReconciledAt } from "./payment-repository.js";
+import { applyPaymentTransition, attachProviderPaymentId, createPayment, findPaymentByCheckoutId, findPaymentById, touchReconciledAt } from "./payment-repository.js";
 import { resolvePaymentEvent } from "./payment-transition.js";
 import { toPaymentDTO } from "./mapper.js";
 
@@ -333,14 +333,54 @@ export async function verifyClientCompletion(prisma: PrismaClient, merchantId: s
   return toPaymentDTO(finalPayment!);
 }
 
+/**
+ * Recovers a payment we hold a provider ORDER for but no provider PAYMENT
+ * id — the stranded case: the customer completed checkout, but the browser
+ * closed before the callback and no webhook arrived. Without this the row
+ * sits at CREATED forever while the provider considers it paid.
+ *
+ * Selection is deliberately conservative. A single attempt is
+ * unambiguous. With several attempts we take a settled one (`captured` /
+ * `authorized`) because that is the outcome that decides financial truth,
+ * and there can only be one — an order stops accepting payments once one
+ * succeeds. If every attempt failed, the latest failure is the honest
+ * current state. We never guess between two settled payments.
+ */
+async function recoverStrandedPayment(
+  gateway: PaymentGateway,
+  providerOrderId: string,
+  internalPaymentId: string,
+): Promise<ProviderPaymentInfo> {
+  const attempts = await gateway.listPaymentsForOrder(providerOrderId);
+  if (attempts.length === 0) {
+    throw AppError.conflict(
+      "The provider has no payment recorded against this order yet — the customer has not completed checkout.",
+    );
+  }
+
+  const settled = attempts.filter((a) => a.providerStatus === "captured" || a.providerStatus === "authorized");
+  if (settled.length > 1) {
+    throw AppError.conflict(
+      `The provider reports ${settled.length} settled payments on order ${providerOrderId}. Refusing to guess which is authoritative — reconcile this manually.`,
+    );
+  }
+
+  const chosen = settled[0] ?? attempts[attempts.length - 1]!;
+  logger.info(
+    { event: "payment.stranded_recovered", internalPaymentId, providerOrderId, providerPaymentId: chosen.providerPaymentId, providerStatus: chosen.providerStatus },
+    "Recovered a stranded payment by provider order lookup",
+  );
+  return chosen;
+}
+
 export async function reconcilePayment(prisma: PrismaClient, merchantId: string, paymentId: string): Promise<PaymentDTO> {
   const gateway = getPaymentGateway();
   if (!gateway) throw new AppError("PAYMENT_NOT_CONFIGURED", "Razorpay Test Mode is not configured on this server.");
 
   const payment = await findPaymentById(prisma, merchantId, paymentId);
   if (!payment) throw AppError.notFound(`Payment not found: ${paymentId}`);
-  if (!payment.providerPaymentId) {
-    throw AppError.conflict("No provider payment reference exists yet for this payment; nothing to reconcile.");
+  if (!payment.providerPaymentId && !payment.providerOrderId) {
+    throw AppError.conflict("No provider reference exists yet for this payment; nothing to reconcile.");
   }
   const now = systemClock.now();
   if (payment.lastReconciledAt && now.getTime() - payment.lastReconciledAt.getTime() < RECONCILE_COOLDOWN_MS) {
@@ -350,11 +390,31 @@ export async function reconcilePayment(prisma: PrismaClient, merchantId: string,
   const checkout = await findCheckoutById(prisma, merchantId, payment.checkoutId!);
   if (!checkout) throw AppError.notFound(`Checkout not found for payment: ${paymentId}`);
 
-  const providerInfo = await gateway.fetchPayment(payment.providerPaymentId);
+  const providerInfo = payment.providerPaymentId
+    ? await gateway.fetchPayment(payment.providerPaymentId)
+    : await recoverStrandedPayment(gateway, payment.providerOrderId!, payment.id);
 
   await withLedgerConcurrencyRetry(prisma, async (tx) => {
     const fresh = await tx.payment.findUniqueOrThrow({ where: { id: payment.id } });
     const freshOrder = await tx.order.findUniqueOrThrow({ where: { id: payment.orderId } });
+    // Persist a reference recovered by order lookup before resolving the
+    // event: if the provider still reports the same state, the state
+    // machine short-circuits as an idempotent no-op and the reference we
+    // just learned would be lost.
+    if (!fresh.providerPaymentId && providerInfo.providerPaymentId) {
+      await attachProviderPaymentId(tx, fresh.id, providerInfo.providerPaymentId);
+      await appendLedgerEvent(tx, {
+        workflowId: checkout.workflowId,
+        merchantId,
+        actorType: "PAYMENT_SYSTEM",
+        actionType: "PAYMENT_RECONCILED",
+        status: "EXECUTED",
+        conciseReason: `Recovered stranded provider payment reference ${providerInfo.providerPaymentId} by order lookup.`,
+        relatedEntityType: "Payment",
+        relatedEntityId: fresh.id,
+        executedAt: now,
+      });
+    }
     const result = await resolvePaymentEvent(tx, {
       workflowId: checkout.workflowId,
       merchantId,

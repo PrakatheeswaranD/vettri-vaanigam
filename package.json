@@ -3,7 +3,7 @@
   "version": "0.1.0",
   "private": true,
   "type": "module",
-  "description": "RazorGrowth AI — AI-native merchant growth and agentic-commerce platform (Track 01).",
+  "description": "Anumati \u2014 a merchant-side gateway making any Razorpay merchant safely payable by any AI buyer agent, on any protocol (Track 01).",
   "engines": {
     "node": ">=20"
   },
@@ -24,7 +24,8 @@
     "db:seed": "pnpm --filter @razorgrowth/api run db:seed",
     "db:reset": "pnpm --filter @razorgrowth/api run db:reset",
     "eval:intent": "pnpm --filter @razorgrowth/api run eval:intent",
-    "eval:recommendation": "pnpm --filter @razorgrowth/api run eval:recommendation"
+    "eval:recommendation": "pnpm --filter @razorgrowth/api run eval:recommendation",
+    "demo:golden-path": "pnpm --filter @razorgrowth/api run demo:golden-path"
   },
   "devDependencies": {
     "@electric-sql/pglite": "^0.5.7",

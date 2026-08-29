@@ -22,11 +22,17 @@ import { registerSandboxRoutes } from "./modules/sandbox/routes.js";
 import { registerGrowthRoutes } from "./modules/growth/routes.js";
 import { registerTransactionRoutes, registerCommerceRoutes } from "./modules/commerce/routes.js";
 import { registerAgentCommerceRoutes } from "./modules/agent-commerce/routes.js";
+import { registerAgentGatewayRoutes } from "./modules/gateway/routes.js";
+import { registerCatalogCompilerRoutes } from "./modules/catalog-compiler/routes.js";
+import { registerAcpRoutes } from "./modules/acp/routes.js";
+import { registerX402Routes } from "./modules/x402/routes.js";
 import { registerBuyerAgentRoutes } from "./modules/buyer-agent/routes.js";
 import { registerMerchantAgentRoutes } from "./modules/merchant-agent/routes.js";
 import { registerPolicyRoutes } from "./modules/policy/routes.js";
 import { registerPaymentRoutes } from "./modules/payments/routes.js";
 import { registerPaymentWebhookRoutes } from "./modules/payments/webhook-routes.js";
+import { registerAuthRoutes } from "./modules/auth/routes.js";
+import { authenticateRequest } from "./modules/auth/middleware.js";
 
 export function buildApp(): FastifyInstance {
   // Cast to the default FastifyInstance shape: passing a concrete Pino
@@ -85,7 +91,14 @@ export function buildApp(): FastifyInstance {
     reply.status(404).send(toErrorResponseBody("NOT_FOUND", `Route not found: ${request.method} ${request.url}`, request.id));
   });
 
+  // PART 10 §1 — global authentication gate. Registered before every
+  // route module below so no handler can ever run without either being
+  // on the explicit unauthenticated allowlist or having a resolved
+  // `merchantId` already attached to the request.
+  app.addHook("preHandler", authenticateRequest);
+
   const v1 = "/api/v1";
+  registerAuthRoutes(app, v1);
   registerSystemRoutes(app, v1);
   registerMerchantRoutes(app, v1);
   registerCatalogRoutes(app, v1);
@@ -94,6 +107,10 @@ export function buildApp(): FastifyInstance {
   registerGrowthRoutes(app, v1);
   registerTransactionRoutes(app, v1);
   registerAgentCommerceRoutes(app, v1);
+  registerAgentGatewayRoutes(app, v1);
+  registerCatalogCompilerRoutes(app, v1);
+  registerAcpRoutes(app, v1);
+  registerX402Routes(app, v1);
   registerBuyerAgentRoutes(app, v1);
   registerMerchantAgentRoutes(app, v1);
   registerPolicyRoutes(app, v1);

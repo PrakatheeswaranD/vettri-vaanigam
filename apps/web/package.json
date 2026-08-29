@@ -3,7 +3,7 @@
   "version": "0.1.0",
   "private": true,
   "type": "module",
-  "description": "RazorGrowth AI merchant command center — React/Vite frontend.",
+  "description": "Anumati merchant console — React/Vite frontend.",
   "scripts": {
     "dev": "vite",
     "build": "vite build",

@@ -59,7 +59,7 @@ export function PaymentPanel({ checkoutId }: { checkoutId: string }) {
         amount: initiation.amountMinor,
         currency: initiation.currency,
         order_id: initiation.providerOrderId,
-        name: "RazorGrowth AI — Test Mode",
+        name: "Anumati — Test Mode",
         description: `Checkout ${initiation.checkoutId.slice(0, 8)}`,
         theme: { color: "#4f46e5" },
         handler: (response) => {

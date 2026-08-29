@@ -3,7 +3,9 @@ import type {
   AgentActionDTO,
   AgentReadableProductDTO,
   CatalogQualitySummaryDTO,
+  ConnectedSystemsDTO,
   GrowthOpportunityDTO,
+  GrowthSummaryDTO,
   MerchantDTO,
   MerchantPolicyDTO,
   MerchantStatsDTO,
@@ -12,6 +14,7 @@ import type {
   ProductSummaryDTO,
   ReadinessAssessmentResponseDTO,
   ReadinessSnapshotDTO,
+  SystemCapabilitiesDTO,
   TransactionDTO,
 } from "@razorgrowth/contracts";
 import { apiGet, apiPost, type QueryParams } from "../lib/api-client";
@@ -133,6 +136,27 @@ export function useGrowthOpportunities() {
   return useQuery({
     queryKey: ["growth", "opportunities"],
     queryFn: () => apiGet<{ items: GrowthOpportunityDTO[] }>("/growth/opportunities"),
+  });
+}
+
+export function useGrowthSummary() {
+  return useQuery({
+    queryKey: ["growth", "summary"],
+    queryFn: () => apiGet<GrowthSummaryDTO>("/growth/summary"),
+  });
+}
+
+export function useSystemCapabilities() {
+  return useQuery({
+    queryKey: ["system", "capabilities"],
+    queryFn: () => apiGet<SystemCapabilitiesDTO>("/system/capabilities"),
+  });
+}
+
+export function useConnectedSystems() {
+  return useQuery({
+    queryKey: ["system", "connected-systems"],
+    queryFn: () => apiGet<ConnectedSystemsDTO>("/system/connected-systems"),
   });
 }
 

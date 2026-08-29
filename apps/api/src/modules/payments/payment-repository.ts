@@ -84,13 +84,32 @@ export function applyPaymentTransition(tx: Prisma.TransactionClient, id: string,
   });
 }
 
+/**
+ * Records the provider's payment reference WITHOUT changing state.
+ *
+ * Recovering a stranded payment can discover the provider's payment id
+ * while the state itself is unchanged (the provider still reports
+ * `created`). The state machine treats a same-state event as an idempotent
+ * no-op and returns before persisting anything, which would throw the
+ * recovered reference away — leaving us unable to match the webhook that
+ * eventually arrives for it. Learning the reference is not a financial
+ * transition, so it is written separately rather than by loosening the
+ * state machine.
+ */
+export function attachProviderPaymentId(tx: Prisma.TransactionClient, id: string, providerPaymentId: string) {
+  return tx.payment.update({ where: { id }, data: { providerPaymentId } });
+}
+
 export function touchReconciledAt(prisma: PrismaClient, id: string) {
   return prisma.payment.update({ where: { id }, data: { lastReconciledAt: new Date() } });
 }
 
 export interface CreateProviderEventInput {
   id: string;
-  merchantId: string;
+  /** Nullable (PART 10 §1) — unknown until the event's providerOrderId
+   * resolves to a real Payment row; a genuinely unresolvable event has
+   * no merchant to attribute it to. */
+  merchantId: string | null;
   provider: PaymentProvider;
   providerEventId: string | null;
   eventType: string;

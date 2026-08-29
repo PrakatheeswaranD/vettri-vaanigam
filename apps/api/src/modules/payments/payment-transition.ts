@@ -82,19 +82,36 @@ export async function resolvePaymentEvent(
   // describe the payment we actually authorized; the safe response is to
   // refuse the transition, not to silently trust the provider's number.
   if (providerInfo.amountMinor !== payment.amountMinor || providerInfo.currency.toUpperCase() !== payment.currency) {
-    await applyPaymentTransition(tx, payment.id, { state: "UNKNOWN" });
+    // A TERMINAL payment is never dragged back to UNKNOWN.
+    //
+    // This forced UNKNOWN before consulting the state machine, so a late,
+    // inconsistent event could regress a CAPTURED payment while its Order
+    // stayed PAID — leaving the two disagreeing about whether money moved,
+    // which is precisely the confusion the state machine exists to
+    // prevent. The integrity error is still recorded loudly; what changes
+    // is that a settled fact stays settled.
+    const isTerminal = payment.state === "CAPTURED" || payment.state === "FAILED" || payment.state === "CANCELLED";
+    if (!isTerminal) {
+      await applyPaymentTransition(tx, payment.id, { state: "UNKNOWN" });
+    }
     await appendLedgerEvent(tx, {
       workflowId: params.workflowId,
       merchantId: params.merchantId,
       actorType: "PAYMENT_SYSTEM",
       actionType: "PAYMENT_FINANCIAL_INTEGRITY_ERROR",
       status: "FAILED",
-      conciseReason: `Provider-reported amount/currency (${providerInfo.amountMinor} ${providerInfo.currency}) does not match the authorized payment (${payment.amountMinor} ${payment.currency}).`,
+      conciseReason: `Provider-reported amount/currency (${providerInfo.amountMinor} ${providerInfo.currency}) does not match the authorized payment (${payment.amountMinor} ${payment.currency}).${isTerminal ? ` The payment is already ${payment.state} and was NOT regressed; this event is recorded for investigation.` : ""}`,
       relatedEntityType: "Payment",
       relatedEntityId: payment.id,
       executedAt: now,
     });
-    return { applied: false, fromState: payment.state, toState: "UNKNOWN", integrityError: true, reason: "AMOUNT_OR_CURRENCY_MISMATCH" };
+    return {
+      applied: false,
+      fromState: payment.state,
+      toState: isTerminal ? payment.state : "UNKNOWN",
+      integrityError: true,
+      reason: "AMOUNT_OR_CURRENCY_MISMATCH",
+    };
   }
   if (payment.providerOrderId && providerInfo.providerOrderId && providerInfo.providerOrderId !== payment.providerOrderId) {
     await appendLedgerEvent(tx, {

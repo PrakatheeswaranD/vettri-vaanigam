@@ -8,7 +8,7 @@ import type { FastifyInstance } from "fastify";
 import { z } from "zod";
 import { growthProposalRequestSchema, merchantGrowthConfigSchema } from "@razorgrowth/contracts";
 import { prisma } from "../../db/client.js";
-import { getDemoMerchantId } from "../authorization/demo-context.js";
+import { getAuthenticatedMerchantId } from "../authorization/demo-context.js";
 import { getGrowthConfig } from "./repository.js";
 import { getGrowthProposal, listGrowthProposals, proposeGrowthAction } from "./service.js";
 
@@ -17,25 +17,25 @@ const listQuerySchema = z.object({ limit: z.coerce.number().int().min(1).max(50)
 
 export function registerMerchantAgentRoutes(app: FastifyInstance, prefix: string): void {
   app.post(`${prefix}/merchant-agent/growth/proposals`, async (request) => {
-    const merchantId = await getDemoMerchantId(prisma);
+    const merchantId = getAuthenticatedMerchantId(request);
     const body = growthProposalRequestSchema.parse(request.body);
     return proposeGrowthAction(prisma, { merchantId, ...body });
   });
 
   app.get(`${prefix}/merchant-agent/growth/proposals`, async (request) => {
-    const merchantId = await getDemoMerchantId(prisma);
+    const merchantId = getAuthenticatedMerchantId(request);
     const query = listQuerySchema.parse(request.query);
     return { items: await listGrowthProposals(prisma, merchantId, query.limit) };
   });
 
   app.get(`${prefix}/merchant-agent/growth/proposals/:id`, async (request) => {
-    const merchantId = await getDemoMerchantId(prisma);
+    const merchantId = getAuthenticatedMerchantId(request);
     const params = proposalParamsSchema.parse(request.params);
     return getGrowthProposal(prisma, merchantId, params.id);
   });
 
-  app.get(`${prefix}/merchant-agent/growth/config`, async () => {
-    const merchantId = await getDemoMerchantId(prisma);
+  app.get(`${prefix}/merchant-agent/growth/config`, async (request) => {
+    const merchantId = getAuthenticatedMerchantId(request);
     const config = await getGrowthConfig(prisma, merchantId);
     return merchantGrowthConfigSchema.parse({
       growthActionsEnabled: config.growthActionsEnabled,

@@ -13,9 +13,8 @@
 import { randomUUID } from "node:crypto";
 import { afterAll, beforeAll, beforeEach, describe, expect, it } from "vitest";
 import type { FastifyInstance } from "fastify";
-import { buildApp } from "./app.js";
+import { buildAuthedTestApp, getTestMerchantId } from "./test-helpers/test-app.js";
 import { prisma } from "./db/client.js";
-import { getDemoMerchantId } from "./modules/authorization/demo-context.js";
 import { proposeGrowthAction } from "./modules/merchant-agent/service.js";
 import { createFixtureProvider } from "./modules/agents/providers/fixture-provider.js";
 import { getMockPaymentGatewayForTests, getPaymentGateway } from "./modules/payments/gateway-factory.js";
@@ -39,8 +38,7 @@ async function cheapestActiveVariant(pid: string): Promise<string> {
 }
 
 beforeAll(async () => {
-  app = buildApp();
-  await app.ready();
+  app = await buildAuthedTestApp();
 });
 
 afterAll(async () => {
@@ -56,7 +54,7 @@ beforeEach(() => {
 });
 
 async function proposeCrossSell() {
-  const merchantId = await getDemoMerchantId(prisma);
+  const merchantId = await getTestMerchantId(prisma);
   const pulseRunner = await productId("Meridian Pulse Runner");
   const provider = createFixtureProvider(
     {
@@ -421,6 +419,95 @@ describe("Payments — reconciliation (PART 07 §40, §111)", () => {
     const res = await app.inject({ method: "POST", url: `/api/v1/payments/${init.paymentId}/reconcile` });
     expect(res.statusCode).toBe(200);
     expect(res.json().state).toBe("CAPTURED");
+  });
+
+  it("recovers a stranded payment by provider order lookup when no payment reference is known", async () => {
+    const { checkoutId, amountMinor, currency } = await readyCheckout();
+    const init = (await initiate(checkoutId)).json();
+    const providerPaymentId = `mock_pay_${randomUUID()}`;
+
+    // The customer completed checkout, but the browser closed before the
+    // callback and no webhook arrived: we hold a provider ORDER and no
+    // provider PAYMENT id, so the row is stranded at CREATED.
+    const before = await prisma.payment.findUniqueOrThrow({ where: { id: init.paymentId } });
+    expect(before.providerPaymentId).toBeNull();
+
+    getMockPaymentGatewayForTests().seedPayment({
+      providerPaymentId,
+      providerOrderId: init.providerOrderId,
+      amountMinor,
+      currency,
+      providerStatus: "captured",
+      method: "netbanking",
+      errorCode: null,
+      errorDescription: null,
+      capturedAt: new Date(),
+    });
+
+    const res = await app.inject({ method: "POST", url: `/api/v1/payments/${init.paymentId}/reconcile` });
+    expect(res.statusCode).toBe(200);
+    expect(res.json().state).toBe("CAPTURED");
+    expect(res.json().providerPaymentId).toBe(providerPaymentId);
+  });
+
+  it("records a recovered reference even when the provider reports no state change", async () => {
+    const { checkoutId, amountMinor, currency } = await readyCheckout();
+    const init = (await initiate(checkoutId)).json();
+    const providerPaymentId = `mock_pay_${randomUUID()}`;
+
+    // Provider still reports `created`, which maps to the state we are
+    // already in. The state machine treats that as an idempotent no-op —
+    // the reference must still be persisted, or the webhook that
+    // eventually arrives for it can never be matched to this row.
+    getMockPaymentGatewayForTests().seedPayment({
+      providerPaymentId,
+      providerOrderId: init.providerOrderId,
+      amountMinor,
+      currency,
+      providerStatus: "created",
+      method: "netbanking",
+      errorCode: null,
+      errorDescription: null,
+      capturedAt: null,
+    });
+
+    const res = await app.inject({ method: "POST", url: `/api/v1/payments/${init.paymentId}/reconcile` });
+    expect(res.statusCode).toBe(200);
+    expect(res.json().state).toBe("CREATED");
+    expect(res.json().providerPaymentId).toBe(providerPaymentId);
+  });
+
+  it("refuses to reconcile when the provider has no payment on the order yet", async () => {
+    const { checkoutId } = await readyCheckout();
+    const init = (await initiate(checkoutId)).json();
+
+    const res = await app.inject({ method: "POST", url: `/api/v1/payments/${init.paymentId}/reconcile` });
+    expect(res.statusCode).toBe(409);
+    expect(res.json().error.message).toMatch(/has not completed checkout/i);
+  });
+
+  it("refuses to guess between two settled payments on the same order", async () => {
+    const { checkoutId, amountMinor, currency } = await readyCheckout();
+    const init = (await initiate(checkoutId)).json();
+    const gateway = getMockPaymentGatewayForTests();
+
+    for (const status of ["captured", "authorized"]) {
+      gateway.seedPayment({
+        providerPaymentId: `mock_pay_${randomUUID()}`,
+        providerOrderId: init.providerOrderId,
+        amountMinor,
+        currency,
+        providerStatus: status,
+        method: "netbanking",
+        errorCode: null,
+        errorDescription: null,
+        capturedAt: null,
+      });
+    }
+
+    const res = await app.inject({ method: "POST", url: `/api/v1/payments/${init.paymentId}/reconcile` });
+    expect(res.statusCode).toBe(409);
+    expect(res.json().error.message).toMatch(/Refusing to guess/i);
   });
 
   it("enforces a short cooldown between reconciliation attempts", async () => {

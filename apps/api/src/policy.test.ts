@@ -13,9 +13,8 @@
  */
 import { afterAll, beforeAll, describe, expect, it } from "vitest";
 import type { FastifyInstance } from "fastify";
-import { buildApp } from "./app.js";
+import { buildAuthedTestApp, getTestMerchantId, getTestMerchantUserId } from "./test-helpers/test-app.js";
 import { prisma } from "./db/client.js";
-import { getDemoMerchantId } from "./modules/authorization/demo-context.js";
 import { proposeGrowthAction } from "./modules/merchant-agent/service.js";
 import { createFixtureProvider } from "./modules/agents/providers/fixture-provider.js";
 
@@ -27,8 +26,7 @@ async function productId(name: string): Promise<string> {
 }
 
 beforeAll(async () => {
-  app = buildApp();
-  await app.ready();
+  app = await buildAuthedTestApp();
 });
 
 afterAll(async () => {
@@ -37,7 +35,7 @@ afterAll(async () => {
 });
 
 async function proposeCrossSellWithDiscount(percentageBps: number) {
-  const merchantId = await getDemoMerchantId(prisma);
+  const merchantId = await getTestMerchantId(prisma);
   const pulseRunner = await productId("Meridian Pulse Runner");
   const provider = createFixtureProvider(
     {
@@ -119,7 +117,7 @@ describe("Policy Engine — Scenario B: REQUIRE_APPROVAL (PART 05 §116)", () =>
     expect(approveRes.statusCode).toBe(200);
     const approveBody = approveRes.json();
     expect(approveBody.approval.decision).toBe("APPROVED");
-    expect(approveBody.approval.approverId).toBe("demo-merchant-owner"); // server-controlled, never client-supplied
+    expect(approveBody.approval.approverId).toBe(await getTestMerchantUserId(prisma)); // real authenticated identity, never client-supplied
     expect(approveBody.authorization.status).toBe("ACTIVE");
 
     const final = await prisma.growthActionProposal.findUniqueOrThrow({ where: { id: proposal.id } });

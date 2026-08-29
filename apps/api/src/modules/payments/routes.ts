@@ -7,7 +7,7 @@ import {
   recoveryExecutionRequestSchema,
 } from "@razorgrowth/contracts";
 import { prisma } from "../../db/client.js";
-import { getDemoMerchantId } from "../authorization/demo-context.js";
+import { getAuthenticatedMerchantId } from "../authorization/demo-context.js";
 import { evaluateAndProposeRecovery } from "../merchant-agent/recovery-service.js";
 import { getPayment, initiatePayment, reconcilePayment, verifyClientCompletion } from "./payment-service.js";
 import { executeRecovery } from "./recovery-execution-service.js";
@@ -22,25 +22,25 @@ const idParamsSchema = z.object({ id: z.string().uuid() });
  */
 export function registerPaymentRoutes(app: FastifyInstance, prefix: string): void {
   app.post(`${prefix}/payments/initiate`, async (request) => {
-    const merchantId = await getDemoMerchantId(prisma);
+    const merchantId = getAuthenticatedMerchantId(request);
     const body = paymentInitiationRequestSchema.parse(request.body);
     return initiatePayment(prisma, merchantId, body.checkoutId);
   });
 
   app.post(`${prefix}/payments/razorpay/verify`, async (request) => {
-    const merchantId = await getDemoMerchantId(prisma);
+    const merchantId = getAuthenticatedMerchantId(request);
     const body = paymentClientVerificationRequestSchema.parse(request.body);
     return verifyClientCompletion(prisma, merchantId, body);
   });
 
   app.get(`${prefix}/payments/:id`, async (request) => {
-    const merchantId = await getDemoMerchantId(prisma);
+    const merchantId = getAuthenticatedMerchantId(request);
     const params = idParamsSchema.parse(request.params);
     return getPayment(prisma, merchantId, params.id);
   });
 
   app.post(`${prefix}/payments/:id/reconcile`, async (request) => {
-    const merchantId = await getDemoMerchantId(prisma);
+    const merchantId = getAuthenticatedMerchantId(request);
     const params = idParamsSchema.parse(request.params);
     return reconcilePayment(prisma, merchantId, params.id);
   });
@@ -51,13 +51,13 @@ export function registerPaymentRoutes(app: FastifyInstance, prefix: string): voi
   // takes only a recovery authorization ID plus an idempotency key —
   // never an amount, currency, or desired outcome.
   app.post(`${prefix}/payments/recovery/evaluate`, async (request) => {
-    const merchantId = await getDemoMerchantId(prisma);
+    const merchantId = getAuthenticatedMerchantId(request);
     const body = recoveryEvaluationRequestSchema.parse(request.body);
     return evaluateAndProposeRecovery(prisma, merchantId, body.paymentId);
   });
 
   app.post(`${prefix}/payments/recovery/:id/execute`, async (request) => {
-    const merchantId = await getDemoMerchantId(prisma);
+    const merchantId = getAuthenticatedMerchantId(request);
     const params = idParamsSchema.parse(request.params);
     const body = recoveryExecutionRequestSchema.parse(request.body);
     return executeRecovery(prisma, merchantId, params.id, body.idempotencyKey);

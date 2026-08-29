@@ -8,6 +8,12 @@ import { z } from "zod";
  * never a fake "blocked" animation with no real backend behind it.
  */
 export const sandboxAttackIdSchema = z.enum([
+  // Anumati gateway attacks. The originals all target this merchant's OWN
+  // agents; these target the boundary an OUTSIDE agent actually reaches,
+  // which is the one that matters once the product is a gateway.
+  "MANDATE_FORGERY",
+  "MANDATE_REPLAY",
+  "PRICE_TAMPERING",
   "FINANCIAL_LIMIT_50_PERCENT_DISCOUNT",
   "APPROVAL_BYPASS",
   "PRODUCT_HALLUCINATION",
@@ -18,6 +24,9 @@ export const sandboxAttackIdSchema = z.enum([
 export type SandboxAttackId = z.infer<typeof sandboxAttackIdSchema>;
 
 export const sandboxAttackCategorySchema = z.enum([
+  "MANDATE_FORGERY",
+  "MANDATE_REPLAY",
+  "PRICE_TAMPERING",
   "FINANCIAL_LIMIT",
   "APPROVAL_BYPASS",
   "PRODUCT_HALLUCINATION",

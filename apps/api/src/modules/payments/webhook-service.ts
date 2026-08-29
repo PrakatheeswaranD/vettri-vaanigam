@@ -27,9 +27,17 @@ function computeEventFingerprint(provider: PaymentProvider, eventType: string, p
   return createHash("sha256").update(`${provider}|${eventType}|${providerPaymentId ?? ""}|${providerOrderId ?? ""}|${payloadHash}`).digest("hex");
 }
 
+/**
+ * PART 10 §1 — deliberately takes NO `merchantId` parameter. A webhook
+ * is authenticated by HMAC signature, never a merchant session (this
+ * route is on `auth/middleware.ts`'s unauthenticated allowlist), so
+ * which merchant a given event belongs to is only knowable once its
+ * `providerOrderId` resolves to a real `Payment` row — which already
+ * carries its own `merchantId`, itself resolved without ever trusting
+ * anything the request claims.
+ */
 export async function processRazorpayWebhook(
   prisma: PrismaClient,
-  merchantId: string,
   rawBody: Buffer,
   signatureHeader: string | undefined,
 ): Promise<WebhookProcessingResult> {
@@ -86,7 +94,7 @@ export async function processRazorpayWebhook(
   try {
     created = await createProviderEvent(prisma, {
       id: eventId,
-      merchantId,
+      merchantId: null,
       provider: gateway.provider,
       providerEventId: null,
       eventType: parsedEvent.event,
@@ -122,6 +130,10 @@ export async function processRazorpayWebhook(
     return { accepted: true, reason: "UNKNOWN_PROVIDER_ORDER" };
   }
 
+  // Derived from the resolved Payment row itself — never trusted from
+  // anything the request claims (PART 10 §1: this route has no
+  // authenticated merchant session at all).
+  const merchantId = payment.merchantId;
   const checkout = await findCheckoutById(prisma, merchantId, payment.checkoutId!);
   if (!checkout) {
     await updateProviderEventStatus(prisma, created.id, "UNRESOLVED");

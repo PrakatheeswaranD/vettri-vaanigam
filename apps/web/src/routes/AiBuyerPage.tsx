@@ -9,23 +9,31 @@
 import { useState } from "react";
 import { Bot, Send, RotateCcw, Search, ShoppingCart, MessageSquare, AlertTriangle, HelpCircle } from "lucide-react";
 import type { BuyerAgentResponseDTO } from "@razorgrowth/contracts";
+import { PageHeader } from "../components/layout/PageHeader";
 import { Card, CardBody } from "../components/ui/Card";
-import { RecommendationCard } from "../components/buyer-agent/RecommendationCard";
-import { IntentPanel } from "../components/buyer-agent/IntentPanel";
-import { AgentTracePanel } from "../components/buyer-agent/AgentTracePanel";
 import { StarterQueries } from "../components/buyer-agent/StarterQueries";
-import { RecoveryOfferPrompt } from "../components/buyer-agent/RecoveryOfferPrompt";
+import { BuyerReasoningPipeline } from "../components/buyer-agent/BuyerReasoningPipeline";
 import { useResetBuyerConversation, useSendBuyerMessage } from "../hooks/use-buyer-agent";
 import { ApiError } from "../lib/api-client";
 
+/**
+ * Framed as DIAGNOSTICS, not shopping.
+ *
+ * A human with a filter sidebar does not need this, and claiming
+ * otherwise would be a weak pitch that a judge would rightly poke. The
+ * question this page answers is the merchant's: can an autonomous agent —
+ * which has no screen and cannot ask a follow-up question — understand and
+ * buy from my catalogue?
+ */
 const CAPABILITIES = [
-  { icon: MessageSquare, title: "Understand purchase intent", description: "Parses a natural-language request into structured, required-vs-preferred constraints." },
-  { icon: Search, title: "Discover products", description: "Queries the agent-readable catalog and applies hard constraints deterministically, in code." },
-  { icon: ShoppingCart, title: "Recommend, honestly", description: "Recommends only real catalog products, and says so plainly when nothing matches exactly." },
+  { icon: MessageSquare, title: "See what an agent understands", description: "Shows the structured constraints a machine extracts from a request — filters are for people who can read a screen; this is what an agent has to work from." },
+  { icon: Search, title: "Test your catalogue's legibility", description: "Applies those constraints against your agent-readable catalogue exactly as the gateway does, deterministically and in code." },
+  { icon: ShoppingCart, title: "Find what agents cannot buy", description: "Flags products a shopper could buy from a filtered list but an agent cannot — no recorded price, unrecorded stock, or nothing structured to match on." },
 ];
 
 const PROVIDER_MODE_LABEL: Record<BuyerAgentResponseDTO["aiProviderMode"], string> = {
   LIVE_ANTHROPIC: "Live Anthropic model",
+  LIVE_GEMINI: "Live Gemini model",
   DEMO_RULE_BASED: "Demo rule-based extractor (no AI provider configured)",
   DISABLED: "AI provider disabled",
 };
@@ -56,7 +64,7 @@ function AgentStatusMessage({ response }: { response: BuyerAgentResponseDTO }) {
     return (
       <div className="flex items-start gap-2 rounded-card bg-danger-subtle px-4 py-3 text-sm text-danger-text">
         <AlertTriangle size={16} className="mt-0.5 shrink-0" />
-        The Buyer Agent couldn't process that request right now. Please try again in a moment.
+        The extraction pipeline could not process that request right now. Please try again in a moment.
       </div>
     );
   }
@@ -108,7 +116,7 @@ export default function AiBuyerPage() {
         {
           id: crypto.randomUUID(),
           role: "AGENT_ERROR",
-          message: err instanceof ApiError ? err.message : "Something went wrong reaching the Buyer Agent.",
+          message: err instanceof ApiError ? err.message : "Something went wrong reaching the extraction pipeline.",
         },
       ]);
     }
@@ -126,10 +134,10 @@ export default function AiBuyerPage() {
     <div className="space-y-6">
       <div className="flex flex-col gap-3 sm:flex-row sm:items-start sm:justify-between">
         <div>
-          <h1 className="text-lg font-semibold text-ink">AI Buyer</h1>
-          <p className="mt-1 max-w-2xl text-sm text-ink-muted">
-            Shop with an AI buyer that understands your constraints and only recommends real merchant products.
-          </p>
+          <PageHeader
+          title={"Agent’s-Eye View"}
+          lead={"Not a shopping tool — for a person, filters beat typing. This shows what an AI agent understands about your products, and which ones it cannot buy at all."}
+        />
         </div>
         {turns.length > 0 ? (
           <button
@@ -177,15 +185,12 @@ export default function AiBuyerPage() {
           </div>
         </>
       ) : (
-        <div className="space-y-4">
-          {turns.map((turn) => {
-            if (turn.role === "BUYER") {
-              return (
-                <div key={turn.id} className="flex justify-end">
-                  <div className="max-w-lg rounded-card bg-brand-600 px-4 py-2.5 text-sm text-white">{turn.content}</div>
-                </div>
-              );
-            }
+        <div className="space-y-6">
+          {turns.map((turn, i) => {
+            if (turn.role === "BUYER") return null; // rendered as step 1 inside the following pipeline
+
+            const precedingMessage = i > 0 && turns[i - 1]!.role === "BUYER" ? (turns[i - 1] as { content: string }).content : "";
+
             if (turn.role === "AGENT_ERROR") {
               return (
                 <div key={turn.id} className="flex items-start gap-2 rounded-card bg-danger-subtle px-4 py-3 text-sm text-danger-text">
@@ -199,41 +204,14 @@ export default function AiBuyerPage() {
             return (
               <div key={turn.id} className="space-y-3">
                 <AgentStatusMessage response={response} />
-
-                {response.intent ? (
-                  <Card>
-                    <CardBody>
-                      <p className="mb-2 text-xs font-semibold uppercase tracking-wide text-ink-faint">Interpreted intent</p>
-                      <IntentPanel intent={response.intent} />
-                    </CardBody>
-                  </Card>
-                ) : null}
-
-                {response.recommendations.length > 0 ? (
-                  <div className="grid gap-4 sm:grid-cols-2 lg:grid-cols-3">
-                    {response.recommendations.map((rec) => (
-                      <RecommendationCard key={rec.productId} recommendation={rec} />
-                    ))}
-                  </div>
-                ) : null}
-
-                {response.recommendationMode === "NEAR_MATCH" && response.recommendationId ? (
-                  <RecoveryOfferPrompt
-                    conversationId={response.conversationId}
-                    recommendationId={response.recommendationId}
-                    primaryProductId={response.recommendations[0]!.productId}
-                  />
-                ) : null}
-
-                <div className="flex flex-wrap items-center gap-2 text-xs text-ink-faint">
+                <BuyerReasoningPipeline buyerMessage={precedingMessage} response={response} />
+                <div className="flex flex-wrap items-center gap-2 pl-1 text-xs text-ink-faint">
                   <span className="rounded-full bg-surface-sunken px-2 py-0.5">{PROVIDER_MODE_LABEL[response.aiProviderMode]}</span>
                   {response.recommendationMode ? (
                     <span className="rounded-full bg-surface-sunken px-2 py-0.5">{RECOMMENDATION_MODE_LABEL[response.recommendationMode]}</span>
                   ) : null}
                   <span>{response.candidateCount} candidate{response.candidateCount === 1 ? "" : "s"} considered</span>
                 </div>
-
-                <AgentTracePanel trace={response.trace} traceId={response.traceId} />
               </div>
             );
           })}
@@ -248,7 +226,7 @@ export default function AiBuyerPage() {
         className="sticky bottom-0 flex items-center gap-2 rounded-card border border-border bg-surface p-2 shadow-popover"
       >
         <label htmlFor="buyer-agent-message" className="sr-only">
-          Message the Buyer Agent
+          Ask what an agent would understand
         </label>
         <input
           id="buyer-agent-message"

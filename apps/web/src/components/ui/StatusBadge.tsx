@@ -86,3 +86,22 @@ export function AgentActionStatusBadge({ status }: { status: string }) {
 export function PolicyDecisionBadge({ decision }: { decision: string }) {
   return <Badge spec={POLICY_DECISION_SPEC[decision] ?? { label: decision, tone: "neutral", icon: HelpCircle }} />;
 }
+
+/** Real, computed capability states (`GET /system/capabilities`) — never
+ * a static marketing label. `MOCK_GATEWAY` is deliberately its own tone
+ * from `RAZORPAY_TEST_MODE`, so a demo running against the deterministic
+ * mock gateway is never visually confused with a verified Razorpay Test
+ * Mode connection. */
+const CAPABILITY_STATUS_SPEC: Record<string, StatusSpec> = {
+  READY: { label: "Ready", tone: "success", icon: CheckCircle2 },
+  NOT_READY: { label: "Not Ready", tone: "danger", icon: XCircle },
+  ENFORCING: { label: "Enforcing", tone: "success", icon: ShieldCheck },
+  NOT_CONFIGURED: { label: "Not Configured", tone: "warning", icon: AlertCircle },
+  RAZORPAY_TEST_MODE: { label: "Razorpay Test Mode", tone: "info", icon: ShieldCheck },
+  MOCK_GATEWAY: { label: "Mock Gateway (demo)", tone: "warning", icon: HelpCircle },
+  ENABLED: { label: "Enabled", tone: "success", icon: CheckCircle2 },
+};
+
+export function CapabilityStatusBadge({ status }: { status: string }) {
+  return <Badge spec={CAPABILITY_STATUS_SPEC[status] ?? { label: status, tone: "neutral", icon: HelpCircle }} />;
+}

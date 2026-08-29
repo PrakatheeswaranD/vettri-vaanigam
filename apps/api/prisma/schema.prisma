@@ -9,11 +9,23 @@
 
 generator client {
   provider = "prisma-client-js"
+  // `native` keeps local development working on any OS. The Debian
+  // target is required because the production image is Debian-slim —
+  // without it, Prisma generates only the host's engine and the
+  // container fails at runtime with "query engine not found". Both are
+  // listed so the same schema builds locally and in Docker.
+  binaryTargets = ["native", "debian-openssl-3.0.x"]
 }
 
 datasource db {
   provider = "postgresql"
   url      = env("DATABASE_URL")
+  // Migrations need session-level advisory locks, which a transaction
+  // pooler (Supabase pooler, PgBouncer, RDS Proxy) cannot provide. When
+  // DATABASE_URL points at a pooled endpoint, DIRECT_URL must point at
+  // the direct one so `prisma migrate deploy` works. For local
+  // development both are simply the same URL.
+  directUrl = env("DIRECT_URL")
 }
 
 enum Currency {
@@ -24,6 +36,18 @@ enum Currency {
 enum MerchantStatus {
   ACTIVE
   SUSPENDED
+}
+
+/// PART 10 §1 — real merchant/approver identity, replacing the PART 00
+/// §36 "one demo merchant, no auth" simplification. Deliberately small:
+/// OWNER and APPROVER may both decide an approval; VIEWER may read but
+/// never mutate. Not a general-purpose permission system — RBAC is
+/// scoped to exactly the one privileged action this codebase has
+/// (approving/rejecting a growth/recovery proposal).
+enum MerchantUserRole {
+  OWNER
+  APPROVER
+  VIEWER
 }
 
 enum ProductStatus {
@@ -314,6 +338,53 @@ model Merchant {
   idempotencyRecords      IdempotencyRecord[]
   payments                Payment[]
   paymentProviderEvents   PaymentProviderEvent[]
+  merchantUsers           MerchantUser[]
+
+  // Anumati gateway — agent-facing commerce.
+  agentIdentities         AgentIdentity[]
+  spendMandateNonces      SpendMandateNonce[]
+  agentGatewayPolicy      AgentGatewayPolicy?
+  decisionRecords         DecisionRecord[]
+  acpCheckoutSessions     AcpCheckoutSession[]
+}
+
+/// PART 10 §1 — a real, authenticated user scoped to exactly one
+/// merchant (multi-tenant: a request authenticated as this user can only
+/// ever act on `merchantId`, never any other merchant's data). Password
+/// hashing uses Node's built-in `crypto.scrypt` (`auth/password.ts`) —
+/// no new external dependency for something this codebase can implement
+/// correctly with what's already in the runtime.
+model MerchantUser {
+  id           String           @id @default(uuid())
+  merchantId   String
+  merchant     Merchant         @relation(fields: [merchantId], references: [id], onDelete: Cascade)
+  email        String           @unique
+  passwordHash String
+  role         MerchantUserRole @default(OWNER)
+  createdAt    DateTime         @default(now())
+  updatedAt    DateTime         @updatedAt
+
+  sessions  Session[]
+  approvals Approval[]
+
+  @@index([merchantId])
+}
+
+/// PART 10 §1 — an opaque, server-side, revocable session (not a JWT):
+/// the client holds only a random bearer token; this table holds a
+/// SHA-256 hash of it (never the raw token, so a leaked database dump
+/// alone cannot be replayed) plus expiry. Revoking access is a `DELETE`,
+/// not "wait for the JWT to expire."
+model Session {
+  id             String       @id @default(uuid())
+  tokenHash      String       @unique
+  merchantUserId String
+  merchantUser   MerchantUser @relation(fields: [merchantUserId], references: [id], onDelete: Cascade)
+  createdAt      DateTime     @default(now())
+  expiresAt      DateTime
+
+  @@index([merchantUserId])
+  @@index([expiresAt])
 }
 
 /// Deterministic policy configuration read by the real Policy Engine
@@ -397,9 +468,12 @@ model Approval {
   evaluatedPolicyVersion Int
   decision               ApprovalDecision
   reason                 String?
-  /// Server-controlled actor id (PART 05 §33) — never a client-supplied
-  /// `approverId`. The demo build has exactly one controlled merchant user.
+  /// Server-derived from the authenticated session (PART 10 §1) — never
+  /// a client-supplied `approverId` in the request body. Was a fixed
+  /// constant string pre-PART-10 (PART 00 §36); now a real
+  /// `MerchantUser.id` with referential integrity.
   approverId             String
+  approver               MerchantUser     @relation(fields: [approverId], references: [id], onDelete: Restrict)
   createdAt              DateTime         @default(now())
   expiresAt              DateTime
 
@@ -759,8 +833,15 @@ model Payment {
 /// not a timestamp check.
 model PaymentProviderEvent {
   id                String                       @id @default(uuid())
-  merchantId        String
-  merchant          Merchant                     @relation(fields: [merchantId], references: [id], onDelete: Cascade)
+  /// Nullable (PART 10 §1): a webhook is authenticated by HMAC signature,
+  /// never a merchant session, so the owning merchant is only knowable
+  /// AFTER the event's `providerOrderId` resolves to a real `Payment`
+  /// row. A genuinely unresolvable event (unknown order, no payment
+  /// entity) has no merchant to attribute it to — this is now an honest
+  /// `NULL`, not a value borrowed from whichever merchant happened to be
+  /// the single demo tenant.
+  merchantId        String?
+  merchant          Merchant?                    @relation(fields: [merchantId], references: [id], onDelete: Cascade)
   provider          PaymentProvider              @default(RAZORPAY)
   providerEventId   String?
   eventType         String
@@ -1043,4 +1124,275 @@ model GrowthActionProposal {
   @@index([merchantId, createdAt])
   @@index([conversationId])
   @@index([sourceOrderId])
+}
+
+// ─────────────────────────────────────────────────────────────────────────
+// ANUMATI GATEWAY — agent-facing commerce
+//
+// Everything below serves one question: can an AI agent this merchant has
+// never seen buy from them safely, whatever protocol it speaks? The
+// governance records above (PolicyEvaluation, Approval,
+// ExecutionAuthorization, AgentAction) are reused unchanged — a gateway
+// intent that clears both checks flows into exactly the same execution and
+// ledger path as any other action.
+// ─────────────────────────────────────────────────────────────────────────
+
+enum AgentProtocol {
+  ACP
+  AP2
+  X402
+}
+
+enum AgentTrustLevel {
+  KNOWN
+  UNKNOWN
+}
+
+enum GatewayDecisionOutcome {
+  AUTO_APPROVE
+  STEP_UP
+  DECLINE
+}
+
+/// A buyer agent this merchant has encountered. Trust is derived from the
+/// merchant's OWN record of settled orders, never from anything the agent
+/// asserts about itself — an agent claiming to be trusted is precisely the
+/// case the unknown-agent ceiling exists to catch.
+model AgentIdentity {
+  id             String   @id @default(uuid())
+  merchantId     String
+  merchant       Merchant @relation(fields: [merchantId], references: [id], onDelete: Cascade)
+  /// Stable identifier the agent presents (x-agent-id / payload agent id).
+  externalAgentId String
+  displayName    String?
+  /// Protocol first seen on. Informational: an agent may switch protocols
+  /// without becoming a different counterparty.
+  firstSeenProtocol AgentProtocol
+  settledOrderCount Int      @default(0)
+
+  /// The Ed25519 public key this merchant trusts for this agent.
+  ///
+  /// Mandate signatures are verified against THIS, never against the key
+  /// inside the request. Null means no key is on file and a signed mandate
+  /// from this agent cannot be verified against anything trusted.
+  registeredPublicKey String?
+  /// How the key came to be trusted. `MERCHANT_REGISTERED` is an explicit,
+  /// authenticated act. `PINNED_ON_FIRST_USE` is trust-on-first-use: it
+  /// bounds an unknown agent to the unknown-agent ceiling and refuses any
+  /// later key change, but it is NOT a PKI and is labelled as such.
+  keyTrustSource      String?
+  keyRegisteredAt     DateTime?
+
+  /// SHA-256 of the API credential this agent presents on ACP routes.
+  /// Hashed, never stored raw — same treatment as a user session token.
+  apiKeyHash          String?
+  apiKeyIssuedAt      DateTime?
+  apiKeyRevokedAt     DateTime?
+
+  firstSeenAt    DateTime @default(now())
+  lastSeenAt     DateTime @default(now())
+
+  decisionRecords DecisionRecord[]
+
+  @@unique([merchantId, externalAgentId])
+  @@index([merchantId, lastSeenAt])
+}
+
+/// Spent mandate nonces. A mandate is single-use: presence of a row here
+/// means "already spent", which is what makes replay detectable even while
+/// the mandate is still inside its validity window.
+///
+/// Unique on (merchantId, nonce) rather than nonce alone — a nonce is only
+/// meaningful within the merchant scope the mandate was signed for, and a
+/// global unique would let one merchant's traffic burn another's.
+model SpendMandateNonce {
+  id          String   @id @default(uuid())
+  merchantId  String
+  merchant    Merchant @relation(fields: [merchantId], references: [id], onDelete: Cascade)
+  nonce       String
+  mandateId   String
+  buyerAgentId String
+  spentAt     DateTime @default(now())
+
+  @@unique([merchantId, nonce])
+  @@index([merchantId, spentAt])
+}
+
+/// Per-merchant configuration for autonomous agent purchasing.
+///
+/// Kept separate from `MerchantPolicy` on purpose: that governs what the
+/// merchant's OWN agents may propose, this governs what OUTSIDE agents may
+/// buy. Merging them would make a single version bump mean two unrelated
+/// things.
+model AgentGatewayPolicy {
+  id                        String   @id @default(uuid())
+  merchantId                String   @unique
+  merchant                  Merchant @relation(fields: [merchantId], references: [id], onDelete: Cascade)
+  policyVersion             Int      @default(1)
+  currency                  Currency @default(INR)
+  /// Ceiling for an agent with no settled orders with this merchant.
+  unknownAgentCeilingMinor  Int      @default(1000000)
+  /// Ceiling for an agent that has settled before.
+  knownAgentCeilingMinor    Int      @default(5000000)
+  /// Categories no agent may buy autonomously, at any value.
+  blockedCategories         String[] @default([])
+  /// Hard cap on what the negotiator may ever offer. Enforced in code,
+  /// never by the model.
+  maxNegotiationDiscountBps Int      @default(1000)
+  /// The negotiator only engages on baskets SMALLER than this. Upselling
+  /// someone who already filled a basket is discounting a sale you had.
+  negotiatorMinBundleItems  Int      @default(2)
+  /// Floor margin, in basis points. An offer that would take the basket
+  /// below it is rejected outright rather than clamped — clamping a
+  /// margin breach would still sell below cost, just by less.
+  negotiatorFloorMarginBps  Int      @default(2000)
+  velocityMaxIntentsPerHour Int      @default(20)
+  /// Whether an unseen agent's first key may be pinned automatically.
+  ///
+  /// OFF by default, because trust-on-first-use guarantees continuity, not
+  /// first-contact authenticity. With it off, an agent must be enrolled by
+  /// an authenticated merchant user before any signed mandate it presents
+  /// can be verified against anything trusted.
+  allowFirstUseKeyPinning   Boolean  @default(false)
+  updatedAt                 DateTime @updatedAt
+  createdAt                 DateTime @default(now())
+}
+
+/// An ACP checkout session, persisted because the protocol is stateful:
+/// an agent creates a session, updates it, then completes it, and each
+/// call must see what the previous one did.
+///
+/// Status values are ACP's own strings rather than an enum — the spec
+/// version is pinned in `ACP_API_VERSION`, and inventing our own
+/// vocabulary here would mean translating twice for no benefit.
+model AcpCheckoutSession {
+  id               String   @id
+  merchantId       String
+  merchant         Merchant @relation(fields: [merchantId], references: [id], onDelete: Cascade)
+  status           String
+  currency         String
+  lineItems        Json
+  totalAmountMinor Int
+  buyerEmail       String?
+  buyerName        String?
+  /// ACP's own spend-authorisation object, stored as received.
+  allowance        Json?
+  /// Risk signals the calling platform supplied. Persisted on the SESSION
+  /// because they arrive at create time but are only acted on at
+  /// completion — dropping them in between would silently discard the
+  /// platform's own fraud judgement.
+  riskSignals      Json?
+  externalAgentId  String?
+  /// The gateway decision this session most recently produced.
+  decisionRecordId String?
+  createdAt        DateTime @default(now())
+  updatedAt        DateTime @updatedAt
+
+  @@index([merchantId, createdAt])
+}
+
+/// The immutable explainability artifact: one row per inbound intent,
+/// approved, upsold, stepped up or declined.
+///
+/// Every row carries a plain-English `explanation` written for a merchant,
+/// not a status code alone — the brief's bar is that no decision is
+/// recorded without a sentence, and making the column non-nullable is how
+/// that bar is enforced rather than merely intended.
+model DecisionRecord {
+  id                String                 @id @default(uuid())
+  merchantId        String
+  merchant          Merchant               @relation(fields: [merchantId], references: [id], onDelete: Cascade)
+  agentIdentityId   String?
+  agentIdentity     AgentIdentity?         @relation(fields: [agentIdentityId], references: [id], onDelete: SetNull)
+
+  protocol          AgentProtocol?
+  protocolVersion   String?
+  /// Null when the request never identified a protocol we speak — the
+  /// decline still gets a record, because an unreadable request is
+  /// exactly the kind of thing a merchant should be able to see.
+  detectedVia       String?
+
+  externalAgentId   String?
+  agentTrust        AgentTrustLevel?
+
+  outcome           GatewayDecisionOutcome
+  reasonCode        String
+  /// Required. A decision without a sentence cannot be written.
+  explanation       String
+
+  /// Server-computed from the catalogue. The agent's own figure is stored
+  /// beside it precisely so a disagreement is visible after the fact.
+  computedTotalMinor Int?
+  claimedTotalMinor  Int?
+  appliedCeilingMinor Int?
+  currency          Currency?
+
+  /// Set when the negotiator offered something. Always within
+  /// `AgentGatewayPolicy.maxNegotiationDiscountBps`.
+  negotiatedDiscountBps Int?
+
+  /// Set when a step-up produced a Razorpay Payment Link for human review.
+  stepUpPaymentLinkId  String?
+  stepUpPaymentLinkUrl String?
+
+  /// The buyer the agent is acting for, when the protocol carried one.
+  /// ACP and AP2 both supply it; x402 generally does not, so it is nullable
+  /// rather than faked.
+  buyerEmail           String?
+  buyerName            String?
+
+  /// The exact payload as received, kept verbatim so a merchant can expand
+  /// a decision and see what the agent ACTUALLY sent — not our
+  /// interpretation of it. This is the difference between an audit trail
+  /// and a summary.
+  rawProtocolPayload   Json?
+
+  /// Which kind of spend permission was actually verified.
+  ///
+  /// SIGNED_MANDATE  - Ed25519 signature checked against the terms.
+  /// UNSIGNED_ALLOWANCE - an ACP Allowance, checked on amount/currency/
+  ///   expiry/scope but NOT cryptographically. Recorded distinctly because
+  ///   describing it as a verified mandate would overstate what happened.
+  /// NONE - refused before any permission applied.
+  permissionType       String?
+
+  /// The source protocol's own identifier for this exchange (an ACP
+  /// checkout_session_id, an x402 nonce), so a decision can be traced back
+  /// into the counterparty's system.
+  protocolActorRef     String?
+
+  /// Set when an AUTO_APPROVE created a real Razorpay order (test mode).
+  /// An approved intent has to become something the agent can actually pay,
+  /// otherwise the gateway only ever decides and never transacts. Nullable
+  /// because a decline never reaches the provider, and because a provider
+  /// outage must not lose the decision that was already made.
+  providerOrderId      String?
+
+  /// Soft references into the existing governance chain, so a gateway
+  /// decision that proceeded can be walked exactly like any other action.
+  growthProposalId         String?
+  executionAuthorizationId String?
+  workflowId               String?
+
+  /// A step-up is a request for a HUMAN decision, so it has one.
+  ///
+  /// Previously a step-up produced only a Razorpay Payment Link handed
+  /// back to the buyer agent. Paying a link is not merchant approval: the
+  /// buyer completing a payment they chose to complete proves nothing
+  /// about whether the merchant wanted the sale. These record the actual
+  /// decision, by an authenticated OWNER/APPROVER.
+  stepUpStatus       String?   /// PENDING | APPROVED | REJECTED
+  stepUpDecidedById  String?
+  stepUpDecidedAt    DateTime?
+  stepUpDecisionNote String?
+
+  /// Wall-clock time from request receipt to decision, for the console's
+  /// median-latency figure. Measured, never estimated.
+  decisionLatencyMs Int
+
+  createdAt         DateTime @default(now())
+
+  @@index([merchantId, createdAt])
+  @@index([merchantId, outcome])
+  @@index([agentIdentityId])
 }

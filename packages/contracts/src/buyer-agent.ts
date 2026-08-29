@@ -114,7 +114,7 @@ export const buyerAgentStatusSchema = z.enum([
   "FAILED",
 ]);
 
-export const aiProviderModeSchema = z.enum(["LIVE_ANTHROPIC", "DEMO_RULE_BASED", "DISABLED"]);
+export const aiProviderModeSchema = z.enum(["LIVE_ANTHROPIC", "LIVE_GEMINI", "DEMO_RULE_BASED", "DISABLED"]);
 
 /** PART 03 §109-§111 — restrained pipeline trace for jury/dev
  * inspectability. Structured stage facts only, never chain-of-thought. */

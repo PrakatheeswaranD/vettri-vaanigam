@@ -21,6 +21,7 @@ function trace(steps: WorkflowTraceStepDTO[], overrides: Partial<WorkflowTraceDT
     steps,
     financialOutcome: "PENDING",
     ledgerIntegrity: { valid: true, eventCount: steps.length, brokenAtSequence: null },
+    growthEffect: null,
     ...overrides,
   };
 }
@@ -152,5 +153,34 @@ describe("buildTrustTraceModel", () => {
     const model = buildTrustTraceModel(trace([]));
     expect(model.stages).toHaveLength(6);
     expect(model.stages.every((s) => s.status === "NOT_REACHED")).toBe(true);
+  });
+
+  it("attributes a payment stage to the PROVIDER even though our own code wrote the final row", () => {
+    // This mirrors what the ledger actually records: the provider webhook
+    // arrives first, and `PAYMENT_CAPTURED` is written afterwards under
+    // PAYMENT_SYSTEM because our code persisted it. Taking the LAST
+    // event's actor would label the stage "Deterministic" and quietly
+    // claim this system decided the payment succeeded — the opposite of
+    // the guarantee. Provider evidence has to win.
+    const model = buildTrustTraceModel(
+      trace([
+        step({ sequence: 1, actor: "MERCHANT_AGENT", event: "GROWTH_PROPOSAL_CREATED" }),
+        step({ sequence: 2, actor: "RAZORPAY", event: "WEBHOOK_RECEIVED" }),
+        step({ sequence: 3, actor: "SYSTEM", event: "WEBHOOK_SIGNATURE_VERIFIED" }),
+        step({ sequence: 4, actor: "PAYMENT_SYSTEM", event: "PAYMENT_CAPTURED" }),
+      ]),
+    );
+
+    const payment = model.stages.find((s) => s.id === "payment-1");
+    expect(payment).toBeDefined();
+    expect(payment!.actorClass).toBe("PROVIDER");
+    expect(payment!.status).toBe("OK");
+  });
+
+  it("still uses the last event's actor when no provider evidence is present", () => {
+    const model = buildTrustTraceModel(
+      trace([step({ sequence: 1, actor: "POLICY_ENGINE", event: "POLICY_ALLOWED" })]),
+    );
+    expect(model.stages.find((s) => s.id === "policy")!.actorClass).toBe("DETERMINISTIC");
   });
 });

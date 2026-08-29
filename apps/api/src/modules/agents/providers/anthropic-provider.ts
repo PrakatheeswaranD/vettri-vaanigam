@@ -24,7 +24,17 @@ import {
   type RawIntentExtraction,
   type RawRankedItem,
   type RawRecoveryProposal,
+  type NormalizeCatalogRowParams,
+  type RawNormalizedProduct,
+  type ProposeAgentUpsellParams,
+  type RawAgentUpsell,
 } from "../ai-provider.js";
+import {
+  CATALOG_COMPILER_SYSTEM_PROMPT,
+  NEGOTIATOR_SYSTEM_PROMPT,
+  buildCatalogCompilerUserMessage,
+  buildNegotiatorUserMessage,
+} from "../prompts/anumati-prompts.js";
 import {
   INTENT_EXTRACTION_SYSTEM_PROMPT,
   RECOMMENDATION_SYSTEM_PROMPT,
@@ -106,7 +116,7 @@ export function createAnthropicProvider(config: AnthropicProviderConfig): AIProv
     mode: "LIVE_ANTHROPIC",
 
     async extractIntent(params: ExtractIntentParams): Promise<RawIntentExtraction> {
-      const userMessage = buildIntentExtractionUserMessage(params.message, params.knownCategories);
+      const userMessage = buildIntentExtractionUserMessage(params.message, params.knownCategories, params.knownAttributes);
       const text = await callAnthropic(config, INTENT_EXTRACTION_SYSTEM_PROMPT, userMessage, 0);
       const parsed = extractJson(text);
       if (typeof parsed !== "object" || parsed === null) {
@@ -143,6 +153,26 @@ export function createAnthropicProvider(config: AnthropicProviderConfig): AIProv
         throw new AIProviderError("AI_OUTPUT_INVALID", "Anthropic recovery proposal did not return a JSON object.");
       }
       return parsed as RawRecoveryProposal;
+    },
+
+    async normalizeCatalogRow(params: NormalizeCatalogRowParams): Promise<RawNormalizedProduct> {
+      const userMessage = buildCatalogCompilerUserMessage(params.row, params.knownCategories);
+      const text = await callAnthropic(config, CATALOG_COMPILER_SYSTEM_PROMPT, userMessage, 0.1);
+      const parsed = extractJson(text);
+      if (typeof parsed !== "object" || parsed === null) {
+        throw new AIProviderError("AI_OUTPUT_INVALID", "Anthropic catalogue normalisation did not return a JSON object.");
+      }
+      return parsed as RawNormalizedProduct;
+    },
+
+    async proposeAgentUpsell(params: ProposeAgentUpsellParams): Promise<RawAgentUpsell> {
+      const userMessage = buildNegotiatorUserMessage(params);
+      const text = await callAnthropic(config, NEGOTIATOR_SYSTEM_PROMPT, userMessage, 0.4);
+      const parsed = extractJson(text);
+      if (typeof parsed !== "object" || parsed === null) {
+        throw new AIProviderError("AI_OUTPUT_INVALID", "Anthropic negotiator did not return a JSON object.");
+      }
+      return parsed as RawAgentUpsell;
     },
   };
 }

@@ -1,12 +1,17 @@
 import { useState } from "react";
-import { Bot, TrendingUp } from "lucide-react";
+import { Link } from "react-router-dom";
+import { FlaskConical, TrendingUp } from "lucide-react";
 import { useCatalog, useGrowthOpportunities } from "../hooks/use-api";
 import { useProposeGrowthAction } from "../hooks/use-merchant-agent";
+import { PageHeader } from "../components/layout/PageHeader";
 import { Card, CardBody, CardHeader, CardTitle } from "../components/ui/Card";
 import { EmptyState, ErrorState, Skeleton } from "../components/ui/States";
 import { ValueTag } from "../components/ui/ValueTag";
 import { DemoDataBadge } from "../components/ui/DemoDataBadge";
 import { GrowthProposalPanel } from "../components/merchant-agent/GrowthProposalPanel";
+import { GrowthSummaryPanel } from "../components/growth/GrowthSummaryPanel";
+import { AgentDrivenGrowth } from "../components/growth/AgentDrivenGrowth";
+import { useGatewayPolicy } from "../hooks/use-agent-gateway";
 import { formatMoney } from "../lib/format";
 import { ApiError } from "../lib/api-client";
 
@@ -18,23 +23,62 @@ const CATEGORY_LABEL: Record<string, string> = {
   PAYMENT_RECOVERY: "Payment Recovery",
 };
 
-function MerchantAgentSection() {
+/**
+ * A PREVIEW tool, and labelled as one.
+ *
+ * Real offers are made automatically on real agent baskets (see
+ * `AgentDrivenGrowth`). This exists for the merchant who is configuring
+ * their envelope BEFORE any agent traffic arrives and reasonably wants to
+ * see what an offer would look like. Presenting it as "pick what a buyer
+ * selected" — as an earlier version did — implied the merchant has to
+ * guess what a customer is buying, which is precisely what the gateway
+ * removes.
+ */
+function GrowthPreviewSection() {
   const { data: catalog } = useCatalog({ limit: 25 });
+  const policy = useGatewayPolicy();
   const [selectedProductId, setSelectedProductId] = useState("");
   const proposeGrowthAction = useProposeGrowthAction();
 
   return (
     <Card>
       <CardHeader className="flex flex-wrap items-center gap-2">
-        <Bot size={16} className="text-brand-600" />
-        <CardTitle>Merchant Agent — Growth Proposals</CardTitle>
+        <FlaskConical size={16} className="text-ink-faint" />
+        <CardTitle>Preview an offer</CardTitle>
+        <span className="rounded-full bg-surface-subtle px-2 py-0.5 text-[11px] font-medium text-ink-muted">
+          not live traffic
+        </span>
       </CardHeader>
       <CardBody className="space-y-4">
         <p className="text-sm text-ink-muted">
-          Pick a product a buyer has selected. The Merchant Agent proposes a bounded cross-sell, upsell, or
-          bundle from real catalog relationships — it can propose, but it cannot authorize a discount, change a
-          price, or execute anything.
+          Try your envelope against any product to see what the Merchant Agent would propose. This is a dry run —
+          nothing here came from a real buyer, and nothing is charged. Live offers are made automatically on the
+          agent baskets above.
         </p>
+
+        {policy.data ? (
+          <div className="rounded-card border border-border bg-surface-subtle p-3">
+            <p className="text-xs font-semibold uppercase tracking-wide text-ink-faint">Envelope this preview runs under</p>
+            <ul className="mt-2 space-y-1 text-xs text-ink-muted">
+              <li>
+                Discount ceiling <span className="font-medium text-ink">{(policy.data.maxNegotiationDiscountBps / 100).toFixed(1)}%</span> — a
+                larger figure from the model is truncated in code before anyone sees it.
+              </li>
+              <li>
+                Floor margin <span className="font-medium text-ink">{(policy.data.negotiatorFloorMarginBps / 100).toFixed(0)}%</span> — an offer
+                that would go below it is refused outright, not reduced.
+              </li>
+              <li>
+                Engages only on baskets under{" "}
+                <span className="font-medium text-ink">{policy.data.negotiatorMinBundleItems} items</span> — a fuller basket
+                is a sale in hand.
+              </li>
+            </ul>
+            <Link to="/agent-gateway" className="mt-2 inline-block text-xs font-medium text-brand-600 hover:underline">
+              Change these in the gateway policy →
+            </Link>
+          </div>
+        ) : null}
         <div className="flex flex-wrap items-center gap-2">
           <select
             value={selectedProductId}
@@ -76,14 +120,17 @@ export default function GrowthPage() {
   return (
     <div className="space-y-6">
       <div>
-        <h1 className="text-lg font-semibold text-ink">Growth Opportunities</h1>
-        <p className="mt-1 max-w-2xl text-sm text-ink-muted">
-          Signals identified from real catalog and order data, each with a recommendation and a value estimate
-          that is always labeled by classification — never presented as confirmed revenue.
-        </p>
+        <PageHeader
+          title={"Basket Growth"}
+          lead={"What AI agents bought, and what the negotiator offered to make those baskets bigger — always inside the limits you set."}
+        />
       </div>
 
-      <MerchantAgentSection />
+      <GrowthSummaryPanel />
+
+      <AgentDrivenGrowth />
+
+      <GrowthPreviewSection />
 
       {isLoading ? (
         <div className="space-y-3">
