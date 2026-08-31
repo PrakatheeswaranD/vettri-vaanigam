@@ -34,3 +34,11 @@ coverage/
 
 # Prisma
 apps/api/prisma/dev.db
+
+# PGlite data directories. `.dbdata` was already ignored; the local
+# variant was not, and a commit swept ~970 database files into the repo.
+.dbdata-local/
+**/.dbdata-local/
+
+# Vite/Vitest write these transient config shims next to the real config.
+*.timestamp-*.mjs
