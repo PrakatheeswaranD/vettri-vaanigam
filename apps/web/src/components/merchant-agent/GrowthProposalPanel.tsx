@@ -31,6 +31,7 @@ import { formatBps, formatDateTime, formatMoney } from "../../lib/format";
 import { ApiError } from "../../lib/api-client";
 import { useGrowthProposal } from "../../hooks/use-merchant-agent";
 import { useAgentProduct, useMerchantPolicy } from "../../hooks/use-api";
+import { useGrowthConfig } from "../../hooks/use-merchant-agent";
 import { DiscountAuthorityBar } from "../policy/DiscountAuthorityBar";
 import { useExecuteCheckout } from "../../hooks/use-commerce";
 import { CheckoutSummary } from "../commerce/CheckoutSummary";
@@ -126,6 +127,7 @@ function PolicyDecisionCard({ proposalId }: { proposalId: string }) {
   const { data: proposal } = useGrowthProposal(proposalId);
   const { data: decision } = usePolicyDecision(proposal?.latestPolicyDecisionId ?? null);
   const { data: policy } = useMerchantPolicy();
+  const { data: growthConfig } = useGrowthConfig();
   if (!decision) return null;
 
   return (
@@ -139,6 +141,32 @@ function PolicyDecisionCard({ proposalId }: { proposalId: string }) {
         <FingerprintTag label="Proposal fingerprint" value={decision.proposalFingerprint} />
       </CardHeader>
       <CardBody className="space-y-3">
+        {/*
+          Defence in depth, stated on the card rather than a page away.
+          Two DIFFERENT limits apply and the distinction is the point: the
+          agent is bounded before it may even propose, and policy is bounded
+          again before anything may proceed. Showing only one number would
+          make it look like a single check.
+        */}
+        {policy && growthConfig ? (
+          <div className="flex flex-wrap items-center gap-x-4 gap-y-1 rounded-card border border-border bg-surface-subtle px-3 py-2 text-xs">
+            <span className="text-ink-muted">
+              Agent may propose up to{" "}
+              <span className="font-semibold text-ink">{(growthConfig.maxProposedDiscountBps / 100).toFixed(1)}%</span>
+            </span>
+            <span className="text-ink-faint">→</span>
+            <span className="text-ink-muted">
+              Merchant policy caps at{" "}
+              <span className="font-semibold text-ink">{(policy.maxDiscountBps / 100).toFixed(1)}%</span>
+            </span>
+            {growthConfig.maxProposedDiscountBps > policy.maxDiscountBps ? (
+              <span className="rounded-pill bg-warning-subtle px-2 py-0.5 font-medium text-warning-text">
+                Policy is the binding limit
+              </span>
+            ) : null}
+          </div>
+        ) : null}
+
         {policy && decision.evaluatedValues.requestedDiscountBps !== null ? (
           <div className="rounded-card bg-surface-subtle p-3">
             <p className="mb-1 text-xs font-semibold uppercase tracking-wide text-ink-faint">Discount authority</p>

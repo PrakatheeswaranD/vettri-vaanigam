@@ -41,3 +41,4 @@ export * from "./uap-adapter.js";
 export * from "./ucp-adapter.js";
 export * from "./post-purchase-state.js";
 export * from "./tax-calculator.js";
+export * from "./opportunity-scan.js";

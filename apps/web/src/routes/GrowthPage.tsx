@@ -7,6 +7,7 @@ import { PageHeader } from "../components/layout/PageHeader";
 import { Card, CardBody, CardHeader, CardTitle } from "../components/ui/Card";
 import { EmptyState, ErrorState, Skeleton } from "../components/ui/States";
 import { ValueTag } from "../components/ui/ValueTag";
+import { ScanLine } from "lucide-react";
 import { DemoDataBadge } from "../components/ui/DemoDataBadge";
 import { GrowthProposalPanel } from "../components/merchant-agent/GrowthProposalPanel";
 import { GrowthSummaryPanel } from "../components/growth/GrowthSummaryPanel";
@@ -166,7 +167,18 @@ export default function GrowthPage() {
                     {CATEGORY_LABEL[opp.category] ?? opp.category}
                   </span>
                   <ValueTag classification={opp.valueClassification} />
-                  {opp.isSyntheticDemo ? <DemoDataBadge /> : null}
+                  {opp.isSyntheticDemo ? (
+                    <DemoDataBadge />
+                  ) : (
+                    // A positive marker, not just the absence of a demo
+                    // badge: these rows were written by the Catalog scan on
+                    // a real publish, and that is the whole point of the
+                    // feed no longer being fifteen fixed rows.
+                    <span className="inline-flex items-center gap-1 rounded-pill bg-success-subtle px-2 py-0.5 text-micro font-medium text-success-text">
+                      <ScanLine size={10} />
+                      Found by catalogue scan
+                    </span>
+                  )}
                   <span className="ml-auto text-xs text-ink-faint">{opp.status.replace("_", " ")}</span>
                 </div>
                 <p className="text-sm text-ink-muted">

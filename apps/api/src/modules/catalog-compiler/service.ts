@@ -28,6 +28,7 @@ import {
 } from "@razorgrowth/domain";
 import { getAIProvider } from "../agents/provider-factory.js";
 import { logger } from "../../observability/logger.js";
+import { runOpportunityScan } from "../growth/opportunity-scan-service.js";
 
 export interface CompileIssue {
   rowNumber: number;
@@ -213,7 +214,7 @@ export async function publishCatalogCompilation(
   compilationId: string,
   offerControls: PublishOfferControl[],
 ) {
-  return prisma.$transaction(async (tx) => {
+  const published = await prisma.$transaction(async (tx) => {
     const compilation = await tx.catalogCompilation.findUnique({ where: { id: compilationId } });
     if (!compilation || compilation.merchantId !== merchantId) throw new Error("CATALOG_COMPILATION_NOT_FOUND");
     if (compilation.status !== "DRAFT") throw new Error("CATALOG_COMPILATION_NOT_DRAFT");
@@ -295,10 +296,30 @@ export async function publishCatalogCompilation(
       },
     });
   }, { isolationLevel: "Serializable" });
+
+  // ── `catalog.published` trigger ────────────────────────────────────────
+  //
+  // Publishing is exactly when a scan is worth running: the merchant has
+  // just changed what agents can see, so telling them what is now
+  // unbuyable, unmatched or unlinked closes the loop between
+  // "agent-readable catalogue" and "grows revenue" in one visible step.
+  //
+  // Deliberately OUTSIDE the publish transaction, and deliberately
+  // non-fatal. The publish has already committed and is the thing the
+  // merchant asked for; a scan failure must never roll it back or surface
+  // as a failed publish.
+  void runOpportunityScan(prisma, merchantId).catch((err) => {
+    logger.warn(
+      { event: "anumati.opportunity_scan_failed", merchantId, err: err instanceof Error ? err.message : String(err) },
+      "Catalogue published, but the follow-up opportunity scan failed",
+    );
+  });
+
+  return published;
 }
 
 export async function rollbackCatalogCompilation(prisma: PrismaClient, merchantId: string, compilationId: string) {
-  return prisma.$transaction(async (tx) => {
+  const rolledBackCompilation = await prisma.$transaction(async (tx) => {
     const compilation = await tx.catalogCompilation.findUnique({ where: { id: compilationId } });
     if (!compilation || compilation.merchantId !== merchantId) throw new Error("CATALOG_COMPILATION_NOT_FOUND");
     if (compilation.status !== "PUBLISHED") throw new Error("CATALOG_COMPILATION_NOT_PUBLISHED");
@@ -327,6 +348,19 @@ export async function rollbackCatalogCompilation(prisma: PrismaClient, merchantI
 
     return rolledBack;
   });
+
+  // A rollback changes what agents can see exactly as much as a publish
+  // does, so the same scan runs — otherwise the opportunity feed would
+  // describe a catalogue that no longer exists. Non-fatal for the same
+  // reason: the rollback has already committed.
+  void runOpportunityScan(prisma, merchantId).catch((err) => {
+    logger.warn(
+      { event: "anumati.opportunity_scan_failed", merchantId, err: err instanceof Error ? err.message : String(err) },
+      "Catalogue rolled back, but the follow-up opportunity scan failed",
+    );
+  });
+
+  return rolledBackCompilation;
 }
 
 /** The published `.well-known` document, built from the LIVE catalogue —
