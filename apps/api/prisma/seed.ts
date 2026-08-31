@@ -150,6 +150,78 @@ const CUSTOMERS: { displayName: string; email: string; segment: string }[] = [
   { displayName: "Arjun Kapoor", email: "arjun.kapoor@example.com", segment: "new" },
 ];
 
+const MARKETPLACE_MERCHANTS = [
+  { name: "TechNova", slug: "technova", priceMinor: 6_800_000, returnDays: 7, risk: "LOW", ram: "16GB", storage: "512GB", inventory: 12 },
+  { name: "ByteStore", slug: "bytestore", priceMinor: 6_599_900, returnDays: 3, risk: "MEDIUM", ram: "16GB", storage: "512GB", inventory: 7 },
+  { name: "ElectroHub", slug: "electrohub", priceMinor: 6_950_000, returnDays: 7, risk: "LOW", ram: "8GB", storage: "1TB", inventory: 0 },
+] as const;
+
+/** Track 01 marketplace fixtures: deliberately small, merchant-authored
+ * catalogs used by the Buyer Agent comparison demo. These are isolated
+ * demo merchants, never copied into Meridian's private merchant console. */
+async function seedMarketplaceMerchants() {
+  for (const fixture of MARKETPLACE_MERCHANTS) {
+    // Marketplace fixtures can acquire orders, payments, conversations and
+    // recommendations during integration tests. Reset the complete merchant
+    // dependency graph instead of deleting Product directly through live FKs.
+    await resetDemoMerchant(fixture.slug);
+    const marketplaceMerchant = await prisma.merchant.create({
+      data: {
+        name: fixture.name,
+        slug: fixture.slug,
+        description: `${fixture.name} is a synthetic AI-ready marketplace merchant for multi-merchant discovery demos.`,
+        defaultCurrency: "INR",
+        businessCategory: "Electronics & Computers",
+        status: "ACTIVE",
+      },
+    });
+    await prisma.merchantPolicy.upsert({
+      where: { merchantId: marketplaceMerchant.id },
+      update: {},
+      create: {
+        merchantId: marketplaceMerchant.id,
+        policyVersion: 1,
+        currency: "INR",
+        maxDiscountBps: 500,
+        autoApprovalDiscountBps: 200,
+        maxOrderAmountMinor: 10_000_000,
+        autoApprovalOrderAmountMinor: 200_000,
+        maxRecoveryAttempts: 1,
+        proposalValidityMinutes: 30,
+        approvalValidityMinutes: 15,
+        authorizationValidityMinutes: 10,
+      },
+    });
+    const laptop = await prisma.product.create({
+      data: {
+        merchantId: marketplaceMerchant.id,
+        name: `${fixture.name} ThinkBook X`,
+        slug: "thinkbook-x",
+        description: "Developer laptop with structured specifications, shipping, returns, and agentic checkout support.",
+        category: "Electronics/Laptop",
+        brand: "ThinkBook",
+        status: "ACTIVE",
+        returnPolicySummary: `Returns accepted within ${fixture.returnDays} days in original condition.`,
+        shippingSummary: "Ships in 1–2 business days with tracked delivery.",
+        promotionEligibility: "ELIGIBLE",
+      },
+    });
+    await prisma.productVariant.create({
+      data: {
+        productId: laptop.id,
+        sku: `${fixture.slug.toUpperCase()}-TBX-01`,
+        title: `ThinkBook X — ${fixture.ram} / ${fixture.storage}`,
+        priceMinor: fixture.priceMinor,
+        costMinor: Math.floor(fixture.priceMinor * 0.82),
+        currency: "INR",
+        attributes: { ram: fixture.ram, storage: fixture.storage, purpose: "software_development", risk: fixture.risk, processor: "Intel Core Ultra 7" },
+        active: true,
+        inventory: { create: { availableQuantity: fixture.inventory } },
+      },
+    });
+  }
+}
+
 /** Delete this merchant's rows in FK-safe dependency order (leaf tables
  * first). Kept explicit rather than relying on cascading deletes so
  * re-running the seed is safe regardless of any individual relation's
@@ -239,6 +311,13 @@ async function main() {
   });
 
   console.log("[seed] creating merchant owner account...");
+  for (const identity of [
+    { slug: "demo-customer-context", name: "Demo Customer", email: "customer@anumati.demo", role: "CUSTOMER" as const, password: "CustomerDemo!2026" },
+    { slug: "demo-platform-context", name: "Platform Administration", email: "admin@anumati.demo", role: "PLATFORM_ADMIN" as const, password: "AdminDemo!2026" },
+  ]) {
+    const context = await prisma.merchant.upsert({ where: { slug: identity.slug }, update: {}, create: { slug: identity.slug, name: identity.name, defaultCurrency: "INR", businessCategory: "Identity context", status: "ACTIVE" } });
+    await prisma.merchantUser.upsert({ where: { email: identity.email }, update: { role: identity.role, merchantId: context.id, passwordHash: await hashPassword(identity.password) }, create: { merchantId: context.id, email: identity.email, role: identity.role, passwordHash: await hashPassword(identity.password) } });
+  }
   await prisma.merchantUser.create({
     data: {
       merchantId: merchant.id,
@@ -373,6 +452,10 @@ async function main() {
           sku,
           title: `${p.name} — ${size}${color ? ` (${color})` : ""}`,
           priceMinor,
+          // Synthetic but explicit demo COGS. Real merchants must import
+          // their own unit cost; absent cost remains NULL and disables
+          // negotiated discounts rather than pretending sale price is margin.
+          costMinor: Math.floor(priceMinor * 0.65),
           currency: "INR",
           attributes: hasAttributes ? { size, ...(color ? { color } : {}), ...(TRAITS_BY_PRODUCT[p.name] ?? {}) } : {},
           active: isActive,
@@ -477,6 +560,9 @@ async function main() {
         amountMinor: totalAmountMinor,
         currency: "INR",
         state: spec.paymentState,
+        customerDebitStatus: spec.paymentState === "CAPTURED" ? "DEBITED" : spec.failureCategory === "BANK_TIMEOUT" ? "DEBITED" : "UNKNOWN",
+        merchantCreditStatus: spec.paymentState === "CAPTURED" ? "CREDITED" : spec.paymentState === "FAILED" ? "NOT_CREDITED" : "UNKNOWN",
+        automaticRetryBlocked: spec.paymentState === "FAILED",
         failureCategory: spec.failureCategory,
         failureCode: spec.failureCategory,
         createdAt,
@@ -893,6 +979,19 @@ async function main() {
       relationship("Meridian Windshield Jacket", "Meridian ThermaCore Half-Zip", "COMPLEMENTARY"),
     ],
   });
+  await prisma.buyerSpendingPolicy.create({
+    data: {
+      merchantId: merchant.id,
+      currency: "INR",
+      autonomousPurchaseLimitMinor: 200_000,
+      dailyLimitMinor: 1_000_000,
+      allowedCategories: ["Electronics/Laptop", "Books", "Accessories", "Running Shoes"],
+      approvalRequiredAboveLimit: true,
+    },
+  });
+
+  console.log("[seed] creating multi-merchant AI discovery fixtures...");
+  await seedMarketplaceMerchants();
 
   console.log("[seed] done.");
   console.log(`[seed] merchant: ${merchant.name} (${merchant.id})`);

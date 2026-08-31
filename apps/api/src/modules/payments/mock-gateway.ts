@@ -65,6 +65,9 @@ export class MockPaymentGateway implements PaymentGateway {
    * should return, simulating a real Razorpay Test Mode payment reaching
    * a given status (used for reconciliation tests). */
   seedPayment(info: ProviderPaymentInfo): void {
+    if (!info.providerPaymentId) {
+      throw new Error("Mock provider evidence requires a providerPaymentId.");
+    }
     this.payments.set(info.providerPaymentId, info);
   }
 

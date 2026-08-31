@@ -5,6 +5,7 @@
  * NOT real is settlement, and the tests below assert that the response
  * says so — a 200 here must never be readable as an on-chain payment.
  */
+import { randomUUID } from "node:crypto";
 import { describe, it, expect, beforeAll, afterAll } from "vitest";
 import type { FastifyInstance } from "fastify";
 import { buildApp } from "./app.js";
@@ -51,7 +52,7 @@ function purchase(headers: Record<string, string> = {}, quantity = 1) {
 }
 
 function paymentHeader(value: unknown): Record<string, string> {
-  return { "x-payment": Buffer.from(JSON.stringify(value), "utf8").toString("base64") };
+  return { "payment-signature": Buffer.from(JSON.stringify(value), "utf8").toString("base64") };
 }
 
 /**
@@ -64,16 +65,25 @@ function paymentHeader(value: unknown): Record<string, string> {
 function payloadFor(amountMinor: number, overrides: Record<string, unknown> = {}) {
   return {
     x402Version: 2,
-    accepted: { scheme: "exact", network: "eip155:84532", amount: String(amountMinor) },
+    accepted: {
+      scheme: "exact",
+      network: "eip155:84532",
+      amount: String(amountMinor),
+      asset: process.env.X402_ASSET!,
+      payTo: process.env.X402_PAY_TO!,
+      maxTimeoutSeconds: 60,
+    },
     payload: {
       signature: "0xdeadbeefdeadbeefdeadbeef",
       authorization: {
         from: "0xabc",
-        to: "0xdef",
+        to: process.env.X402_PAY_TO!,
         value: String(amountMinor),
         // Required now: an authorisation with no expiry, or an expired
         // one, is not a payment instruction we can act on.
+        validAfter: String(Math.floor(Date.now() / 1000) - 5),
         validBefore: String(Math.floor(Date.now() / 1000) + 600),
+        nonce: randomUUID(),
       },
     },
     ...overrides,
@@ -99,6 +109,7 @@ describe("x402 — the challenge", () => {
     // The quoted amount is OUR price, computed before quoting — never a
     // number the client supplied.
     expect(body.accepts[0].amount).toBe(String(priceMinor));
+    expect(res.headers["payment-required"]).toBeTruthy();
   });
 
   it("quotes the correct total for a multi-unit basket", async () => {
@@ -117,7 +128,7 @@ describe("x402 — the challenge", () => {
 });
 
 describe("x402 — the retry", () => {
-  it("accepts a base64 X-PAYMENT header and steps up, because settlement is unverifiable", async () => {
+  it("accepts a base64 PAYMENT-SIGNATURE header and steps up when no facilitator is configured", async () => {
     const { challenge, paid, quoted } = await challengeThenPay();
 
     expect(challenge.statusCode).toBe(402);
@@ -134,7 +145,7 @@ describe("x402 — the retry", () => {
   });
 
   it("accepts raw JSON too, and still steps up rather than settling", async () => {
-    const res = await purchase({ "x-payment": JSON.stringify(payloadFor(priceMinor)) });
+    const res = await purchase({ "payment-signature": JSON.stringify(payloadFor(priceMinor)) });
     // 202, not 200: no facilitator means nobody verified the money exists,
     // so it goes to a human rather than being charged on the buyer's word.
     expect(res.statusCode).toBe(202);
@@ -154,7 +165,7 @@ describe("x402 — the retry", () => {
   });
 
   it("re-challenges with 402 when the header does not decode", async () => {
-    const res = await purchase({ "x-payment": "!!!not-base64-or-json!!!" });
+    const res = await purchase({ "payment-signature": "!!!not-base64-or-json!!!" });
     expect(res.statusCode).toBe(402);
   });
 
@@ -173,14 +184,14 @@ describe("x402 — honesty about settlement", () => {
    * genuine; settlement is not. A caller reading a 200 as "paid on-chain"
    * would be relying on something that never happened.
    */
-  it("labels every outcome as simulated settlement", async () => {
+  it("labels every unverified outcome as not settled", async () => {
     const { paid: approved } = await challengeThenPay();
-    expect(approved.json().settlement_status).toBe("simulated");
+    expect(approved.json().settlement_status).toBe("not_settled");
     expect(approved.json().settlement_note).toMatch(/nothing settled on-chain/i);
 
     const quantity = Math.ceil(1_000_000 / priceMinor) + 1;
     const { paid: steppedUp } = await challengeThenPay(quantity);
-    expect(steppedUp.json().settlement_status).toBe("simulated");
+    expect(steppedUp.json().settlement_status).toBe("not_settled");
   });
 
   it("records the decision as x402 so the console can badge it", async () => {

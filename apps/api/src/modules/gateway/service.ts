@@ -17,10 +17,30 @@
  *    agent's favour.
  *
  * 2. Every path writes a DecisionRecord with a plain-English sentence,
+/**
+ * Anumati gateway — the request path an outside AI buyer agent actually
+ * hits.
+ *
+ * ORDER OF OPERATIONS IS THE DESIGN
+ *
+ *   detect protocol → adapter parses → resolve SKUs against the catalogue
+ *   → price the basket OURSELVES → identify the agent → verify the buyer's
+ *   mandate → evaluate the merchant's policy → decide → record
+ *
+ * Two properties matter more than anything else here:
+ *
+ * 1. The basket is priced from the merchant's own catalogue before any
+ *    check runs. Every one of these protocols states a price on the wire
+ *    and none of them is believed — the agent's figure is kept only so a
+ *    disagreement can be surfaced rather than silently resolved in the
+ *    agent's favour.
+ *
+ * 2. Every path writes a DecisionRecord with a plain-English sentence,
  *    including the ones that fail early. A request that could not even be
  *    parsed is exactly the kind of thing a merchant should be able to see,
  *    so it is recorded rather than dropped at the door.
  */
+import { randomUUID } from "node:crypto";
 import type { PrismaClient, Prisma } from "@prisma/client";
 import {
   detectProtocol,
@@ -33,16 +53,20 @@ import {
   PROTOCOL_FIDELITY,
   type AgentGatewayPolicy as GatewayPolicyConfig,
   type AgentTrustLevel,
+  type AgentProtocol,
   type GatewayEvaluationResult,
   type ParsedIntent,
   type CurrencyCode,
+  systemClock,
 } from "@razorgrowth/domain";
-import { systemClock } from "@razorgrowth/domain";
 import { logger } from "../../observability/logger.js";
 import { appendLedgerEvent } from "../audit/ledger.js";
 import { verifyMandateSignature } from "./mandate-verifier.js";
 import { resolveAgentForIntent } from "./agent-registry.js";
 import { getAIProvider } from "../agents/provider-factory.js";
+import { maskEmail, maskPersonName, redactProtocolPayload } from "../privacy/redaction.js";
+import { issueGatewayStatusToken } from "./status-token.js";
+import { ExternalPurchaseExecutionError } from "./execution-service.js";
 
 const VELOCITY_WINDOW_MS = 60 * 60 * 1000;
 
@@ -50,6 +74,21 @@ export interface GatewayRequest {
   merchantId: string;
   headers: Record<string, string | string[] | undefined>;
   body: unknown;
+  /** Server-attested x402 state. This deliberately lives outside `body`:
+   * a public caller must never be able to assert facilitator verification
+   * by placing a boolean in JSON. */
+  settlementAttestation?: "VERIFIED_X402" | "UNVERIFIED_X402";
+  /** Set only by the authenticated ACP route after delegated-payment
+   * validation. Unsigned allowances on the public mesh are otherwise denied. */
+  authorizationAttestation?: "TRUSTED_ACP_DELEGATION";
+  /** Dedicated x402 has already converted its atomic quote into catalog
+   * minor units; a public caller cannot set this server-only value. */
+  authoritativeClaimedTotalMinor?: number;
+  /** A prior STEP_UP for this exact basket was approved and verified by
+   * the protocol route using its opaque continuation capability. */
+  humanApprovalAttestation?: boolean;
+  /** Whether to accept any negotiated upsell/bundle offer automatically in execution. */
+  acceptNegotiation?: boolean;
 }
 
 export interface GatewayResponse {
@@ -66,6 +105,9 @@ export interface GatewayResponse {
    * An approval that produced nothing payable would leave the gateway
    * deciding but never transacting. */
   providerOrderId: string | null;
+  internalOrderId: string | null;
+  internalPaymentId: string | null;
+  statusToken: string;
   decisionLatencyMs: number;
   /** Present only when the negotiator offered something inside the
    * merchant's envelope. Null is the normal, unremarkable case. */
@@ -73,7 +115,7 @@ export interface GatewayResponse {
 }
 
 interface PricedBasket {
-  lines: { productId: string; variantId: string; quantity: number; unitPriceMinor: number }[];
+  lines: { productId: string; variantId: string; quantity: number; unitPriceMinor: number; unitCostMinor: number | null }[];
   totalMinor: number;
   currency: CurrencyCode;
   categories: string[];
@@ -134,7 +176,16 @@ async function priceBasket(
   merchantId: string,
   intent: ParsedIntent,
 ): Promise<PricedBasket | null> {
-  const skus = intent.lines.map((l) => l.sku);
+  const quantityBySku = new Map<string, number>();
+  for (const line of intent.lines) {
+    const quantity = (quantityBySku.get(line.sku) ?? 0) + line.quantity;
+    // Duplicate lines are normalized, but cannot be used to bypass the
+    // protocol's per-SKU quantity bound.
+    if (!Number.isSafeInteger(quantity) || quantity > 999) return null;
+    quantityBySku.set(line.sku, quantity);
+  }
+  const normalizedLines = [...quantityBySku].map(([sku, quantity]) => ({ sku, quantity }));
+  const skus = normalizedLines.map((line) => line.sku);
   const variants = await prisma.productVariant.findMany({
     where: { sku: { in: skus }, active: true, product: { merchantId, status: "ACTIVE" } },
     include: { product: { select: { id: true, category: true } } },
@@ -146,7 +197,7 @@ async function priceBasket(
   let totalMinor = 0;
   let currency: CurrencyCode | null = null;
 
-  for (const line of intent.lines) {
+  for (const line of normalizedLines) {
     const variant = bySku.get(line.sku);
     if (!variant) return null;
     if (currency && variant.currency !== currency) return null;
@@ -158,6 +209,7 @@ async function priceBasket(
       variantId: variant.id,
       quantity: line.quantity,
       unitPriceMinor: variant.priceMinor,
+      unitCostMinor: variant.costMinor,
     });
   }
 
@@ -193,12 +245,14 @@ async function resolveAgent(
 }
 
 interface RecordArgs {
+  decisionId?: string;
+  workflowId?: string;
   merchantId: string;
   startedAt: number;
   outcome: "AUTO_APPROVE" | "STEP_UP" | "DECLINE";
   reasonCode: string;
   explanation: string;
-  protocol?: "ACP" | "AP2" | "X402" | null;
+  protocol?: AgentProtocol | null;
   protocolVersion?: string | null;
   detectedVia?: string | null;
   externalAgentId?: string | null;
@@ -213,15 +267,19 @@ interface RecordArgs {
   stepUpStatus?: string | null;
   negotiatedDiscountBps?: number | null;
   providerOrderId?: string | null;
+  internalOrderId?: string | null;
+  internalPaymentId?: string | null;
+  normalizedBasket?: PricedBasket["lines"] | null;
   buyerEmail?: string | null;
   buyerName?: string | null;
   protocolActorRef?: string | null;
   rawProtocolPayload?: unknown;
-  permissionType?: "SIGNED_MANDATE" | "UNSIGNED_ALLOWANCE" | "UNVERIFIED_X402" | "NONE" | null;
+  permissionType?: "SIGNED_MANDATE" | "UNSIGNED_ALLOWANCE" | "VERIFIED_X402" | "UNVERIFIED_X402" | "NONE" | null;
+  authorizationExpiresAt?: Date | null;
+  authorizationMaxAmountMinor?: number | null;
+  authorizationCurrency?: CurrencyCode | null;
+  authorizationMerchantScope?: string | null;
   offer?: { addSkus: string[]; discountBps: number; pitch: string } | null;
-  /** Set when the decision was reached BEFORE optional work (the
-   * negotiator's model call) ran, so latency measures the gate rather than
-   * the upsell. */
   decidedAtMs?: number;
 }
 
@@ -233,7 +291,10 @@ async function writeDecision(prisma: PrismaClient, args: RecordArgs): Promise<Ga
   // is judging.
   const decisionLatencyMs = Math.max(0, Math.round((args.decidedAtMs ?? performance.now()) - args.startedAt));
 
+  const recordId = args.decisionId ?? randomUUID();
+  const workflowId = args.workflowId ?? `agent-decision-${recordId}`;
   const data: Prisma.DecisionRecordUncheckedCreateInput = {
+    id: recordId,
     merchantId: args.merchantId,
     outcome: args.outcome,
     reasonCode: args.reasonCode,
@@ -253,11 +314,19 @@ async function writeDecision(prisma: PrismaClient, args: RecordArgs): Promise<Ga
     stepUpStatus: args.stepUpStatus ?? (args.outcome === "STEP_UP" ? "PENDING" : null),
     negotiatedDiscountBps: args.negotiatedDiscountBps ?? null,
     providerOrderId: args.providerOrderId ?? null,
-    buyerEmail: args.buyerEmail ?? null,
-    buyerName: args.buyerName ?? null,
+    internalOrderId: args.internalOrderId ?? null,
+    internalPaymentId: args.internalPaymentId ?? null,
+    normalizedBasket: (args.normalizedBasket ?? null) as never,
+    buyerEmail: maskEmail(args.buyerEmail),
+    buyerName: maskPersonName(args.buyerName),
     protocolActorRef: args.protocolActorRef ?? null,
-    rawProtocolPayload: (args.rawProtocolPayload ?? null) as never,
+    rawProtocolPayload: (args.rawProtocolPayload === undefined ? null : redactProtocolPayload(args.rawProtocolPayload)) as never,
     permissionType: args.permissionType ?? null,
+    authorizationExpiresAt: args.authorizationExpiresAt ?? null,
+    authorizationMaxAmountMinor: args.authorizationMaxAmountMinor ?? null,
+    authorizationCurrency: args.authorizationCurrency ?? null,
+    authorizationMerchantScope: args.authorizationMerchantScope ?? null,
+    workflowId,
     decisionLatencyMs,
   };
 
@@ -278,7 +347,7 @@ async function writeDecision(prisma: PrismaClient, args: RecordArgs): Promise<Ga
   // the authoritative row either way.
   try {
     await appendLedgerEvent(prisma, {
-      workflowId: `agent-decision-${record.id}`,
+      workflowId,
       merchantId: args.merchantId,
       actorType: "POLICY_ENGINE",
       actionType:
@@ -323,6 +392,9 @@ async function writeDecision(prisma: PrismaClient, args: RecordArgs): Promise<Ga
     currency: args.currency ?? null,
     stepUpUrl: args.stepUpPaymentLinkUrl ?? null,
     providerOrderId: args.providerOrderId ?? null,
+    internalOrderId: args.internalOrderId ?? null,
+    internalPaymentId: args.internalPaymentId ?? null,
+    statusToken: issueGatewayStatusToken(record.id),
     decisionLatencyMs,
     offer: args.offer ?? null,
   };
@@ -383,10 +455,21 @@ async function negotiate(
     // A discount with nothing added is margin loss, not an upsell.
     if (addSkus.length === 0 || discountBps <= 0) return null;
 
-    // Below the merchant's floor is a refusal, not a smaller discount.
-    if (offerBreachesFloorMargin(discountBps, policy)) {
+    const selected = candidates.filter((candidate) => addSkus.includes(candidate.sku));
+    const revenueMinor = basket.totalMinor + selected.reduce((sum, candidate) => sum + candidate.priceMinor, 0);
+    const knownBasketCost = basket.lines.every((line) => line.unitCostMinor !== null);
+    const knownCandidateCost = selected.every((candidate) => candidate.costMinor !== null);
+    const costMinor =
+      knownBasketCost && knownCandidateCost
+        ? basket.lines.reduce((sum, line) => sum + line.unitCostMinor! * line.quantity, 0) +
+          selected.reduce((sum, candidate) => sum + candidate.costMinor!, 0)
+        : null;
+
+    // Below the merchant's REAL COGS-backed floor is a refusal, not a
+    // smaller discount. Missing cost fails closed.
+    if (offerBreachesFloorMargin({ revenueMinor, costMinor, discountBps }, policy)) {
       logger.info(
-        { event: "anumati.offer_rejected_floor_margin", discountBps, floorMarginBps: policy.negotiatorFloorMarginBps },
+        { event: "anumati.offer_rejected_floor_margin", discountBps, floorMarginBps: policy.negotiatorFloorMarginBps, costKnown: costMinor !== null },
         "Negotiator offer rejected: would breach the merchant's floor margin",
       );
       return null;
@@ -409,12 +492,18 @@ async function negotiate(
 export async function handleAgentPurchaseIntent(
   prisma: PrismaClient,
   request: GatewayRequest,
-  createStepUpLink?: (args: { amountMinor: number; currency: string; description: string }) => Promise<{ id: string; url: string } | null>,
+  _createStepUpLink?: (args: { amountMinor: number; currency: string; description: string }) => Promise<{ id: string; url: string } | null>,
   /** Creates the provider order an approved intent becomes payable through.
    * Injected for the same reasons as the step-up link: testable without a
    * live provider, and a provider outage degrades instead of losing the
    * decision. */
-  createProviderOrder?: (args: { amountMinor: number; currency: string; reference: string }) => Promise<string | null>,
+  executeApprovedPurchase?: (args: {
+    decisionId: string;
+    workflowId: string;
+    amountMinor: number;
+    currency: string;
+    lines: PricedBasket["lines"];
+  }) => Promise<{ providerOrderId: string; orderId: string; paymentId: string } | null>,
 ): Promise<GatewayResponse> {
   const startedAt = performance.now();
   const headers = singleHeader(request.headers);
@@ -445,7 +534,12 @@ export async function handleAgentPurchaseIntent(
     });
   }
 
-  const intent = parsed.intent;
+  const intent: ParsedIntent = {
+    ...parsed.intent,
+    claimedTotalMinor: request.authoritativeClaimedTotalMinor ?? parsed.intent.claimedTotalMinor,
+    verifiedSettlement: request.settlementAttestation === "VERIFIED_X402",
+    unverifiedSettlement: request.settlementAttestation === "UNVERIFIED_X402",
+  };
   const policy = await loadGatewayPolicy(prisma, request.merchantId);
   const agent = await resolveAgent(prisma, request.merchantId, intent, policy.allowFirstUseKeyPinning);
   const agentContext = {
@@ -467,9 +561,15 @@ export async function handleAgentPurchaseIntent(
       ? ("SIGNED_MANDATE" as const)
       : intent.unsignedAllowance
         ? ("UNSIGNED_ALLOWANCE" as const)
+        : intent.verifiedSettlement
+          ? ("VERIFIED_X402" as const)
         : intent.unverifiedSettlement
           ? ("UNVERIFIED_X402" as const)
           : ("NONE" as const),
+    authorizationExpiresAt: intent.mandate?.expiresAt ?? intent.unsignedAllowance?.expiresAt ?? null,
+    authorizationMaxAmountMinor: intent.mandate?.maxAmountMinor ?? intent.unsignedAllowance?.maxAmountMinor ?? null,
+    authorizationCurrency: (intent.mandate?.currency ?? intent.unsignedAllowance?.currency ?? null) as CurrencyCode | null,
+    authorizationMerchantScope: intent.mandate?.merchantScope ?? intent.unsignedAllowance?.scope ?? null,
   };
 
   const basket = await priceBasket(prisma, request.merchantId, intent);
@@ -500,6 +600,17 @@ export async function handleAgentPurchaseIntent(
   // verified mandate and the Decision Record says which one applied.
   if (!intent.mandate && intent.unsignedAllowance) {
     const allowance = intent.unsignedAllowance;
+    if (request.authorizationAttestation !== "TRUSTED_ACP_DELEGATION") {
+      return writeDecision(prisma, {
+        ...base,
+        ...agentContext,
+        outcome: "DECLINE",
+        reasonCode: "ALLOWANCE_UNAUTHENTICATED",
+        explanation: "An unsigned ACP allowance is accepted only from the authenticated ACP delegated-payment route. Nothing was charged.",
+        computedTotalMinor: basket.totalMinor,
+        currency: basket.currency,
+      });
+    }
 
     // SCOPE IS CHECKED, NOT JUST PARSED.
     //
@@ -541,7 +652,7 @@ export async function handleAgentPurchaseIntent(
   //      facilitator, so it grants nothing and forces a human decision
   // Only (1) is a verified permission; the other two are recorded as what
   // they are and (3) can never auto-approve.
-  const mandateResult = (intent.unsignedAllowance || intent.unverifiedSettlement) && !intent.mandate
+  const mandateResult = (intent.unsignedAllowance || intent.unverifiedSettlement || intent.verifiedSettlement) && !intent.mandate
     ? ({ valid: true } as const)
     : verifySpendMandate(intent.mandate, {
     merchantId: request.merchantId,
@@ -590,21 +701,29 @@ export async function handleAgentPurchaseIntent(
   // purchase may be perfectly good, and not an approval, because we do not
   // know that.
   const unverifiable = intent.unverifiedSettlement;
-  const effectiveDecision =
+  const cautiousDecision =
     (riskFlagged || unverifiable) && evaluation.decision === "AUTO_APPROVE"
       ? ("STEP_UP" as const)
       : evaluation.decision;
+  const effectiveDecision =
+    request.humanApprovalAttestation && cautiousDecision === "STEP_UP"
+      ? ("AUTO_APPROVE" as const)
+      : cautiousDecision;
 
   const shared = {
     ...base,
     ...agentContext,
     reasonCode:
-      effectiveDecision !== evaluation.decision
+      request.humanApprovalAttestation && effectiveDecision === "AUTO_APPROVE"
+        ? "HUMAN_APPROVAL_APPLIED"
+        : effectiveDecision !== evaluation.decision
         ? unverifiable
           ? "SETTLEMENT_UNVERIFIED"
           : "RISK_SIGNAL_REVIEW"
         : evaluation.reasonCode,
-    explanation: unverifiable
+    explanation: request.humanApprovalAttestation && effectiveDecision === "AUTO_APPROVE"
+      ? `${evaluation.explanation} An authenticated merchant approver previously approved this exact basket, and the fresh x402 authorization may now proceed on the original payment rail.`
+      : unverifiable
       ? `${evaluation.explanation} However, this agent pays over x402 and no settlement facilitator is configured, so nobody has verified the money actually exists. It is going to you for approval rather than being charged on the buyer's word.`
       : riskFlagged
         ? `${evaluation.explanation} The calling platform also flagged this purchase for review (${intent.riskFlags.join(", ")}), so it is going to you rather than through automatically.`
@@ -646,14 +765,6 @@ export async function handleAgentPurchaseIntent(
   }
 
   if (effectiveDecision === "STEP_UP") {
-    const link = createStepUpLink
-      ? await createStepUpLink({
-          amountMinor: basket.totalMinor,
-          currency: basket.currency,
-          description: `Agent order awaiting your approval (${intent.agentId})`,
-        }).catch(() => null)
-      : null;
-
     return writeDecision(prisma, {
       ...shared,
       outcome: "STEP_UP",
@@ -661,79 +772,175 @@ export async function handleAgentPurchaseIntent(
       // a risk-signal upgrade has already added its sentence there, and
       // rebuilding from the raw evaluation would silently drop the reason
       // this became a step-up in the first place.
-      explanation: link
-        ? `${shared.explanation} A payment link has been created for you to review and approve.`
-        : `${shared.explanation} A payment link could not be created just now, so this is waiting for you in the console.`,
-      stepUpPaymentLinkId: link?.id ?? null,
-      stepUpPaymentLinkUrl: link?.url ?? null,
+      explanation: `${shared.explanation} No payment object has been created; this is waiting for an authenticated owner or approver in the console.`,
+      normalizedBasket: basket.lines,
       stepUpStatus: "PENDING",
     });
   }
 
   const decidedAtMs = performance.now();
-
-  // An approved intent has to become something the agent can actually pay.
-  // Deliberately AFTER the decision clock stops: creating the order is
-  // execution, not deciding, and billing its round trip to "decision
-  // latency" would misreport the gate.
-  const providerOrderId = createProviderOrder
-    ? await createProviderOrder({
-        amountMinor: basket.totalMinor,
-        currency: basket.currency,
-        reference: `anumati-${intent.agentId}`,
-      }).catch((err) => {
-        logger.warn(
-          { event: "anumati.provider_order_failed", err: err instanceof Error ? err.message : String(err) },
-          "Approved intent could not be turned into a provider order",
-        );
-        return null;
-      })
-    : null;
-
+  const decisionId = randomUUID();
+  const workflowId = `agent-decision-${decisionId}`;
   const offer = await negotiate(prisma, request.merchantId, basket, policy);
 
-  // An approval that produced nothing payable is not an approval.
-  //
-  // This used to swallow the provider error and still return AUTO_APPROVE,
-  // so ACP marked the session `completed` and answered 200 with a null
-  // order id. The agent was told the purchase succeeded when nothing had
-  // been created. A provider outage is exactly the graceful-failure case
-  // this project is judged on, so it degrades to a human instead of
-  // silently to success.
-  if (providerOrderId === null && createProviderOrder) {
-    return writeDecision(prisma, {
-      ...shared,
-      outcome: "STEP_UP",
-      decidedAtMs,
-      reasonCode: "PROVIDER_ORDER_FAILED",
-      explanation: `${evaluation.explanation} The payment provider could not be reached to create the order, so nothing was charged and this is waiting for you rather than being reported as done.`,
-    });
-  }
-
-  // An approved, payable order is what makes an agent KNOWN next time.
-  // `settledOrderCount` was read but never written, so no agent could ever
-  // graduate past the unknown-agent ceiling however many orders it placed.
-  await prisma.agentIdentity
-    .update({ where: { id: agent.id }, data: { settledOrderCount: { increment: 1 } } })
-    .catch(() => undefined);
-
-  return writeDecision(prisma, {
+  // Persist the policy decision BEFORE executing it. Payment/order ledger
+  // entries can therefore never appear earlier than the authorization that
+  // caused them. Execution then enriches this record with internal/provider
+  // identifiers, or safely changes the final outcome to STEP_UP on failure.
+  const approved = await writeDecision(prisma, {
     ...shared,
+    decisionId,
+    workflowId,
     outcome: "AUTO_APPROVE",
     decidedAtMs,
     negotiatedDiscountBps: offer?.discountBps ?? null,
-    providerOrderId,
+    normalizedBasket: basket.lines,
     offer,
     explanation: [
       evaluation.explanation,
       offer
         ? `The negotiator also offered ${offer.discountBps / 100}% off for adding ${offer.addSkus.length} item(s), within your configured ceiling.`
         : null,
-      providerOrderId
-        ? "A Razorpay order was created for the agent to pay."
-        : "A Razorpay order could not be created just now, so the agent has nothing to pay yet.",
+      executeApprovedPurchase ? "The approved basket is now being turned into a payable checkout." : null,
     ]
       .filter(Boolean)
       .join(" "),
   });
+
+  if (!executeApprovedPurchase) return approved;
+
+  const shouldApplyOffer = Boolean(
+    request.acceptNegotiation ||
+    headers["x-accept-negotiation"] === "true" ||
+    (typeof request.body === "object" && request.body !== null && (request.body as Record<string, unknown>).acceptNegotiation === true)
+  );
+
+  let executionLines = basket.lines;
+  let executionAmountMinor = basket.totalMinor;
+
+  if (offer && shouldApplyOffer && offer.addSkus.length > 0) {
+    const additionalVariants = await prisma.productVariant.findMany({
+      where: {
+        sku: { in: offer.addSkus },
+        active: true,
+        product: { merchantId: request.merchantId, status: "ACTIVE" },
+      },
+      include: { product: { select: { id: true, name: true } } },
+    });
+
+    const addLines = additionalVariants.map((v) => ({
+      productId: v.productId,
+      variantId: v.id,
+      sku: v.sku,
+      title: v.title,
+      unitPriceMinor: v.priceMinor,
+      unitCostMinor: v.costMinor,
+      quantity: 1,
+      lineTotalMinor: v.priceMinor,
+    }));
+
+    const combinedLines = [...basket.lines, ...addLines];
+    const totalGross = combinedLines.reduce((sum, l) => sum + l.unitPriceMinor * l.quantity, 0);
+    const discountFraction = offer.discountBps / 10000;
+    const totalDiscountMinor = Math.round(totalGross * discountFraction);
+
+    let allocatedDiscount = 0;
+    executionLines = combinedLines.map((line, idx) => {
+      const lineGross = line.unitPriceMinor * line.quantity;
+      const isLast = idx === combinedLines.length - 1;
+      const lineDiscount = isLast ? totalDiscountMinor - allocatedDiscount : Math.round((lineGross / totalGross) * totalDiscountMinor);
+      allocatedDiscount += lineDiscount;
+      return {
+        ...line,
+        lineDiscountMinor: lineDiscount,
+        lineTotalMinor: lineGross - lineDiscount,
+      };
+    });
+    executionAmountMinor = totalGross - totalDiscountMinor;
+  }
+
+  // An approved intent has to become something the agent can actually pay.
+  // Deliberately AFTER the decision clock stops: creating the order is
+  // execution, not deciding, and billing its round trip to "decision
+  // latency" would misreport the gate.
+  let execution: { providerOrderId: string; orderId: string; paymentId: string } | null = null;
+  let executionError: unknown = null;
+  try {
+    execution = await executeApprovedPurchase({
+      decisionId,
+      workflowId,
+      amountMinor: executionAmountMinor,
+      currency: basket.currency,
+      lines: executionLines,
+    });
+  } catch (error) {
+    executionError = error;
+    logger.warn(
+      { event: "anumati.approved_execution_failed", err: error instanceof Error ? error.message : String(error) },
+      "Approved intent could not be turned into an internal checkout and provider order",
+    );
+  }
+
+  // Execution failures never become a second approvable step-up. In
+  // particular, UNKNOWN may mean the provider accepted the first order;
+  // another checkout could duplicate both charge and reservation.
+  if (execution === null) {
+    const uncertain = executionError instanceof ExternalPurchaseExecutionError && executionError.executionStatus === "UNKNOWN";
+    const refs = executionError instanceof ExternalPurchaseExecutionError ? executionError.refs : null;
+    const reasonCode = uncertain ? "PAYMENT_OUTCOME_UNKNOWN" : "EXECUTION_FAILED";
+    const explanation = `${evaluation.explanation} ${executionError instanceof Error ? executionError.message : "The approved checkout could not be created."} ${uncertain ? "The existing payment must be reconciled before any new authorization is accepted." : "Nothing was charged; submit a fresh intent after correcting the failure."}`;
+    await prisma.decisionRecord.update({
+      where: { id: decisionId },
+      data: {
+        outcome: "DECLINE",
+        reasonCode,
+        explanation,
+        stepUpStatus: null,
+        settlementStatus: uncertain ? "UNKNOWN" : "FAILED",
+        internalOrderId: refs?.orderId ?? undefined,
+        internalPaymentId: refs?.paymentId ?? undefined,
+        providerOrderId: refs?.providerOrderId ?? undefined,
+      },
+    });
+    await appendLedgerEvent(prisma, {
+      workflowId,
+      merchantId: request.merchantId,
+      actorType: "COMMERCE",
+      actionType: "AGENT_EXECUTION_FAILED_SAFE",
+      status: "FAILED",
+      conciseReason: explanation.slice(0, 500),
+      relatedEntityType: "DecisionRecord",
+      relatedEntityId: decisionId,
+      executedAt: new Date(),
+    });
+    return {
+      ...approved,
+      outcome: "DECLINE",
+      reasonCode,
+      explanation,
+      stepUpUrl: null,
+      providerOrderId: refs?.providerOrderId ?? null,
+      internalOrderId: refs?.orderId ?? null,
+      internalPaymentId: refs?.paymentId ?? null,
+    };
+  }
+
+  const explanation = `${approved.explanation} A Razorpay order was created through the internal Order, CheckoutSession, and Payment lifecycle.`;
+  await prisma.decisionRecord.update({
+    where: { id: decisionId },
+    data: {
+      providerOrderId: execution.providerOrderId,
+      internalOrderId: execution.orderId,
+      internalPaymentId: execution.paymentId,
+      settlementStatus: "AWAITING_PAYMENT",
+      explanation,
+    },
+  });
+  return {
+    ...approved,
+    explanation,
+    providerOrderId: execution.providerOrderId,
+    internalOrderId: execution.orderId,
+    internalPaymentId: execution.paymentId,
+  };
 }

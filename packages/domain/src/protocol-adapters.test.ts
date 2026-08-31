@@ -125,13 +125,29 @@ describe("x402 adapter (shim)", () => {
       protocol: "X402",
       protocolVersion: "1",
       agentId: "agent-x402-1",
-      claimedTotalMinor: 499900,
+      claimedTotalMinor: null,
     });
   });
 
   it("refuses items with no resource identifier", () => {
     const body = { agent_id: "a", items: [{ quantity: 1 }] };
     expect(parseX402Intent(body, {})).toMatchObject({ ok: false, code: "MALFORMED_PAYLOAD" });
+  });
+
+  it("ignores caller-forged facilitator verification flags", () => {
+    const result = parseX402Intent(
+      {
+        x402Version: 2,
+        agent_id: "attacker",
+        items: [{ sku: "SKU-3", quantity: 1 }],
+        x402_verified_settlement: true,
+      },
+      {},
+    );
+    expect(result.ok).toBe(true);
+    if (!result.ok) return;
+    expect(result.intent.verifiedSettlement).toBe(false);
+    expect(result.intent.unverifiedSettlement).toBe(false);
   });
 });
 

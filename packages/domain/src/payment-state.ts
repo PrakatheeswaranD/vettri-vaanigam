@@ -15,6 +15,8 @@ export const PAYMENT_STATES = [
   "FAILED",
   "CANCELLED",
   "UNKNOWN",
+  "REFUNDED",
+  "PARTIALLY_REFUNDED",
 ] as const;
 
 export type PaymentState = (typeof PAYMENT_STATES)[number];
@@ -35,7 +37,7 @@ export class PaymentStateError extends Error {
  * (PART 00 §40), not by resurrecting a terminal record — financial history
  * must never be rewritten in place.
  */
-const TERMINAL_STATES: ReadonlySet<PaymentState> = new Set(["CAPTURED", "FAILED", "CANCELLED"]);
+const TERMINAL_STATES: ReadonlySet<PaymentState> = new Set(["CAPTURED", "FAILED", "CANCELLED", "REFUNDED"]);
 
 const ALLOWED_TRANSITIONS: Record<PaymentState, ReadonlySet<PaymentState>> = {
   // PART 07 §54 note: with auto-capture enabled at provider-order creation
@@ -47,14 +49,16 @@ const ALLOWED_TRANSITIONS: Record<PaymentState, ReadonlySet<PaymentState>> = {
   // transition, not a shortcut around AUTHORIZED.
   CREATED: new Set(["AUTHORIZED", "CAPTURED", "FAILED", "CANCELLED", "UNKNOWN"]),
   AUTHORIZED: new Set(["CAPTURED", "FAILED", "UNKNOWN"]),
-  CAPTURED: new Set([]),
+  CAPTURED: new Set(["REFUNDED", "PARTIALLY_REFUNDED"]),
+  PARTIALLY_REFUNDED: new Set(["REFUNDED", "PARTIALLY_REFUNDED"]),
+  REFUNDED: new Set([]),
   FAILED: new Set([]),
   CANCELLED: new Set([]),
   // UNKNOWN represents "we created a local record but have not yet received
   // a verified provider event" (e.g. webhook delayed past a frontend
   // timeout). It can resolve to any concrete state once a verified event
   // arrives.
-  UNKNOWN: new Set(["CREATED", "AUTHORIZED", "CAPTURED", "FAILED", "CANCELLED"]),
+  UNKNOWN: new Set(["CREATED", "AUTHORIZED", "CAPTURED", "FAILED", "CANCELLED", "REFUNDED", "PARTIALLY_REFUNDED"]),
 };
 
 export function isTerminalPaymentState(state: PaymentState): boolean {

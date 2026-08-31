@@ -35,6 +35,9 @@ import { getPaymentGateway } from "../payments/gateway-factory.js";
 import { handleAgentPurchaseIntent } from "./service.js";
 import { buildDecisionMetrics, listDecisionRecords } from "./decision-query.js";
 import { registerAgentKey, revokeAgent } from "./agent-registry.js";
+import { executeExternalAgentPurchase, ExternalPurchaseExecutionError } from "./execution-service.js";
+import { appendLedgerEvent } from "../audit/ledger.js";
+import { verifyGatewayStatusToken } from "./status-token.js";
 
 /**
  * The policy editor's payload.
@@ -82,26 +85,17 @@ export function registerAgentGatewayRoutes(app: FastifyInstance, prefix: string)
     const result = await handleAgentPurchaseIntent(
       prisma,
       { merchantId: merchant.id, headers: request.headers, body: request.body },
+      undefined,
       paymentGateway
-        ? async ({ amountMinor, currency, description }) => {
-            const link = await paymentGateway.createPaymentLink({
+        ? async ({ decisionId, workflowId, amountMinor, currency, lines }) =>
+            executeExternalAgentPurchase(prisma, {
+              merchantId: merchant.id,
+              decisionId,
+              workflowId,
               amountMinor,
               currency,
-              description,
-              referenceId: `anumati-${Date.now()}`,
-            });
-            return { id: link.providerPaymentLinkId, url: link.shortUrl };
-          }
-        : undefined,
-      paymentGateway
-        ? async ({ amountMinor, currency, reference }) => {
-            const order = await paymentGateway.createPaymentOrder({
-              internalPaymentId: reference,
-              amountMinor,
-              currency,
-            });
-            return order.providerOrderId;
-          }
+              lines,
+            })
         : undefined,
     );
 
@@ -110,6 +104,34 @@ export function registerAgentGatewayRoutes(app: FastifyInstance, prefix: string)
     // proceed, 202 a human is deciding, 403 refused.
     const status = result.outcome === "AUTO_APPROVE" ? 200 : result.outcome === "STEP_UP" ? 202 : 403;
     return reply.status(status).send(result);
+  });
+
+  /** Opaque bearer continuation for the buyer agent. It exposes only the
+   * decision/payment state tied to this capability, never merchant-wide data. */
+  app.get(`${prefix}/agent-gateway/decisions/:decisionId/status`, async (request) => {
+    const { decisionId } = request.params as { decisionId: string };
+    const header = request.headers.authorization;
+    const token = header?.startsWith("Bearer ") ? header.slice("Bearer ".length).trim() : "";
+    if (!token || !verifyGatewayStatusToken(token, decisionId)) {
+      throw AppError.unauthorized("A valid decision status token is required.");
+    }
+    const decision = await prisma.decisionRecord.findUnique({
+      where: { id: decisionId },
+      select: {
+        id: true,
+        outcome: true,
+        reasonCode: true,
+        explanation: true,
+        stepUpStatus: true,
+        settlementStatus: true,
+        providerOrderId: true,
+        internalOrderId: true,
+        internalPaymentId: true,
+        settledAt: true,
+      },
+    });
+    if (!decision) throw AppError.notFound(`No decision ${decisionId}.`);
+    return decision;
   });
 
   // ── Merchant-facing (authenticated) ──────────────────────────────────
@@ -242,30 +264,170 @@ export function registerAgentGatewayRoutes(app: FastifyInstance, prefix: string)
     if (record.outcome !== "STEP_UP") {
       throw new AppError("CONFLICT", "Only an intent that stepped up to a human needs a decision.");
     }
-    // Deciding twice would overwrite the first person's judgement without
-    // trace. A decided step-up is final.
-    if (record.stepUpStatus && record.stepUpStatus !== "PENDING") {
-      throw new AppError("CONFLICT", `This step-up was already ${record.stepUpStatus.toLowerCase()}.`);
+    const STALE_LOCK_TIMEOUT_MS = 60_000;
+    const isStaleProcessing =
+      record.stepUpStatus === "PROCESSING" &&
+      record.stepUpDecidedAt &&
+      Date.now() - record.stepUpDecidedAt.getTime() > STALE_LOCK_TIMEOUT_MS;
+
+    if (record.stepUpStatus !== "PENDING" && !isStaleProcessing) {
+      throw new AppError("CONFLICT", `This step-up is already ${record.stepUpStatus?.toLowerCase() ?? "being decided"}.`);
+    }
+    const now = new Date();
+    if (body.decision === "APPROVED" && record.protocol !== "X402") {
+      const consentInvalid =
+        !record.authorizationExpiresAt ||
+        record.authorizationExpiresAt.getTime() <= now.getTime() ||
+        record.authorizationMerchantScope !== merchantId ||
+        record.authorizationCurrency !== record.currency ||
+        record.authorizationMaxAmountMinor === null ||
+        record.computedTotalMinor === null ||
+        record.authorizationMaxAmountMinor < record.computedTotalMinor;
+      if (consentInvalid) {
+        await prisma.$transaction(async (tx) => {
+          const rejected = await tx.decisionRecord.updateMany({
+            where: {
+              id: decisionId,
+              merchantId,
+              outcome: "STEP_UP",
+              OR: [
+                { stepUpStatus: "PENDING" },
+                { stepUpStatus: "PROCESSING", stepUpDecidedAt: { lt: new Date(now.getTime() - STALE_LOCK_TIMEOUT_MS) } },
+              ],
+            },
+            data: { stepUpStatus: "REJECTED", stepUpDecidedAt: now, stepUpDecidedById: request.merchantUserId, settlementStatus: "AUTHORIZATION_EXPIRED" },
+          });
+          if (rejected.count !== 1) throw AppError.conflict("This step-up is already being decided.");
+          await appendLedgerEvent(tx, {
+            workflowId: record.workflowId ?? `agent-decision-${record.id}`,
+            merchantId,
+            actorType: "POLICY_ENGINE",
+            actionType: "AGENT_STEP_UP_AUTHORIZATION_EXPIRED",
+            status: "REJECTED",
+            conciseReason: "The buyer's original authorization was expired, out of scope, or insufficient when the merchant attempted approval.",
+            relatedEntityType: "DecisionRecord",
+            relatedEntityId: record.id,
+            executedAt: now,
+          });
+        });
+        throw new AppError("AUTHORIZATION_EXPIRED", "The buyer's authorization is no longer valid; request a fresh signed intent.");
+      }
     }
 
-    const updated = await prisma.decisionRecord.update({
-      where: { id: decisionId },
-      data: {
-        stepUpStatus: body.decision,
-        stepUpDecidedById: request.merchantUserId,
-        stepUpDecidedAt: new Date(),
-        stepUpDecisionNote: body.note ?? null,
-      },
+    // Conditional claim and ledger append share one transaction. Two
+    // approvers cannot both leave PENDING, and a ledger failure rolls the
+    // claim back before any provider call occurs.
+    let updated = await prisma.$transaction(async (tx) => {
+      const claim = await tx.decisionRecord.updateMany({
+        where: {
+          id: decisionId,
+          merchantId,
+          outcome: "STEP_UP",
+          OR: [
+            { stepUpStatus: "PENDING" },
+            { stepUpStatus: "PROCESSING", stepUpDecidedAt: { lt: new Date(now.getTime() - STALE_LOCK_TIMEOUT_MS) } },
+          ],
+        },
+        data: {
+          stepUpStatus: body.decision === "APPROVED" ? "PROCESSING" : "REJECTED",
+          stepUpDecidedById: request.merchantUserId,
+          stepUpDecidedAt: now,
+          stepUpDecisionNote: body.note ?? null,
+        },
+      });
+      if (claim.count !== 1) throw AppError.conflict("This step-up is already being decided.");
+      const claimed = await tx.decisionRecord.findUniqueOrThrow({ where: { id: decisionId } });
+      await appendLedgerEvent(tx, {
+        workflowId: claimed.workflowId ?? `agent-decision-${claimed.id}`,
+        merchantId,
+        actorType: "MERCHANT_USER",
+        actionType: body.decision === "APPROVED" ? "AGENT_STEP_UP_APPROVED" : "AGENT_STEP_UP_REJECTED",
+        status: body.decision === "APPROVED" ? "APPROVED" : "REJECTED",
+        conciseReason:
+          body.decision === "APPROVED"
+            ? "An authenticated merchant approver authorized the stepped-up agent purchase."
+            : "An authenticated merchant approver rejected the stepped-up agent purchase.",
+        relatedEntityType: "DecisionRecord",
+        relatedEntityId: claimed.id,
+        metadata: { decidedById: request.merchantUserId, note: body.note ?? null },
+        executedAt: now,
+      });
+      return claimed;
     });
+
+    const workflowId = updated.workflowId ?? `agent-decision-${updated.id}`;
+
+    if (body.decision === "APPROVED" && updated.protocol === "X402") {
+      // A merchant approval cannot silently switch an x402 purchase onto
+      // Razorpay. The original payment authorization was intentionally not
+      // retained; the buyer must retry with a fresh x402 authorization so
+      // the facilitator can verify and settle the exact approved payment.
+      updated = await prisma.decisionRecord.update({
+        where: { id: updated.id },
+        data: { stepUpStatus: "APPROVED", settlementStatus: "REQUIRES_NEW_X402_AUTHORIZATION" },
+      });
+    } else if (body.decision === "APPROVED") {
+      const lines = updated.normalizedBasket as
+        | { productId: string; variantId: string; quantity: number; unitPriceMinor: number }[]
+        | null;
+      if (!lines || !updated.computedTotalMinor || !updated.currency) {
+        updated = await prisma.decisionRecord.update({
+          where: { id: updated.id },
+          data: { stepUpStatus: "APPROVED", settlementStatus: "EXECUTION_FAILED" },
+        });
+      } else {
+        try {
+          const execution = await executeExternalAgentPurchase(prisma, {
+            merchantId,
+            decisionId: updated.id,
+            workflowId,
+            amountMinor: updated.computedTotalMinor,
+            currency: updated.currency,
+            lines,
+          });
+          updated = await prisma.decisionRecord.update({
+            where: { id: updated.id },
+            data: {
+              providerOrderId: execution.providerOrderId,
+              internalOrderId: execution.orderId,
+              internalPaymentId: execution.paymentId,
+              settlementStatus: "AWAITING_PAYMENT",
+              stepUpStatus: "APPROVED",
+            },
+          });
+        } catch (error) {
+          request.log.error({ err: error, decisionId: updated.id }, "approved step-up execution failed safely");
+          const executionError = error instanceof ExternalPurchaseExecutionError ? error : null;
+          updated = await prisma.decisionRecord.update({
+            where: { id: updated.id },
+            data: {
+              stepUpStatus: "APPROVED",
+              settlementStatus: executionError?.executionStatus ?? "EXECUTION_FAILED",
+              internalOrderId: executionError?.refs.orderId,
+              internalPaymentId: executionError?.refs.paymentId,
+              providerOrderId: executionError?.refs.providerOrderId,
+            },
+          });
+        }
+      }
+      if (updated.internalPaymentId) {
+        await prisma.acpCheckoutSession.updateMany({
+          where: { decisionRecordId: updated.id },
+          data: { status: updated.settlementStatus === "AWAITING_PAYMENT" ? "payment_in_progress" : "payment_failed" },
+        });
+      }
+    }
 
     return {
       id: updated.id,
       stepUpStatus: updated.stepUpStatus,
       decidedAt: updated.stepUpDecidedAt?.toISOString() ?? null,
-      // Only an APPROVED step-up should ever be paid, so the link is
-      // withheld until then rather than being live from the moment the
-      // intent arrived.
-      paymentLinkUrl: updated.stepUpStatus === "APPROVED" ? updated.stepUpPaymentLinkUrl : null,
+      settlementStatus: updated.settlementStatus,
+      orderId: updated.providerOrderId,
+      paymentId: updated.internalPaymentId,
+      // The agent receives a normal Razorpay order only after approval;
+      // there is never a pre-approval buyer-payable link.
+      paymentLinkUrl: null,
     };
   });
 

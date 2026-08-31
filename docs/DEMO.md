@@ -33,9 +33,7 @@ guarantee a clean, reproducible starting state.
 
 If `pnpm dev`'s single compound launch ever misbehaves in your terminal
 environment, `pnpm dev:api` and `pnpm dev:web` start the two servers
-independently on their fixed ports (4000 / 5173) — this is what
-`.claude/launch.json` in this repository now uses, precisely to avoid a
-port-collision issue documented in `PROGRESS.md`'s Known Issues.
+independently on their fixed ports (4000 / 5173).
 
 ## The canonical demo query
 
@@ -133,6 +131,6 @@ banner). No live Razorpay Test Mode transaction was completed in this
 build's own verification pass — the full failure→recovery→capture path is
 instead proven by 13 real integration tests against a deterministic
 provider double that exercises the exact same signature-verification and
-state-machine code a live transaction would. See `PROGRESS.md`'s Known
-Issues for the precise, non-overclaiming statement of what was and wasn't
+state-machine code a live transaction would. See `PROGRESS.md` for the
+precise, non-overclaiming statement of what was and wasn't
 exercised live.

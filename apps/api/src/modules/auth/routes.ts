@@ -10,7 +10,7 @@ export function registerAuthRoutes(app: FastifyInstance, prefix: string): void {
   // allowlist) — you cannot require a session to obtain one.
   app.post(`${prefix}/auth/login`, async (request) => {
     const body = loginRequestSchema.parse(request.body);
-    return login(prisma, body.email, body.password);
+    return login(prisma, body.email, body.password, body.experience);
   });
 
   app.post(`${prefix}/auth/logout`, async (request) => {

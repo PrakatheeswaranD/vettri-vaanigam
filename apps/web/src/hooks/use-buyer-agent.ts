@@ -1,11 +1,12 @@
 import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
 import type { BuyerAgentResponseDTO, BuyerConversationDTO } from "@razorgrowth/contracts";
 import { apiGet, apiPost } from "../lib/api-client";
+import { getExperienceRole } from "../lib/experience-role";
 
 export function useSendBuyerMessage() {
   return useMutation({
     mutationFn: (params: { conversationId?: string; message: string }) =>
-      apiPost<BuyerAgentResponseDTO>("/buyer-agent/messages", params),
+      apiPost<BuyerAgentResponseDTO>(getExperienceRole() === "customer" ? "/buyer/marketplace/messages" : "/buyer-agent/messages", params),
   });
 }
 

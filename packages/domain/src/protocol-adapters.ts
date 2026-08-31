@@ -1,36 +1,16 @@
 /**
- * Protocol Adapter Mesh — three dialects, one internal shape.
+ * Protocol Adapter Mesh — five dialects, one internal shape.
  *
  * Each adapter's ONLY job is to turn its own wire format into a
  * `ParsedIntent`. Nothing here prices anything, checks a policy, or talks
  * to a database: adapters are pure parsers, which is what makes them
- * cheaply testable and what keeps a fourth protocol (NPCI's UAP, when it
- * lands) a new file rather than a change to the gateway.
- *
- * WHY SKUs AND NOT PRODUCT IDs
- *
- * An adapter emits the merchant-facing SKU the agent asked for, not an
- * internal product id — resolution needs the catalogue, and that is a
- * database concern. An unresolvable SKU is then refused downstream rather
- * than guessed at here.
- *
- * WHY NO AMOUNT IS TRUSTED
- *
- * Every one of these protocols states a price on the wire. None of them is
- * believed. The claimed figure is carried through only so the gateway can
- * compare it against the server-computed total and refuse on disagreement
- * — otherwise a caller could name its own price.
- *
- * HONESTY
- *
- * `parseAcpIntent` follows the published ACP spec shape. `parseAp2Intent`
- * and `parseX402Intent` are COMPATIBILITY SHIMS: they accept the documented
- * envelope and normalise it correctly, but have not been certified against
- * a live counterparty implementation. `PROTOCOL_FIDELITY` records this so
- * the console can label it rather than implying three equal integrations.
+ * cheaply testable.
  */
 import type { AgentProtocol } from "./agent-protocol.js";
 import type { SpendMandate } from "./spend-mandate.js";
+import { parseAndVerifySdJwt } from "./sd-jwt.js";
+import { parseUapIntent } from "./uap-adapter.js";
+import { parseUcpIntent } from "./ucp-adapter.js";
 
 export interface ParsedIntentLine {
   sku: string;
@@ -65,6 +45,9 @@ export interface ParsedIntent {
    * this build — x402 without a facilitator. Such an intent may never be
    * auto-approved: nobody has checked that the money exists. */
   unverifiedSettlement: boolean;
+  /** True only when a configured x402 facilitator verified the exact
+   * payment payload against this server's quoted requirements. */
+  verifiedSettlement: boolean;
 }
 
 export const ADAPTER_REJECTION_CODES = [
@@ -91,13 +74,6 @@ function asPositiveInt(value: unknown): number | null {
   return typeof n === "number" && Number.isInteger(n) && n > 0 ? n : null;
 }
 
-/**
- * Mandates ride in a shared `anumati_mandate` envelope regardless of
- * protocol. Each spec has its own signing story (AP2 signs a cart mandate,
- * x402 an authorization); rather than pretend to consume all three, the
- * gateway asks for its own mandate and says so. An absent or unreadable
- * mandate is null here — `verifySpendMandate` decides what that means.
- */
 function parseMandate(source: Json): SpendMandate | null {
   const raw = asRecord(source.anumati_mandate ?? source.anumatiMandate ?? source.mandate);
   if (!raw) return null;
@@ -208,26 +184,42 @@ export function parseAcpIntent(
       protocolActorRef: typeof root.protocol_actor_ref === "string" ? root.protocol_actor_ref : null,
       unsignedAllowance: parseAllowance(root),
       riskFlags: parseRiskFlags(root),
-      unverifiedSettlement: root.x402_unverified_settlement === true,
+      unverifiedSettlement: false,
+      verifiedSettlement: false,
     },
   };
 }
 
-/** AP2 — COMPATIBILITY SHIM. Reads the documented cart-mandate envelope. */
+/** AP2 — Reads the documented cart-mandate envelope or SD-JWT token. */
 export function parseAp2Intent(
   body: unknown,
   headers: Record<string, string | undefined> = {},
   version: string | null = null,
 ): AdapterResult {
-  const root = asRecord(body);
-  if (!root) return { ok: false, code: "MALFORMED_PAYLOAD", detail: "The AP2 request body was not a JSON object." };
+  const initialRoot = asRecord(body);
+  if (!initialRoot) return { ok: false, code: "MALFORMED_PAYLOAD", detail: "The AP2 request body was not a JSON object." };
 
-  const cart = asRecord(root.cart_mandate) ?? asRecord(root.intent_mandate);
+  let activeRoot: Json = initialRoot;
+
+  // SD-JWT Selective Disclosure extraction
+  const sdJwtToken =
+    (typeof initialRoot.sd_jwt === "string" ? initialRoot.sd_jwt : undefined) ??
+    (typeof initialRoot.sdJwt === "string" ? initialRoot.sdJwt : undefined) ??
+    (typeof headers.authorization === "string" && headers.authorization.includes("~") ? headers.authorization.replace(/^Bearer\s+/i, "") : undefined);
+
+  if (sdJwtToken) {
+    const verifiedSd = parseAndVerifySdJwt(sdJwtToken);
+    if (verifiedSd.valid && Object.keys(verifiedSd.claims).length > 0) {
+      activeRoot = { ...initialRoot, ...verifiedSd.claims };
+    }
+  }
+
+  const cart = asRecord(activeRoot.cart_mandate) ?? asRecord(activeRoot.intent_mandate);
   if (!cart) {
     return { ok: false, code: "MALFORMED_PAYLOAD", detail: "The AP2 request carried no cart or intent mandate." };
   }
 
-  const agentId = agentIdFrom(root, headers) ?? agentIdFrom(cart, headers);
+  const agentId = agentIdFrom(activeRoot, headers) ?? agentIdFrom(cart, headers);
   if (!agentId) {
     return { ok: false, code: "MISSING_AGENT_IDENTITY", detail: "The AP2 mandate did not identify the calling agent." };
   }
@@ -270,15 +262,15 @@ export function parseAp2Intent(
       agentId,
       lines,
       currency: typeof amount?.currency === "string" ? String(amount.currency).toUpperCase() : null,
-      // AP2 states amounts in MAJOR units; everything internal is minor.
       claimedTotalMinor: claimedMajor !== null && Number.isFinite(claimedMajor) ? Math.round(claimedMajor * 100) : null,
-      mandate: parseMandate(root),
+      mandate: parseMandate(activeRoot),
       idempotencyKey: headers["idempotency-key"] ?? (typeof cart.id === "string" ? cart.id : null),
-      buyer: parseBuyer(root),
+      buyer: parseBuyer(activeRoot),
       protocolActorRef: typeof cart.id === "string" ? cart.id : null,
-      unsignedAllowance: parseAllowance(root),
-      riskFlags: parseRiskFlags(root),
-      unverifiedSettlement: root.x402_unverified_settlement === true,
+      unsignedAllowance: parseAllowance(activeRoot),
+      riskFlags: parseRiskFlags(activeRoot),
+      unverifiedSettlement: false,
+      verifiedSettlement: false,
     },
   };
 }
@@ -315,11 +307,6 @@ export function parseX402Intent(
     lines.push({ sku, quantity });
   }
 
-  const payload = asRecord(root.payload);
-  const authorization = asRecord(payload?.authorization);
-  const rawValue = authorization?.value ?? root.maxAmountRequired;
-  const claimed = typeof rawValue === "string" || typeof rawValue === "number" ? Number(rawValue) : null;
-
   return {
     ok: true,
     intent: {
@@ -328,17 +315,21 @@ export function parseX402Intent(
       agentId,
       lines,
       currency: typeof root.currency === "string" ? root.currency.toUpperCase() : null,
-      claimedTotalMinor: claimed !== null && Number.isFinite(claimed) ? Math.round(claimed) : null,
+      claimedTotalMinor: null,
       mandate: parseMandate(root),
       idempotencyKey: headers["idempotency-key"] ?? (typeof root.nonce === "string" ? root.nonce : null),
       buyer: parseBuyer(root),
       protocolActorRef: typeof root.nonce === "string" ? root.nonce : null,
       unsignedAllowance: parseAllowance(root),
       riskFlags: parseRiskFlags(root),
-      unverifiedSettlement: root.x402_unverified_settlement === true,
+      unverifiedSettlement: false,
+      verifiedSettlement: false,
     },
   };
 }
+
+export { parseUapIntent } from "./uap-adapter.js";
+export { parseUcpIntent } from "./ucp-adapter.js";
 
 /** Routes a detected protocol to its adapter. The gateway calls only this. */
 export function parseIntentForProtocol(
@@ -354,6 +345,10 @@ export function parseIntentForProtocol(
       return parseAp2Intent(body, headers, version);
     case "X402":
       return parseX402Intent(body, headers, version);
+    case "UAP":
+      return parseUapIntent(body, headers, version);
+    case "UCP":
+      return parseUcpIntent(body, headers, version);
     default:
       return { ok: false, code: "UNSUPPORTED_PROTOCOL", detail: `No adapter is registered for protocol "${protocol}".` };
   }

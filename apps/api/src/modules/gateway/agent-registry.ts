@@ -26,6 +26,7 @@
  */
 import { createHash, randomBytes } from "node:crypto";
 import type { PrismaClient } from "@prisma/client";
+import type { AgentProtocol } from "@razorgrowth/domain";
 import { AppError } from "../../http/errors.js";
 import { logger } from "../../observability/logger.js";
 
@@ -58,7 +59,7 @@ export async function resolveAgentForIntent(
   params: {
     merchantId: string;
     externalAgentId: string;
-    firstSeenProtocol: "ACP" | "AP2" | "X402";
+    firstSeenProtocol: AgentProtocol;
     /** The key the request presented. Only ever used for FIRST-USE pinning. */
     presentedPublicKey: string | null;
     allowFirstUsePinning: boolean;

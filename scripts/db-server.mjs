@@ -21,7 +21,11 @@ import path from "node:path";
 import { fileURLToPath } from "node:url";
 
 const __dirname = path.dirname(fileURLToPath(import.meta.url));
-const dataDir = path.join(__dirname, "..", ".dbdata");
+// A separate directory allows clean integration-test databases without
+// resetting or deleting the developer's existing data.
+const dataDir = process.env.PGLITE_DATA_DIR
+  ? path.resolve(process.env.PGLITE_DATA_DIR)
+  : path.join(__dirname, "..", ".dbdata");
 const port = Number(process.env.PGLITE_PORT ?? 5432);
 const host = process.env.PGLITE_HOST ?? "127.0.0.1";
 const HEALTH_CHECK_INTERVAL_MS = 15_000;

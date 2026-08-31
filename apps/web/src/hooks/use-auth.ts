@@ -3,6 +3,7 @@ import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
 import type { CurrentUserResponseDTO, LoginResponseDTO } from "@razorgrowth/contracts";
 import { apiGet, apiPost } from "../lib/api-client";
 import { clearToken, getToken, setToken, subscribeToken } from "../lib/auth-storage";
+import { clearExperienceRole, setExperienceRole, type ExperienceRole } from "../lib/experience-role";
 
 /** Reactive session-token presence — re-renders on login, logout, a
  * server-forced 401 clearing the token, or another tab logging out. */
@@ -11,9 +12,14 @@ export function useAuthToken(): string | null {
 }
 
 export function useLogin() {
+  const queryClient = useQueryClient();
   return useMutation({
-    mutationFn: (params: { email: string; password: string }) => apiPost<LoginResponseDTO>("/auth/login", params),
-    onSuccess: (data) => setToken(data.token),
+    mutationFn: (params: { email: string; password: string; experience?: ExperienceRole }) => apiPost<LoginResponseDTO>("/auth/login", params),
+    onSuccess: (data) => {
+      queryClient.clear();
+      setExperienceRole(data.user.role === "CUSTOMER" ? "customer" : data.user.role === "PLATFORM_ADMIN" ? "admin" : "merchant");
+      setToken(data.token);
+    },
   });
 }
 
@@ -23,6 +29,7 @@ export function useLogout() {
     mutationFn: () => apiPost<{ ok: true }>("/auth/logout"),
     onSettled: () => {
       clearToken();
+      clearExperienceRole();
       queryClient.clear();
     },
   });

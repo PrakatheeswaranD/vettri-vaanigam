@@ -1,6 +1,7 @@
 export * from "./money.js";
 export * from "./ids.js";
 export * from "./payment-state.js";
+export * from "./payment-risk.js";
 export * from "./agent-action.js";
 export * from "./value-classification.js";
 export * from "./readiness.js";
@@ -35,3 +36,8 @@ export * from "./protocol-detection.js";
 export * from "./agent-gateway-policy.js";
 export * from "./protocol-adapters.js";
 export * from "./agent-catalog-jsonld.js";
+export * from "./sd-jwt.js";
+export * from "./uap-adapter.js";
+export * from "./ucp-adapter.js";
+export * from "./post-purchase-state.js";
+export * from "./tax-calculator.js";

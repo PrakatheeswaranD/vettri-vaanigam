@@ -94,6 +94,8 @@ function extractCategory(message: string, knownCategories: string[]): string | n
     if (lower.includes(categoryLower)) return category;
     const singular = categoryLower.replace(/s$/, "");
     if (singular.length > 2 && lower.includes(singular)) return category;
+    const leaf = categoryLower.split("/").at(-1)?.replace(/s$/, "");
+    if (leaf && leaf.length > 2 && lower.includes(leaf)) return category;
   }
   return null;
 }

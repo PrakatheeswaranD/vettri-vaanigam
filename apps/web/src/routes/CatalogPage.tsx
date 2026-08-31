@@ -9,6 +9,7 @@ import { formatMoney } from "../lib/format";
 import { ApiError } from "../lib/api-client";
 import { PageHeader } from "../components/layout/PageHeader";
 import { CatalogCompiler } from "../components/catalog/CatalogCompiler";
+import { AddProductModal } from "../components/catalog/AddProductModal";
 
 const AVAILABILITY_OPTIONS = [
   { value: "", label: "Any availability" },
@@ -90,6 +91,7 @@ export default function CatalogPage() {
             <SlidersHorizontal size={14} />
             Filters
           </button>
+          <AddProductModal />
         </div>
       </div>
 

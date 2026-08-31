@@ -54,6 +54,7 @@ export default function TransactionsPage() {
                   <th className="px-4 py-3 font-medium">Customer</th>
                   <th className="px-4 py-3 font-medium">Amount</th>
                   <th className="px-4 py-3 font-medium">Status</th>
+                  <th className="px-4 py-3 font-medium">Debit / Credit</th>
                   <th className="px-4 py-3 font-medium">Source</th>
                   <th className="px-4 py-3 font-medium">Provider</th>
                   <th className="px-4 py-3 font-medium">Captured</th>
@@ -69,6 +70,7 @@ export default function TransactionsPage() {
                     <td className="px-4 py-3">
                       <PaymentStateBadge state={tx.state} />
                     </td>
+                    <td className="px-4 py-3 text-xs"><p>{tx.customerDebitStatus}</p><p className="text-ink-faint">{tx.merchantCreditStatus}</p>{tx.automaticRetryBlocked ? <span className="font-semibold text-danger-text">Retry blocked</span> : null}</td>
                     <td className="px-4 py-3 text-xs text-ink-faint">{tx.source ? (SOURCE_LABEL[tx.source] ?? tx.source) : "—"}</td>
                     <td className="px-4 py-3 text-xs text-ink-faint">
                       {tx.provider}

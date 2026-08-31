@@ -1,12 +1,13 @@
 import { z } from "zod";
 
 /** PART 10 §1 — real merchant/approver identity wire contracts. */
-export const merchantUserRoleSchema = z.enum(["OWNER", "APPROVER", "VIEWER"]);
+export const merchantUserRoleSchema = z.enum(["OWNER", "APPROVER", "VIEWER", "CUSTOMER", "PLATFORM_ADMIN"]);
 export type MerchantUserRoleDTO = z.infer<typeof merchantUserRoleSchema>;
 
 export const loginRequestSchema = z.object({
   email: z.string().email(),
   password: z.string().min(1),
+  experience: z.enum(["customer", "merchant", "admin"]).optional(),
 });
 export type LoginRequestDTO = z.infer<typeof loginRequestSchema>;
 

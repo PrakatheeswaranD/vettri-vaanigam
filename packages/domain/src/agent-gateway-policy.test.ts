@@ -163,15 +163,19 @@ describe("negotiator envelope (TECH_SPEC §4)", () => {
    */
   it("rejects an offer that would take the basket below the floor margin", () => {
     // A 20% floor means 2000bps of margin must SURVIVE the discount.
-    expect(offerBreachesFloorMargin(1000, POLICY)).toBe(false);
-    expect(offerBreachesFloorMargin(8001, POLICY)).toBe(true);
-    expect(offerBreachesFloorMargin(9500, POLICY)).toBe(true);
+    expect(offerBreachesFloorMargin({ revenueMinor: 10_000, costMinor: 6_000, discountBps: 1000 }, POLICY)).toBe(false);
+    expect(offerBreachesFloorMargin({ revenueMinor: 10_000, costMinor: 8_000, discountBps: 1 }, POLICY)).toBe(true);
+    expect(offerBreachesFloorMargin({ revenueMinor: 10_000, costMinor: 1_000, discountBps: 9500 }, POLICY)).toBe(true);
   });
 
   it("allows an offer that lands exactly ON the floor", () => {
     // Landing on the floor meets it; only going under is a breach. Being
     // stricter here would silently move the merchant's floor by 1bp.
-    expect(offerBreachesFloorMargin(8000, POLICY)).toBe(false);
-    expect(offerBreachesFloorMargin(8001, POLICY)).toBe(true);
+    expect(offerBreachesFloorMargin({ revenueMinor: 10_000, costMinor: 1_600, discountBps: 8000 }, POLICY)).toBe(false);
+    expect(offerBreachesFloorMargin({ revenueMinor: 10_000, costMinor: 1_601, discountBps: 8000 }, POLICY)).toBe(true);
+  });
+
+  it("fails closed when cost is unknown", () => {
+    expect(offerBreachesFloorMargin({ revenueMinor: 10_000, costMinor: null, discountBps: 500 }, POLICY)).toBe(true);
   });
 });

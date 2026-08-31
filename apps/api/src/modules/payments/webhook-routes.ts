@@ -31,10 +31,9 @@ export function registerPaymentWebhookRoutes(app: FastifyInstance, prefix: strin
       // unresolved — gets 200 so Razorpay does not retry something a retry
       // cannot fix.
       if (!result.accepted) {
-        reply.status(400).send({ status: "rejected" });
-        return;
+        return reply.status(400).send({ status: "rejected" });
       }
-      reply.status(200).send({ status: "ok" });
+      return reply.status(200).send({ status: "ok" });
     });
   });
 }

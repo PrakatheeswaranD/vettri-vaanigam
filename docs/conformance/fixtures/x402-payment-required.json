@@ -1,0 +1,5 @@
+{
+  "x402Version": 2,
+  "resource": { "url": "https://merchant.example/purchase", "description": "Order", "mimeType": "application/json" },
+  "accepts": [{ "scheme": "exact", "network": "eip155:84532", "amount": "449900", "asset": "0xasset", "payTo": "0xmerchant", "maxTimeoutSeconds": 60 }]
+}

@@ -22,19 +22,23 @@
  */
 import type { CurrencyCode } from "./money.js";
 
-export const AGENT_PROTOCOLS = ["ACP", "AP2", "X402"] as const;
+export const AGENT_PROTOCOLS = ["ACP", "AP2", "X402", "UAP", "UCP"] as const;
 export type AgentProtocol = (typeof AGENT_PROTOCOLS)[number];
 
 export const PROTOCOL_FIDELITY: Record<AgentProtocol, "SPEC_IMPLEMENTED" | "COMPATIBILITY_SHIM"> = {
   ACP: "SPEC_IMPLEMENTED",
-  AP2: "COMPATIBILITY_SHIM",
-  X402: "COMPATIBILITY_SHIM",
+  AP2: "SPEC_IMPLEMENTED",
+  X402: "SPEC_IMPLEMENTED",
+  UAP: "SPEC_IMPLEMENTED",
+  UCP: "SPEC_IMPLEMENTED",
 };
 
 export const PROTOCOL_DISPLAY_NAMES: Record<AgentProtocol, string> = {
   ACP: "Agentic Commerce Protocol (OpenAI/Stripe)",
-  AP2: "Agent Payments Protocol (Google)",
+  AP2: "Agent Payments Protocol (Google AP2 with SD-JWT)",
   X402: "x402 (Coinbase)",
+  UAP: "Universal Agent Protocol (NPCI / UAP)",
+  UCP: "Universal Checkout Protocol (UCP)",
 };
 
 /**

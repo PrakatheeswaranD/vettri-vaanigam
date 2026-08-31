@@ -17,6 +17,7 @@ import { logger } from "../../observability/logger.js";
 import type { AIProvider } from "../agents/ai-provider.js";
 import { getAIProvider } from "../agents/provider-factory.js";
 import { appendLedgerEvent } from "../audit/ledger.js";
+import { discoverMarketplace } from "../marketplace/service.js";
 import { extractAndNormalizeIntent } from "./intent-extraction.js";
 import { getKnownCategories, getKnownAttributes, searchCandidateProducts } from "./catalog-gateway.js";
 import { evaluateCandidates } from "./candidate-evaluation.js";
@@ -85,6 +86,7 @@ export interface HandleBuyerMessageParams {
   merchantId: string;
   conversationId?: string;
   message: string;
+  marketplace?: boolean;
 }
 
 /**
@@ -114,7 +116,22 @@ export async function handleBuyerMessage(
   const userMessage = await appendMessage(prisma, conversationId, "BUYER", params.message);
   logger.info({ event: "buyer_agent.request_received", conversationId, traceId }, "Buyer Agent request received");
 
-  const [knownCategories, knownAttributes] = await Promise.all([
+  const marketplaceVocabulary = params.marketplace ? await discoverMarketplace(prisma, { limitPerMerchant: 20 }) : null;
+  const marketplaceVocabularyProducts = marketplaceVocabulary?.merchants.flatMap((merchant) => merchant.products);
+  const marketplaceAttributes: Record<string, string[]> = {};
+  for (const product of marketplaceVocabularyProducts ?? []) {
+    for (const variant of product.variants) {
+      for (const [key, value] of Object.entries(variant.attributes)) {
+        const values = marketplaceAttributes[key] ?? [];
+        if (!values.includes(value) && values.length < 20) values.push(value);
+        marketplaceAttributes[key] = values;
+      }
+    }
+  }
+  const [knownCategories, knownAttributes] = marketplaceVocabularyProducts ? [
+    [...new Set(marketplaceVocabularyProducts.map((product) => product.identity.category))],
+    marketplaceAttributes,
+  ] : await Promise.all([
     getKnownCategories(prisma, params.merchantId),
     getKnownAttributes(prisma, params.merchantId),
   ]);
@@ -150,6 +167,14 @@ export async function handleBuyerMessage(
   const mergedIntent = mergeIntentSignal(priorIntent, extraction.result.signal);
   const intentDTO = toIntentDTO(mergedIntent, params.message, extraction.result.confidence);
 
+  // Once intent is known, perform category-aware merchant selection. This
+  // prevents unrelated catalogs from consuming the five-merchant comparison
+  // window and hiding a valid seller.
+  const marketplace = params.marketplace
+    ? await discoverMarketplace(prisma, { category: mergedIntent.category ?? undefined, limitPerMerchant: 20 })
+    : null;
+  const marketplaceProducts = marketplace?.merchants.flatMap((merchant) => merchant.products);
+
   if (needsClarification(mergedIntent)) {
     await updateConversationState(prisma, conversationId, { status: "AWAITING_CLARIFICATION", currentIntent: intentDTO });
     await appendMessage(prisma, conversationId, "AGENT", CLARIFICATION_QUESTION);
@@ -174,9 +199,10 @@ export async function handleBuyerMessage(
     };
   }
 
-  const products = await searchCandidateProducts(prisma, params.merchantId, {
+  const products = marketplaceProducts ? marketplaceProducts.filter((product) => !mergedIntent.category || product.identity.category === mergedIntent.category) : await searchCandidateProducts(prisma, params.merchantId, {
     category: mergedIntent.category,
   });
+  if (marketplace) trace.push({ stage: "MARKETPLACE_DISCOVERED", detail: `Compared published catalog candidates across ${marketplace.merchantCount} active merchants; conversation remains private to the authenticated buyer context.` });
   trace.push({ stage: "CATALOG_FILTERED", detail: `${products.length} candidate(s) from deterministic category/price filter` });
   logger.info({ event: "buyer_agent.catalog_searched", conversationId, traceId, candidateCount: products.length }, "Catalog searched");
 

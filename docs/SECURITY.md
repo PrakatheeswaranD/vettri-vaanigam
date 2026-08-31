@@ -112,7 +112,8 @@ parse-then-reserialize-then-verify implementation would miss).
 ## Secret handling
 
 - Real secrets (`RAZORPAY_KEY_SECRET`, `RAZORPAY_WEBHOOK_SECRET`,
-  `AI_PROVIDER_API_KEY`) are read only from environment variables via
+  `AI_PROVIDER_API_KEY`, `ACP_DELEGATION_TOKEN_SECRET`, and
+  `DATA_FINGERPRINT_SECRET`) are read only from environment variables via
   `apps/api/src/config/env.ts`; `.env` is git-ignored; `.env.example`
   contains no real values.
 - `getPublicConfig()` returns only Razorpay's public `keyId` — the
@@ -130,7 +131,7 @@ parse-then-reserialize-then-verify implementation would miss).
   environment, so the real `RazorpayPaymentGateway` HTTP adapter has
   never been exercised against Razorpay's actual API — only
   `MockPaymentGateway`, using the same real signature-verification code,
-  has. See `PROGRESS.md`'s Known Issues for the exact scope.
+  has. See `PROGRESS.md` for the exact scope.
 - No production identity/authentication platform, no production KYC/AML,
   no production-grade distributed rate limiting, no refund/chargeback
   flow — all explicitly out of scope per the master contract's

@@ -20,6 +20,15 @@ import { createFixtureProvider } from "./modules/agents/providers/fixture-provid
 let app: FastifyInstance;
 
 beforeAll(async () => {
+  for (const fixture of [
+    { slug: "buyer-agent-test-seller-a", name: "00 Buyer Agent Seller A", priceMinor: 6_400_000 },
+    { slug: "buyer-agent-test-seller-b", name: "00 Buyer Agent Seller B", priceMinor: 6_600_000 },
+  ]) {
+    const merchant = await prisma.merchant.upsert({ where: { slug: fixture.slug }, update: { status: "ACTIVE", name: fixture.name }, create: { slug: fixture.slug, name: fixture.name, defaultCurrency: "INR", businessCategory: "Electronics & Computers", status: "ACTIVE" } });
+    const product = await prisma.product.upsert({ where: { merchantId_slug: { merchantId: merchant.id, slug: "test-laptop" } }, update: { status: "ACTIVE" }, create: { merchantId: merchant.id, slug: "test-laptop", name: `${fixture.name} Laptop`, description: "Stable cross-merchant integration fixture.", category: "Electronics/Laptop", brand: "TestBook", status: "ACTIVE", returnPolicySummary: "Seven day returns.", shippingSummary: "Ships next business day.", promotionEligibility: "ELIGIBLE" } });
+    const variant = await prisma.productVariant.upsert({ where: { productId_sku: { productId: product.id, sku: `${fixture.slug}-laptop` } }, update: { active: true, priceMinor: fixture.priceMinor }, create: { productId: product.id, sku: `${fixture.slug}-laptop`, title: "16GB / 512GB", priceMinor: fixture.priceMinor, costMinor: 5_000_000, currency: "INR", active: true, attributes: { ram: "16GB", storage: "512GB", purpose: "software_development" } } });
+    await prisma.inventory.upsert({ where: { variantId: variant.id }, update: { availableQuantity: 20 }, create: { variantId: variant.id, availableQuantity: 20 } });
+  }
   app = await buildAuthedTestApp();
 });
 
@@ -33,6 +42,13 @@ async function postMessage(body: { conversationId?: string; message: string }) {
 }
 
 describe("POST /api/v1/buyer-agent/messages — golden path", () => {
+  it("serves cross-merchant laptop recommendations through the customer chat endpoint", async () => {
+    const response = await app.inject({ method: "POST", url: "/api/v1/buyer/marketplace/messages", payload: { message: "Find laptops under 100000" } });
+    expect(response.statusCode).toBe(200);
+    expect(response.json().intent.category).toBe("Electronics/Laptop");
+    expect(response.json().recommendations.length).toBeGreaterThanOrEqual(2);
+    expect(response.json().trace.some((stage: { stage: string }) => stage.stage === "MARKETPLACE_DISCOVERED")).toBe(true);
+  });
   it("returns a real, catalog-grounded exact match for black size-9 running shoes under ₹6,000", async () => {
     const res = await postMessage({ message: "Find black running shoes in size 9 under ₹6,000" });
     expect(res.statusCode).toBe(200);
@@ -159,6 +175,25 @@ describe("POST /api/v1/buyer-agent/messages — prompt injection (§103, §133)"
 });
 
 describe("handleBuyerMessage — AI provider failure (§104)", () => {
+  it("compares laptops across merchants while preserving the buyer conversation owner", async () => {
+    const merchantId = await getTestMerchantId(prisma);
+    const provider = createFixtureProvider({
+      extractIntent: ({ knownCategories }) => {
+        expect(knownCategories).toContain("Electronics/Laptop");
+        return { category: "Electronics/Laptop", budgetMinMajor: null, budgetMaxMajor: 100000, currency: "INR", quantity: 1, requiredAttributes: {}, preferredAttributes: {}, excludedAttributes: {}, availabilityRequirement: null, confidence: 0.99 };
+      },
+      rankCandidates: () => [],
+    });
+    const response = await handleBuyerMessage(prisma, { merchantId, message: "Compare laptops under 100000", marketplace: true }, provider);
+    // ElectroHub is deliberately out of stock: it must not be recommended.
+    expect(response.recommendations.length).toBeGreaterThanOrEqual(2);
+    const products = await prisma.product.findMany({ where: { id: { in: response.recommendations.map((item) => item.productId) } }, select: { merchantId: true } });
+    expect(new Set(products.map((product) => product.merchantId)).size).toBeGreaterThanOrEqual(2);
+    const conversation = await prisma.buyerConversation.findUniqueOrThrow({ where: { id: response.conversationId } });
+    expect(conversation.merchantId).toBe(merchantId);
+    expect(response.trace.some((stage) => stage.stage === "MARKETPLACE_DISCOVERED")).toBe(true);
+  });
+
   it("degrades gracefully to AI_UNAVAILABLE without crashing when the provider throws on every attempt", async () => {
     const merchantId = await getTestMerchantId(prisma);
     const failingProvider = createFixtureProvider(

@@ -161,7 +161,7 @@ through real deterministic validation/policy/eligibility code) — see
   approval, authorization, retry, capture — is recorded on the SAME
   workflow the original proposal established, so one Agent Action Ledger
   timeline tells the complete story, failure included. All backed by real
-  Postgres data with 389 automated tests.
+  Postgres data with a comprehensive automated test suite.
 - **Deliberately not implemented yet**: a second recovery attempt after
   the first recovery also fails (bounded by policy, but no further UI/
   flow past "recovery blocked, maximum reached"); refunds/chargebacks;
@@ -174,7 +174,7 @@ through real deterministic validation/policy/eligibility code) — see
   environment has no live Razorpay Test Mode credentials configured, so
   both the payment layer and the recovery layer have been verified by
   full integration test suites against a deterministic provider double,
-  not by a live browser transaction — see `PROGRESS.md`'s Known Issues
+  not by a live browser transaction — see `PROGRESS.md`
   for the exact, honest scope of what was and wasn't exercised
   end-to-end.
 
@@ -569,6 +569,13 @@ states for anything the merchant hasn't actually recorded (return policy,
 shipping, inventory). The product detail page's **Agent View** toggle
 renders this exact API response. It is an internal representation, not a
 claim of ACP/AP2/UCP/x402 protocol compliance.
+
+The separate public agent-commerce surfaces are explicit about fidelity:
+ACP 2026-04-17 has authenticated, signed, versioned checkout sessions and
+scoped delegated payments; x402 v2 uses a real facilitator when configured
+and fails closed otherwise; AP2 remains a clearly labelled compatibility shim
+until an SD-JWT trust integration exists. See `docs/openapi/` and
+`docs/conformance/` for the machine-readable contract and fixtures.
 
 ## Architecture
 
@@ -1020,8 +1027,8 @@ configured in this environment**, so both the real
 `RazorpayPaymentGateway` adapter and the full failure-to-recovery-to-
 capture path are verified by full integration test suites against a
 deterministic provider double, not by an actual live Razorpay
-transaction — see `PROGRESS.md`'s Known Issues for exactly what that
-does and doesn't prove; nothing was fabricated to claim otherwise. A
+  transaction — see `PROGRESS.md` for exactly what that does and doesn't
+  prove; nothing was fabricated to claim otherwise. A
 payment attempt that fails permanently consumes a checkout's one allowed
 attempt by design; recovery creates a NEW checkout against the SAME
 order, never retries the same checkout, and is itself bounded to one
@@ -1039,9 +1046,8 @@ re-plumbing the AI call); a third AI actor anywhere in the payment or
 recovery path; readiness-formula integration of recovery evidence; a
 third/fourth formal AI evaluation suite (still out of scope — recovery
 proposal quality is covered by integration/adversarial tests, not a new
-eval dataset); ACP/AP2/UCP/x402 protocol integration; a full tax/
+  eval dataset); certified AP2 SD-JWT and UCP integrations; a full tax/
 shipping/warehouse-reservation platform; an enterprise
 promotion-stacking engine (exactly one offer line per checkout, by
-design); final whole-repository UX polish and jury-demo scripting
-(PART 09). See `PROGRESS.md` for the exact next step and
+  design). See `PROGRESS.md` for current status and
 `PROJECT_IMPLEMENTATION_PLAN.md` for the locked part sequence.

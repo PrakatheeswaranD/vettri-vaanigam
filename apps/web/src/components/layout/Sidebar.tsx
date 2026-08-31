@@ -1,7 +1,8 @@
 import { NavLink } from "react-router-dom";
 import { clsx } from "clsx";
 import { ShieldCheck } from "lucide-react";
-import { NAV_SECTIONS } from "./nav-items";
+import { getNavSections, ROLE_LABELS } from "./nav-items";
+import { useExperienceRole } from "../../lib/experience-role";
 
 /**
  * Primary navigation.
@@ -18,6 +19,8 @@ import { NAV_SECTIONS } from "./nav-items";
  *   entirely for anyone with reduced colour vision.
  */
 export function Sidebar() {
+  const role = useExperienceRole();
+  const sections = getNavSections(role);
   return (
     <aside className="hidden w-64 shrink-0 flex-col border-r border-border bg-surface lg:flex">
       <div className="flex h-16 items-center gap-2.5 border-b border-border px-5">
@@ -26,12 +29,12 @@ export function Sidebar() {
         </div>
         <div className="min-w-0">
           <p className="text-sm font-semibold tracking-tight text-ink">Anumati</p>
-          <p className="truncate text-micro text-ink-faint">Agent commerce gateway</p>
+          <p className="truncate text-micro text-ink-faint">{ROLE_LABELS[role]}</p>
         </div>
       </div>
 
       <nav className="flex-1 space-y-5 overflow-y-auto px-3 py-4" aria-label="Primary">
-        {NAV_SECTIONS.map((section) => (
+        {sections.map((section) => (
           <div key={section.id}>
             <p className="px-3 pb-1.5 text-micro font-semibold uppercase tracking-wider text-ink-faint">
               {section.label}

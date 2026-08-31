@@ -15,3 +15,6 @@ export * from "./payments.js";
 export * from "./recovery.js";
 export * from "./sandbox.js";
 export * from "./auth.js";
+export * from "./post-purchase.js";
+export * from "./marketplace.js";
+export * from "./buyer-policy.js";

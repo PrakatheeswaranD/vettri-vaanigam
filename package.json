@@ -25,6 +25,8 @@
     "db:reset": "pnpm --filter @razorgrowth/api run db:reset",
     "eval:intent": "pnpm --filter @razorgrowth/api run eval:intent",
     "eval:recommendation": "pnpm --filter @razorgrowth/api run eval:recommendation",
+    "demo": "pnpm --filter @razorgrowth/api run demo:simulate",
+    "demo:simulate": "pnpm --filter @razorgrowth/api run demo:simulate",
     "demo:golden-path": "pnpm --filter @razorgrowth/api run demo:golden-path"
   },
   "devDependencies": {

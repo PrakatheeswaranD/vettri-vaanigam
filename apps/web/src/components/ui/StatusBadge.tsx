@@ -40,6 +40,8 @@ const PAYMENT_STATE_SPEC: Record<string, StatusSpec> = {
   CAPTURED: { label: "Captured", tone: "success", icon: CheckCircle2 },
   FAILED: { label: "Failed", tone: "danger", icon: XCircle },
   CANCELLED: { label: "Cancelled", tone: "neutral", icon: Ban },
+  REFUNDED: { label: "Refunded", tone: "neutral", icon: CheckCircle2 },
+  PARTIALLY_REFUNDED: { label: "Partially Refunded", tone: "info", icon: AlertCircle },
   UNKNOWN: { label: "Unknown", tone: "warning", icon: HelpCircle },
 };
 

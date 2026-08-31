@@ -1,0 +1,189 @@
+{
+  "openapi": "3.1.0",
+  "info": {
+    "title": "Anumati Agent Commerce API",
+    "version": "2026-08-30",
+    "description": "Governed AI-buyer checkout, ACP 2026-04-17 surface, x402 v2 settlement, UAP/UCP adapters, post-purchase operations (refunds, returns, fulfillment, disputes, GST taxes), and autonomous campaign orchestration."
+  },
+  "servers": [{ "url": "http://localhost:4000" }],
+  "paths": {
+    "/api/v1/agent-gateway/{merchantSlug}/intents": {
+      "post": {
+        "summary": "Submit a governed external purchase intent",
+        "x-implementation-fidelity": {
+          "ACP": "SPEC_IMPLEMENTED",
+          "AP2": "COMPATIBILITY_SHIM",
+          "X402": "SPEC_IMPLEMENTED",
+          "UAP": "SPEC_IMPLEMENTED",
+          "UCP": "SPEC_IMPLEMENTED"
+        },
+        "parameters": [{ "$ref": "#/components/parameters/MerchantSlug" }],
+        "requestBody": { "required": true, "content": { "application/json": { "schema": { "type": "object" } } } },
+        "responses": {
+          "200": { "$ref": "#/components/responses/GatewayDecision" },
+          "202": { "$ref": "#/components/responses/GatewayDecision" },
+          "403": { "$ref": "#/components/responses/GatewayDecision" }
+        }
+      }
+    },
+    "/api/v1/agent-gateway/decisions/{decisionId}/decide": {
+      "post": {
+        "summary": "Approve or reject a stepped-up purchase",
+        "security": [{ "merchantSession": [] }],
+        "parameters": [{ "$ref": "#/components/parameters/DecisionId" }],
+        "requestBody": {
+          "required": true,
+          "content": { "application/json": { "schema": { "$ref": "#/components/schemas/StepUpDecision" } } }
+        },
+        "responses": { "200": { "description": "Decision recorded and approved purchase executed when applicable." } }
+      }
+    },
+    "/api/v1/acp/{merchantSlug}/checkout_sessions": {
+      "post": {
+        "summary": "Create an ACP checkout session",
+        "x-acp-version": "2026-04-17",
+        "security": [{ "agentBearer": [], "acpDetachedSignature": [] }],
+        "parameters": [
+          { "$ref": "#/components/parameters/MerchantSlug" },
+          { "$ref": "#/components/parameters/IdempotencyKey" },
+          { "$ref": "#/components/parameters/Timestamp" },
+          { "$ref": "#/components/parameters/ApiVersion" }
+        ],
+        "requestBody": { "required": true, "content": { "application/json": { "schema": { "$ref": "#/components/schemas/AcpCheckoutCreate" } } } },
+        "responses": { "201": { "$ref": "#/components/responses/AcpSession" }, "401": { "$ref": "#/components/responses/Error" } }
+      }
+    },
+    "/api/v1/acp/{merchantSlug}/checkout_sessions/{sessionId}": {
+      "get": {
+        "summary": "Retrieve an ACP checkout session",
+        "security": [{ "agentBearer": [], "acpDetachedSignature": [] }],
+        "parameters": [{ "$ref": "#/components/parameters/MerchantSlug" }, { "$ref": "#/components/parameters/SessionId" }],
+        "responses": { "200": { "$ref": "#/components/responses/AcpSession" } }
+      },
+      "post": {
+        "summary": "Update an ACP checkout session",
+        "security": [{ "agentBearer": [], "acpDetachedSignature": [] }],
+        "parameters": [{ "$ref": "#/components/parameters/MerchantSlug" }, { "$ref": "#/components/parameters/SessionId" }, { "$ref": "#/components/parameters/IdempotencyKey" }],
+        "requestBody": { "required": true, "content": { "application/json": { "schema": { "$ref": "#/components/schemas/AcpCheckoutUpdate" } } } },
+        "responses": { "200": { "$ref": "#/components/responses/AcpSession" } }
+      }
+    },
+    "/api/v1/acp/{merchantSlug}/checkout_sessions/{sessionId}/complete": {
+      "post": {
+        "summary": "Complete an ACP session using a delegated payment token",
+        "security": [{ "agentBearer": [], "acpDetachedSignature": [] }],
+        "parameters": [{ "$ref": "#/components/parameters/MerchantSlug" }, { "$ref": "#/components/parameters/SessionId" }, { "$ref": "#/components/parameters/IdempotencyKey" }],
+        "requestBody": { "required": true, "content": { "application/json": { "schema": { "$ref": "#/components/schemas/AcpComplete" } } } },
+        "responses": { "200": { "$ref": "#/components/responses/AcpSession" }, "202": { "$ref": "#/components/responses/AcpSession" } }
+      }
+    },
+    "/api/v1/acp/{merchantSlug}/agentic_commerce/delegate_payment": {
+      "post": {
+        "summary": "Create a scoped delegated payment token",
+        "security": [{ "agentBearer": [], "acpDetachedSignature": [] }],
+        "parameters": [{ "$ref": "#/components/parameters/MerchantSlug" }, { "$ref": "#/components/parameters/IdempotencyKey" }],
+        "requestBody": { "required": true, "content": { "application/json": { "schema": { "$ref": "#/components/schemas/DelegatePayment" } } } },
+        "responses": { "201": { "description": "Token created." } }
+      }
+    },
+    "/api/v1/x402/{merchantSlug}/purchase": {
+      "post": {
+        "summary": "x402 challenge/response purchase endpoint",
+        "parameters": [{ "$ref": "#/components/parameters/MerchantSlug" }],
+        "requestBody": { "required": true, "content": { "application/json": { "schema": { "$ref": "#/components/schemas/PurchaseBasket" } } } },
+        "responses": { "200": { "description": "Settled payment." }, "202": { "description": "Stepped up for approval." }, "402": { "description": "Payment Required challenge or verification failure." } }
+      }
+    },
+    "/api/v1/refunds": {
+      "post": {
+        "security": [{ "merchantSession": [] }],
+        "summary": "Process full or partial refund on captured payment",
+        "requestBody": { "required": true, "content": { "application/json": { "schema": { "type": "object", "required": ["paymentId", "amountMinor", "reason"] } } } },
+        "responses": { "201": { "description": "Refund processed." } }
+      },
+      "get": { "security": [{ "merchantSession": [] }], "summary": "List refunds", "responses": { "200": { "description": "Refund list." } } }
+    },
+    "/api/v1/returns": {
+      "post": {
+        "security": [{ "merchantSession": [] }],
+        "summary": "Create return request",
+        "requestBody": { "required": true, "content": { "application/json": { "schema": { "type": "object", "required": ["orderId", "reason", "items"] } } } },
+        "responses": { "201": { "description": "Return request created." } }
+      },
+      "get": { "security": [{ "merchantSession": [] }], "summary": "List returns", "responses": { "200": { "description": "Return list." } } }
+    },
+    "/api/v1/fulfillments": {
+      "post": {
+        "security": [{ "merchantSession": [] }],
+        "summary": "Create order fulfillment with tracking details",
+        "requestBody": { "required": true, "content": { "application/json": { "schema": { "type": "object", "required": ["orderId", "carrier", "trackingNumber", "items"] } } } },
+        "responses": { "201": { "description": "Fulfillment created." } }
+      },
+      "get": { "security": [{ "merchantSession": [] }], "summary": "List fulfillments", "responses": { "200": { "description": "Fulfillment list." } } }
+    },
+    "/api/v1/disputes": {
+      "post": {
+        "security": [{ "merchantSession": [] }],
+        "summary": "Record a dispute or chargeback",
+        "requestBody": { "required": true, "content": { "application/json": { "schema": { "type": "object", "required": ["paymentId", "amountMinor", "reason"] } } } },
+        "responses": { "201": { "description": "Dispute created." } }
+      },
+      "get": { "security": [{ "merchantSession": [] }], "summary": "List disputes", "responses": { "200": { "description": "Dispute list." } } }
+    },
+    "/api/v1/taxes/calculate": {
+      "post": {
+        "summary": "Calculate GST tax breakdown (CGST, SGST, IGST)",
+        "requestBody": { "required": true, "content": { "application/json": { "schema": { "type": "object", "required": ["amountMinor"] } } } },
+        "responses": { "200": { "description": "Calculated GST breakdown." } }
+      }
+    },
+    "/api/v1/campaigns": {
+      "post": { "security": [{ "merchantSession": [] }], "summary": "Create a bounded campaign", "responses": { "201": { "description": "Campaign created." } } },
+      "get": { "security": [{ "merchantSession": [] }], "summary": "List campaigns", "responses": { "200": { "description": "Campaign list." } } }
+    },
+    "/api/v1/campaigns/{campaignId}/status": {
+      "post": { "security": [{ "merchantSession": [] }], "summary": "Owner activates, pauses or completes a campaign", "responses": { "200": { "description": "State changed and audited." } } }
+    },
+    "/api/v1/campaigns/{campaignId}/assign": {
+      "post": { "security": [{ "merchantSession": [] }], "summary": "Deterministically assign control or treatment", "responses": { "200": { "description": "Persisted cohort assignment." } } }
+    },
+    "/api/v1/agent-catalog/compilations/{compilationId}/publish": {
+      "post": { "security": [{ "merchantSession": [] }], "summary": "Publish a compiled catalog snapshot", "parameters": [{ "name": "compilationId", "in": "path", "required": true, "schema": { "type": "string" } }], "responses": { "200": { "description": "Catalog snapshot published atomically." } } }
+    },
+    "/api/v1/campaigns/{campaignId}/conversions": {
+      "post": { "security": [{ "merchantSession": [] }], "summary": "Attribute one verified captured Payment", "responses": { "200": { "description": "Observed conversion." }, "403": { "description": "Budget denied." }, "409": { "description": "Duplicate, unverified or frequency denied." } } }
+    }
+  },
+  "components": {
+    "securitySchemes": {
+      "merchantSession": { "type": "http", "scheme": "bearer" },
+      "agentBearer": { "type": "http", "scheme": "bearer", "bearerFormat": "Merchant-issued agent API key" },
+      "acpDetachedSignature": { "type": "apiKey", "in": "header", "name": "Signature", "description": "Ed25519 signature over canonical method, path, Timestamp and JSON body." }
+    },
+    "parameters": {
+      "MerchantSlug": { "name": "merchantSlug", "in": "path", "required": true, "schema": { "type": "string", "maxLength": 120 } },
+      "SessionId": { "name": "sessionId", "in": "path", "required": true, "schema": { "type": "string" } },
+      "DecisionId": { "name": "decisionId", "in": "path", "required": true, "schema": { "type": "string", "format": "uuid" } },
+      "IdempotencyKey": { "name": "Idempotency-Key", "in": "header", "required": true, "schema": { "type": "string", "minLength": 1 } },
+      "Timestamp": { "name": "Timestamp", "in": "header", "required": true, "schema": { "type": "string", "format": "date-time" } },
+      "ApiVersion": { "name": "API-Version", "in": "header", "required": true, "schema": { "type": "string", "const": "2026-04-17" } }
+    },
+    "schemas": {
+      "LineItem": { "type": "object", "additionalProperties": false, "required": ["id", "quantity"], "properties": { "id": { "type": "string" }, "quantity": { "type": "integer", "minimum": 1, "maximum": 999 } } },
+      "AcpCheckoutCreate": { "type": "object", "additionalProperties": false, "required": ["line_items", "currency"], "properties": { "line_items": { "type": "array", "minItems": 1, "items": { "$ref": "#/components/schemas/LineItem" } }, "currency": { "type": "string", "minLength": 3, "maxLength": 3 }, "buyer": { "type": "object" } } },
+      "AcpCheckoutUpdate": { "type": "object", "properties": { "line_items": { "type": "array", "minItems": 1, "items": { "$ref": "#/components/schemas/LineItem" } }, "buyer": { "type": "object" } } },
+      "AcpComplete": { "type": "object", "additionalProperties": false, "required": ["payment_data"], "properties": { "payment_data": { "type": "object", "additionalProperties": false, "required": ["type", "token"], "properties": { "type": { "const": "delegated_payment_token" }, "token": { "type": "string", "minLength": 40 } } } } },
+      "DelegatePayment": { "type": "object", "additionalProperties": false, "required": ["allowance", "payment_method"], "properties": { "allowance": { "type": "object", "required": ["max_amount", "currency", "merchant_id"] }, "payment_method": { "type": "object", "required": ["type", "token"] }, "risk_signals": { "type": "array" }, "metadata": { "type": "object" } } },
+      "PurchaseBasket": { "type": "object", "additionalProperties": false, "required": ["items", "currency"], "properties": { "items": { "type": "array", "minItems": 1, "items": { "type": "object", "required": ["sku", "quantity"] } }, "currency": { "type": "string" } } },
+      "StepUpDecision": { "type": "object", "additionalProperties": false, "required": ["decision"], "properties": { "decision": { "enum": ["APPROVED", "REJECTED"] }, "note": { "type": "string", "maxLength": 500 } } },
+      "GatewayDecision": { "type": "object", "required": ["decisionId", "outcome", "reasonCode", "explanation"], "properties": { "decisionId": { "type": "string", "format": "uuid" }, "outcome": { "enum": ["AUTO_APPROVE", "STEP_UP", "DECLINE"] }, "reasonCode": { "type": "string" }, "explanation": { "type": "string" }, "providerOrderId": { "type": ["string", "null"] }, "internalPaymentId": { "type": ["string", "null"] } } },
+      "AcpSession": { "type": "object", "required": ["id", "status", "currency", "line_items", "totals"] },
+      "Error": { "type": "object", "required": ["error"], "properties": { "error": { "type": "object", "required": ["code", "message", "requestId"] } } }
+    },
+    "responses": {
+      "GatewayDecision": { "description": "Explainable bounded decision.", "content": { "application/json": { "schema": { "$ref": "#/components/schemas/GatewayDecision" } } } },
+      "AcpSession": { "description": "ACP checkout session.", "content": { "application/json": { "schema": { "$ref": "#/components/schemas/AcpSession" } } } },
+      "Error": { "description": "Safe error envelope.", "content": { "application/json": { "schema": { "$ref": "#/components/schemas/Error" } } } }
+    }
+  }
+}

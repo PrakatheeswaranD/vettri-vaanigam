@@ -45,7 +45,9 @@ export interface ProviderOrder {
 }
 
 export interface ProviderPaymentInfo {
-  providerPaymentId: string;
+  /** Some rails can definitively reject before creating a transaction id.
+   * Successful authorization/capture evidence must still provide one. */
+  providerPaymentId?: string;
   providerOrderId: string | null;
   amountMinor: number;
   currency: string;

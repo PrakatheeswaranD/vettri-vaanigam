@@ -29,6 +29,8 @@ function normalizeHeaderProtocol(raw: string): AgentProtocol | null {
   if (upper === "X402") return "X402";
   if (upper === "ACP" || upper === "AGENTICCOMMERCE" || upper === "AGENTICCOMMERCEPROTOCOL") return "ACP";
   if (upper === "AP2" || upper === "AGENTPAYMENTS" || upper === "AGENTPAYMENTSPROTOCOL") return "AP2";
+  if (upper === "UAP" || upper === "UNIVERSALAGENT" || upper === "UNIVERSALAGENTPROTOCOL") return "UAP";
+  if (upper === "UCP" || upper === "UNIVERSALCHECKOUT" || upper === "UNIVERSALCHECKOUTPROTOCOL") return "UCP";
   return (AGENT_PROTOCOLS as readonly string[]).includes(upper) ? (upper as AgentProtocol) : null;
 }
 
@@ -56,6 +58,22 @@ function detectFromBody(body: unknown): { protocol: AgentProtocol; version: stri
   }
   if (typeof record.intent_mandate === "object" && record.intent_mandate !== null) {
     return { protocol: "AP2", version: null };
+  }
+
+  // UAP carries uap_version or an agent + intent pair
+  if (typeof record.uap_version !== "undefined" || typeof record.uapVersion !== "undefined") {
+    return { protocol: "UAP", version: String(record.uap_version ?? record.uapVersion ?? "1.0") };
+  }
+  if (typeof record.agent === "object" && record.agent !== null && typeof record.intent === "object" && record.intent !== null) {
+    return { protocol: "UAP", version: "1.0" };
+  }
+
+  // UCP carries ucp_version or a checkout with items
+  if (typeof record.ucp_version !== "undefined" || typeof record.ucpVersion !== "undefined") {
+    return { protocol: "UCP", version: String(record.ucp_version ?? record.ucpVersion ?? "2026-01-01") };
+  }
+  if (typeof record.checkout === "object" && record.checkout !== null && Array.isArray((record.checkout as Record<string, unknown>).items)) {
+    return { protocol: "UCP", version: "2026-01-01" };
   }
 
   // ACP checkout sessions carry line items plus a buyer block.

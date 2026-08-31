@@ -43,8 +43,13 @@ describe("protocol detection", () => {
    */
   it("refuses to sniff the body when an unsupported protocol was declared", () => {
     const body = { items: [{ id: "sku-1" }], buyer: {} };
-    const result = detectProtocol({ [PROTOCOL_HEADER]: "UAP" }, body);
+    const result = detectProtocol({ [PROTOCOL_HEADER]: "FUTURE_UNSUPPORTED_PROTOCOL" }, body);
     expect(result.protocol).toBe("UNKNOWN");
+  });
+
+  it("detects UAP and UCP protocols from header", () => {
+    expect(detectProtocol({ [PROTOCOL_HEADER]: "UAP" }, {}).protocol).toBe("UAP");
+    expect(detectProtocol({ [PROTOCOL_HEADER]: "UCP" }, {}).protocol).toBe("UCP");
   });
 
   it("returns UNKNOWN rather than guessing at an unrecognised body", () => {

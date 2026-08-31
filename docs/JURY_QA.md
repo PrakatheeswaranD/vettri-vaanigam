@@ -109,21 +109,20 @@ Partly, and the difference matters.
 
 **ACP — built against the published spec.** Real endpoints
 (`/checkout_sessions`, update, complete, cancel, `delegate_payment`), the
-stateful session lifecycle, bearer authentication with merchant-issued
-agent credentials, and real idempotency-key semantics including the
-spec's `IdempotencyKeyRequired` / `IdempotencyInFlight` outcomes.
+stateful session lifecycle, merchant-issued bearer credentials, Ed25519
+detached request signatures, 2026-04-17 version enforcement, caller/session
+isolation, scoped delegated-payment tokens, and real idempotency semantics.
 
 **AP2 — a compatibility shim.** It accepts the documented cart-mandate
 envelope and normalises it correctly. It does NOT verify SD-JWT
 verifiable credentials, so an AP2 mandate is accepted on its shape, never
 on its cryptography.
 
-**x402 — challenge/response real, settlement simulated.** The
-402 → retry-with-X-PAYMENT exchange is genuinely implemented, and the
-payload is validated strictly against the quote we issued. But no
-facilitator is called and nothing settles on-chain, so nobody has
-verified the money exists — which is why an x402 intent can never be
-auto-approved here and always escalates to a human.
+**x402 — v2 challenge, verification, and settlement are implemented.** The
+402 → retry-with-`PAYMENT-SIGNATURE` exchange is bound to the server quote,
+configured network/asset/payee, nonce replay protection, and a facilitator's
+verify/settle evidence. Without a facilitator or complete asset configuration
+it fails closed; a caller-provided "verified" flag can never authorize money.
 
 **UCP — not implemented.**
 
@@ -136,10 +135,11 @@ The demonstrated checkout → payment → recovery path is hardened per
 `docs/SECURITY.md`: server-side amount authority, deterministic
 authorization, signature verification, idempotency, bounded recovery,
 auditability. Peripheral prototype surfaces intentionally use lighter
-rigor. There is no production multi-tenant identity system, no KYC/AML,
-no production-grade rate limiting, and no live Razorpay Test Mode
+rigor. There is no production multi-tenant identity system or KYC/AML. The
+API has per-instance rate limits; multiple replicas still require a shared
+edge/Redis limiter. No live Razorpay Test Mode
 transaction was completed in this environment (no credentials
-configured) — all stated plainly in `PROGRESS.md`'s Known Issues rather
+configured) — all stated plainly in `PROGRESS.md` rather
 than glossed over.
 
 ## "Is Trust Trace just a nicer-looking log viewer?"

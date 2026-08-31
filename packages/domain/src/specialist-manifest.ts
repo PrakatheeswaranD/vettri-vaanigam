@@ -22,6 +22,53 @@
  *    control that implements it.
  */
 
+/**
+ * The named AI specialists in this build.
+ *
+ * There are exactly THREE, and each is a real, separate `AIProvider`
+ * method — not three names for one prompt:
+ *
+ *   Buyer Agent    → `extractIntent` / `rankCandidates`
+ *   Merchant Agent → `proposeGrowthAction` / `proposeRecoveryAction`
+ *   Catalog Agent  → `normalizeCatalogRow`
+ *
+ * The Catalog Agent was the last to be named, and naming it changed no
+ * code: it was already the third AI touchpoint, doing the one job a rules
+ * engine genuinely cannot (reading `"500ml combo of 2 — festive offer!!"`
+ * out of a real merchant export). Leaving it unnamed meant the product
+ * surface claimed two specialists while the code had three, which anyone
+ * reading the source would notice.
+ *
+ * Each is single-purpose and bounded. None of them can approve, price,
+ * discount, or move money — that is deterministic code's job, always.
+ */
+export const AI_SPECIALISTS = [
+  {
+    id: "buyer_agent",
+    name: "Buyer Agent",
+    purpose: "Reads a shopper's words and turns them into structured, checkable constraints.",
+    aiMethod: "extractIntent / rankCandidates",
+    boundary: "It may interpret and rank. It may never invent a product, set a price, or decide availability.",
+  },
+  {
+    id: "merchant_agent",
+    name: "Merchant Agent",
+    purpose: "Proposes bounded cross-sell, upsell and payment-recovery actions.",
+    aiMethod: "proposeGrowthAction / proposeRecoveryAction",
+    boundary: "It may propose. Policy decides, a human approves, and deterministic code executes.",
+  },
+  {
+    id: "catalog_agent",
+    name: "Catalog Agent",
+    purpose: "Reads messy merchant export rows and extracts structured product fields.",
+    aiMethod: "normalizeCatalogRow",
+    boundary:
+      "It may read and structure. It refuses to invent: an unreadable field is reported as an issue against that row, never guessed — and nothing it produces goes live until a human publishes it.",
+  },
+] as const;
+
+export type AiSpecialist = (typeof AI_SPECIALISTS)[number];
+
 /** Business events that cause the specialist to do work (§24-§27). These
  * name real entry points that already exist in this build. */
 export const SPECIALIST_TRIGGERS = [
@@ -36,6 +83,13 @@ export const SPECIALIST_TRIGGERS = [
     label: "Product selected",
     description: "A buyer selects a product; the Merchant Agent looks for a legitimate growth opportunity.",
     entryPoint: "Merchant Agent → growth proposal → validation → policy",
+  },
+  {
+    id: "catalog.row.received",
+    label: "Catalogue row received",
+    description:
+      "A merchant uploads a raw export. The Catalog Agent reads each row and extracts structured fields, reporting anything it cannot read rather than guessing.",
+    entryPoint: "Catalog Agent → normalized draft → merchant review → explicit publish → live catalogue",
   },
   {
     id: "payment.failed",
@@ -75,6 +129,7 @@ export const SPECIALIST_MANIFEST = {
   id: "ai-growth-agentic-commerce",
   name: "AI Growth & Agentic Commerce",
   version: "1.0.0",
+  specialists: AI_SPECIALISTS,
   triggers: SPECIALIST_TRIGGERS,
   capabilities: SPECIALIST_CAPABILITIES,
   prohibited: SPECIALIST_PROHIBITED,

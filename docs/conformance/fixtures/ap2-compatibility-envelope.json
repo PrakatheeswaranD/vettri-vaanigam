@@ -1,0 +1,15 @@
+{
+  "agent_id": "registered-shopping-agent",
+  "cart_mandate": {
+    "id": "cart-example",
+    "contents": {
+      "payment_request": {
+        "details": {
+          "displayItems": [{ "sku": "MER-PUL-UK9-BLK", "quantity": 1 }],
+          "total": { "amount": { "value": "4499.00", "currency": "INR" } }
+        }
+      }
+    }
+  },
+  "_conformance": "COMPATIBILITY_SHIM_ONLY_NOT_SD_JWT_VERIFIED"
+}

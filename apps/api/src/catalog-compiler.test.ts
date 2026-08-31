@@ -5,6 +5,7 @@
  * lean on the messy-input cases rather than the happy path.
  */
 import { describe, it, expect, beforeAll, afterAll } from "vitest";
+import { randomUUID } from "node:crypto";
 import type { FastifyInstance } from "fastify";
 import { buildApp } from "./app.js";
 import { prisma } from "./db/client.js";
@@ -103,6 +104,73 @@ describe("Catalog Compiler", () => {
   it("requires authentication — compiling spends model calls", async () => {
     const res = await app.inject({ method: "POST", url: "/api/v1/agent-catalog/compile", payload: { csv: "a\nb" } });
     expect(res.statusCode).toBe(401);
+  });
+
+  it("publishes only with explicit cost/inventory controls and rolls back to the prior version", async () => {
+    const compile = async (label: string) => {
+      const response = await app.inject({
+        method: "POST",
+        url: "/api/v1/agent-catalog/compile",
+        headers: { authorization: `Bearer ${token}` },
+        payload: { csv: `Product Name,Category,Price\n${label},Running Shoes,1299` },
+      });
+      expect(response.statusCode).toBe(200);
+      return response.json();
+    };
+    const publish = (compilation: { compilationId: string; products: { offers: { sku: string }[] }[] }) =>
+      app.inject({
+        method: "POST",
+        url: `/api/v1/agent-catalog/compilations/${compilation.compilationId}/publish`,
+        headers: { authorization: `Bearer ${token}` },
+        payload: {
+          offers: compilation.products.flatMap((product) =>
+            product.offers.map((offer) => ({ sku: offer.sku, costMinor: 70000, availableQuantity: 25 })),
+          ),
+        },
+      });
+
+    const first = await compile(`Imported Alpha ${randomUUID()}`);
+    const missingControls = await app.inject({
+      method: "POST",
+      url: `/api/v1/agent-catalog/compilations/${first.compilationId}/publish`,
+      headers: { authorization: `Bearer ${token}` },
+      payload: { offers: [] },
+    });
+    expect(missingControls.statusCode).toBe(400);
+
+    const firstPublished = await publish(first);
+    expect(firstPublished.statusCode).toBe(200);
+    expect(firstPublished.json().status).toBe("PUBLISHED");
+    const firstProductId = firstPublished.json().appliedProductIds[0] as string;
+    const firstVariant = await prisma.productVariant.findFirstOrThrow({
+      where: { productId: firstProductId },
+      include: { inventory: true },
+    });
+    expect(firstVariant.costMinor).toBe(70000);
+    expect(firstVariant.inventory?.availableQuantity).toBe(25);
+
+    const second = await compile(`Imported Beta ${randomUUID()}`);
+    const secondPublished = await publish(second);
+    expect(secondPublished.statusCode).toBe(200);
+    expect((await prisma.product.findUniqueOrThrow({ where: { id: firstProductId } })).status).toBe("ARCHIVED");
+
+    const rollback = await app.inject({
+      method: "POST",
+      url: `/api/v1/agent-catalog/compilations/${second.compilationId}/rollback`,
+      headers: { authorization: `Bearer ${token}` },
+    });
+    expect(rollback.statusCode).toBe(200);
+    expect(rollback.json().status).toBe("ROLLED_BACK");
+    expect((await prisma.product.findUniqueOrThrow({ where: { id: firstProductId } })).status).toBe("ACTIVE");
+
+    // Restore the catalogue that was live before this test, so a persistent
+    // local test database is not left pointing at generated fixture rows.
+    const restore = await app.inject({
+      method: "POST",
+      url: `/api/v1/agent-catalog/compilations/${first.compilationId}/rollback`,
+      headers: { authorization: `Bearer ${token}` },
+    });
+    expect(restore.statusCode).toBe(200);
   });
 });
 

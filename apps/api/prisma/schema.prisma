@@ -38,16 +38,12 @@ enum MerchantStatus {
   SUSPENDED
 }
 
-/// PART 10 §1 — real merchant/approver identity, replacing the PART 00
-/// §36 "one demo merchant, no auth" simplification. Deliberately small:
-/// OWNER and APPROVER may both decide an approval; VIEWER may read but
-/// never mutate. Not a general-purpose permission system — RBAC is
-/// scoped to exactly the one privileged action this codebase has
-/// (approving/rejecting a growth/recovery proposal).
 enum MerchantUserRole {
   OWNER
   APPROVER
   VIEWER
+  CUSTOMER
+  PLATFORM_ADMIN
 }
 
 enum ProductStatus {
@@ -103,6 +99,20 @@ enum PaymentState {
   FAILED
   CANCELLED
   UNKNOWN
+  REFUNDED
+  PARTIALLY_REFUNDED
+}
+
+enum CustomerDebitStatus {
+  UNKNOWN
+  NOT_DEBITED
+  DEBITED
+}
+
+enum MerchantCreditStatus {
+  UNKNOWN
+  NOT_CREDITED
+  CREDITED
 }
 
 /// PART 01 §77 — `DEMO` marks seeded/synthetic payment history so it can
@@ -115,11 +125,8 @@ enum PaymentProvider {
   DEMO
   RAZORPAY
   MOCK
+  X402
 }
-
-/// PART 07 §25, §148 — lifecycle of one persisted `PaymentProviderEvent`
-/// (a webhook delivery), independent of the `PaymentState` it may cause a
-/// `Payment` to transition to.
 enum PaymentEventProcessingStatus {
   RECEIVED
   PROCESSED
@@ -339,6 +346,7 @@ model Merchant {
   payments                Payment[]
   paymentProviderEvents   PaymentProviderEvent[]
   merchantUsers           MerchantUser[]
+  buyerSpendingPolicy     BuyerSpendingPolicy?
 
   // Anumati gateway — agent-facing commerce.
   agentIdentities         AgentIdentity[]
@@ -346,6 +354,13 @@ model Merchant {
   agentGatewayPolicy      AgentGatewayPolicy?
   decisionRecords         DecisionRecord[]
   acpCheckoutSessions     AcpCheckoutSession[]
+  acpDelegatedPayments    AcpDelegatedPayment[]
+  catalogCompilations     CatalogCompilation[]
+  campaigns               Campaign[]
+  refunds                 Refund[]
+  returnRequests          ReturnRequest[]
+  fulfillments            Fulfillment[]
+  disputes                Dispute[]
 }
 
 /// PART 10 §1 — a real, authenticated user scoped to exactly one
@@ -568,6 +583,10 @@ model ProductVariant {
   sku        String
   title      String
   priceMinor Int
+  /// Merchant-entered cost of goods. Nullable means UNKNOWN, never zero.
+  /// The negotiator fails closed when any item in a proposed bundle has
+  /// no cost, because a real margin floor cannot be enforced without it.
+  costMinor  Int?
   currency   Currency @default(INR)
   /// Flexible variant attributes (e.g. size, color) — genuinely variable
   /// metadata, per PART 01 §13/§37 ("JSON may be used only where flexible
@@ -670,6 +689,12 @@ model Order {
   /// PART 08 §29, §189 — one-to-many as of PART 08: a bounded recovery
   /// retry creates a new `CheckoutSession` against this SAME order.
   checkoutSessions CheckoutSession[]
+  campaignConversions CampaignConversion[]
+  campaignAttributions CampaignOrderAttribution[]
+  refunds             Refund[]
+  returnRequests      ReturnRequest[]
+  fulfillments        Fulfillment[]
+  disputes            Dispute[]
 
   @@index([merchantId, createdAt])
 }
@@ -691,6 +716,9 @@ model OrderItem {
   currency             Currency       @default(INR)
   source               String         @default("DIRECT_BUYER")
   growthProposalId     String?
+
+  returnItems          ReturnItem[]
+  fulfillmentItems     FulfillmentItem[]
 
   @@index([orderId])
 }
@@ -715,8 +743,12 @@ model CheckoutSession {
   /// Order to CheckoutSession became one-to-many.
   orderId            String
   order              Order                 @relation(fields: [orderId], references: [id], onDelete: Restrict)
-  authorizationId    String
-  authorization      ExecutionAuthorization @relation(fields: [authorizationId], references: [id], onDelete: Restrict)
+  authorizationId    String?
+  authorization      ExecutionAuthorization? @relation(fields: [authorizationId], references: [id], onDelete: Restrict)
+  /// External buyer-agent checkouts are authorized by a DecisionRecord,
+  /// not a merchant growth proposal. This soft reference is also copied
+  /// into Order.authorizationId for the financial fingerprint.
+  gatewayDecisionId  String?
   status             CheckoutSessionStatus @default(CREATED)
   amountMinor        Int
   currency           Currency              @default(INR)
@@ -737,6 +769,7 @@ model CheckoutSession {
   @@index([merchantId, createdAt])
   @@index([orderId])
   @@index([authorizationId])
+  @@index([gatewayDecisionId])
   @@index([status, expiresAt])
 }
 
@@ -793,6 +826,9 @@ model Payment {
   amountMinor     Int
   currency        Currency     @default(INR)
   state           PaymentState @default(CREATED)
+  customerDebitStatus CustomerDebitStatus @default(UNKNOWN)
+  merchantCreditStatus MerchantCreditStatus @default(UNKNOWN)
+  automaticRetryBlocked Boolean @default(false)
   failureCode     String?
   failureCategory String?
   /// Minimal reconciliation metadata only (PART 07 §62) — never a full
@@ -815,12 +851,29 @@ model Payment {
   recoveryAttempts       Payment[] @relation("PaymentRecoveryLineage")
 
   providerEvents PaymentProviderEvent[]
+  campaignConversion CampaignConversion?
+  refunds                Refund[]
+  disputes               Dispute[]
 
   @@index([orderId])
   @@index([merchantId, state])
   @@index([provider, providerOrderId])
   @@index([provider, providerPaymentId])
   @@index([recoveredFromAttemptId])
+  @@index([automaticRetryBlocked])
+}
+
+model BuyerSpendingPolicy {
+  id                              String   @id @default(uuid())
+  merchantId                      String   @unique
+  merchant                        Merchant @relation(fields: [merchantId], references: [id], onDelete: Cascade)
+  currency                        Currency @default(INR)
+  autonomousPurchaseLimitMinor    Int      @default(200000)
+  dailyLimitMinor                 Int      @default(1000000)
+  allowedCategories               Json     @default("[]")
+  approvalRequiredAboveLimit      Boolean  @default(true)
+  createdAt                       DateTime @default(now())
+  updatedAt                       DateTime @updatedAt
 }
 
 /// PART 07 §25, §85, §147 — persisted record of one provider (webhook)
@@ -1141,6 +1194,8 @@ enum AgentProtocol {
   ACP
   AP2
   X402
+  UAP
+  UCP
 }
 
 enum AgentTrustLevel {
@@ -1193,6 +1248,7 @@ model AgentIdentity {
   lastSeenAt     DateTime @default(now())
 
   decisionRecords DecisionRecord[]
+  delegatedPayments AcpDelegatedPayment[]
 
   @@unique([merchantId, externalAgentId])
   @@index([merchantId, lastSeenAt])
@@ -1288,7 +1344,149 @@ model AcpCheckoutSession {
   createdAt        DateTime @default(now())
   updatedAt        DateTime @updatedAt
 
+  delegatedPayments AcpDelegatedPayment[]
+
   @@index([merchantId, createdAt])
+}
+
+/// A server-issued ACP delegated-payment authorization. The external
+/// payment-method token itself is never stored: only a keyed HMAC fingerprint
+/// is retained, while the client receives a signed Anumati token that is
+/// bound to this row, merchant, authenticated agent and optional session.
+model AcpDelegatedPayment {
+  id                           String        @id
+  merchantId                   String
+  merchant                     Merchant      @relation(fields: [merchantId], references: [id], onDelete: Cascade)
+  agentIdentityId              String
+  agentIdentity                AgentIdentity @relation(fields: [agentIdentityId], references: [id], onDelete: Cascade)
+  checkoutSessionId            String?
+  checkoutSession              AcpCheckoutSession? @relation(fields: [checkoutSessionId], references: [id], onDelete: SetNull)
+  paymentMethodType            String
+  paymentInstrumentFingerprint String
+  allowance                    Json
+  riskSignals                  Json?
+  status                       String        @default("ACTIVE")
+  expiresAt                    DateTime
+  consumedAt                   DateTime?
+  createdAt                    DateTime      @default(now())
+  updatedAt                    DateTime      @updatedAt
+
+  @@index([merchantId, createdAt])
+  @@index([agentIdentityId, status])
+  @@index([checkoutSessionId])
+  @@index([status, expiresAt])
+}
+
+/// Immutable output of one catalogue compilation. Compilation is a draft;
+/// only an explicit OWNER publish changes the live catalogue. A published
+/// version stores the exact before-image needed for deterministic rollback.
+model CatalogCompilation {
+  id                String   @id @default(uuid())
+  merchantId        String
+  merchant          Merchant @relation(fields: [merchantId], references: [id], onDelete: Cascade)
+  status            String   @default("DRAFT")
+  rowsRead          Int
+  rowsCompiled      Int
+  issues            Json
+  products          Json
+  providerMode      String
+  beforeSnapshot    Json?
+  appliedProductIds String[] @default([])
+  publishedAt       DateTime?
+  rolledBackAt      DateTime?
+  createdAt         DateTime @default(now())
+
+  @@index([merchantId, createdAt])
+  @@index([merchantId, status])
+}
+
+/// Bounded campaign orchestration. Cohort assignment is deterministic and
+/// persisted; CONTROL members never receive a money-changing proposal.
+model Campaign {
+  id                    String   @id @default(uuid())
+  merchantId            String
+  merchant              Merchant @relation(fields: [merchantId], references: [id], onDelete: Cascade)
+  name                  String
+  status                String   @default("DRAFT")
+  actionType            String
+  budgetMinor           Int
+  spentMinor            Int      @default(0)
+  incentiveMinorPerConversion Int @default(0)
+  maxUsesPerSubject     Int      @default(1)
+  controlPercentBps     Int      @default(1000)
+  startsAt              DateTime
+  endsAt                DateTime
+  createdById           String
+  createdAt             DateTime @default(now())
+  updatedAt             DateTime @updatedAt
+
+  assignments CampaignAssignment[]
+  conversions CampaignConversion[]
+  attributions CampaignOrderAttribution[]
+
+  @@index([merchantId, status])
+  @@index([startsAt, endsAt])
+}
+
+model CampaignAssignment {
+  id                   String   @id @default(uuid())
+  campaignId           String
+  campaign             Campaign @relation(fields: [campaignId], references: [id], onDelete: Cascade)
+  subjectKeyHash       String
+  cohort               String
+  impressionCount      Int      @default(0)
+  conversionCount      Int      @default(0)
+  observedRevenueMinor Int      @default(0)
+  createdAt            DateTime @default(now())
+  updatedAt            DateTime @updatedAt
+
+  conversions CampaignConversion[]
+  attributions CampaignOrderAttribution[]
+
+  @@unique([campaignId, subjectKeyHash])
+  @@index([campaignId, cohort])
+}
+
+/// Immutable pre-capture evidence that a treatment assignment was bound to
+/// a specific order before conversion. An order can belong to only one
+/// campaign attribution, preventing retroactive revenue shopping.
+model CampaignOrderAttribution {
+  id           String             @id @default(uuid())
+  campaignId   String
+  campaign     Campaign           @relation(fields: [campaignId], references: [id], onDelete: Cascade)
+  assignmentId String
+  assignment   CampaignAssignment @relation(fields: [assignmentId], references: [id], onDelete: Cascade)
+  orderId      String             @unique
+  order        Order              @relation(fields: [orderId], references: [id], onDelete: Restrict)
+  boundAt      DateTime           @default(now())
+
+  conversion CampaignConversion?
+
+  @@index([campaignId, boundAt])
+  @@index([assignmentId, boundAt])
+}
+
+/// Revenue attribution backed by a captured internal payment. A payment
+/// can appear once, so retries cannot inflate campaign results.
+model CampaignConversion {
+  id                   String             @id @default(uuid())
+  campaignId           String
+  campaign             Campaign           @relation(fields: [campaignId], references: [id], onDelete: Cascade)
+  assignmentId         String
+  assignment           CampaignAssignment @relation(fields: [assignmentId], references: [id], onDelete: Cascade)
+  paymentId            String             @unique
+  payment              Payment            @relation(fields: [paymentId], references: [id], onDelete: Restrict)
+  orderId              String
+  order                Order              @relation(fields: [orderId], references: [id], onDelete: Restrict)
+  attributionId        String?            @unique
+  attribution          CampaignOrderAttribution? @relation(fields: [attributionId], references: [id], onDelete: Restrict)
+  incentiveCostMinor   Int
+  observedRevenueMinor Int
+  createdAt            DateTime           @default(now())
+
+  @@index([campaignId, createdAt])
+  @@index([assignmentId])
+  @@index([orderId])
 }
 
 /// The immutable explainability artifact: one row per inbound intent,
@@ -1331,7 +1529,8 @@ model DecisionRecord {
   /// `AgentGatewayPolicy.maxNegotiationDiscountBps`.
   negotiatedDiscountBps Int?
 
-  /// Set when a step-up produced a Razorpay Payment Link for human review.
+  /// Legacy nullable fields retained for historical rows. New step-ups are
+  /// approved first and only then create a bounded provider order.
   stepUpPaymentLinkId  String?
   stepUpPaymentLinkUrl String?
 
@@ -1341,10 +1540,9 @@ model DecisionRecord {
   buyerEmail           String?
   buyerName            String?
 
-  /// The exact payload as received, kept verbatim so a merchant can expand
-  /// a decision and see what the agent ACTUALLY sent — not our
-  /// interpretation of it. This is the difference between an audit trail
-  /// and a summary.
+  /// Structurally faithful but privacy-redacted input. Credentials, payment
+  /// tokens and buyer PII are removed before persistence; commercial and
+  /// protocol fields remain available for explainability.
   rawProtocolPayload   Json?
 
   /// Which kind of spend permission was actually verified.
@@ -1355,6 +1553,10 @@ model DecisionRecord {
   ///   describing it as a verified mandate would overstate what happened.
   /// NONE - refused before any permission applied.
   permissionType       String?
+  authorizationExpiresAt       DateTime?
+  authorizationMaxAmountMinor  Int?
+  authorizationCurrency        Currency?
+  authorizationMerchantScope   String?
 
   /// The source protocol's own identifier for this exchange (an ACP
   /// checkout_session_id, an x402 nonce), so a decision can be traced back
@@ -1367,6 +1569,15 @@ model DecisionRecord {
   /// because a decline never reaches the provider, and because a provider
   /// outage must not lose the decision that was already made.
   providerOrderId      String?
+  providerPaymentId    String?
+  settlementStatus     String?
+  settledAt            DateTime?
+  internalOrderId      String?
+  internalPaymentId    String?
+  inventoryReleasedAt DateTime?
+  /// Normalized server-priced lines needed to execute a human-approved
+  /// step-up. This is commercial data only, never raw protocol input.
+  normalizedBasket     Json?
 
   /// Soft references into the existing governance chain, so a gateway
   /// decision that proceeded can be walked exactly like any other action.
@@ -1395,4 +1606,119 @@ model DecisionRecord {
   @@index([merchantId, createdAt])
   @@index([merchantId, outcome])
   @@index([agentIdentityId])
+  @@index([providerOrderId])
+}
+
+model Refund {
+  id                String       @id @default(uuid())
+  merchantId        String
+  merchant          Merchant     @relation(fields: [merchantId], references: [id], onDelete: Cascade)
+  paymentId         String
+  payment           Payment      @relation(fields: [paymentId], references: [id], onDelete: Cascade)
+  orderId           String
+  order             Order        @relation(fields: [orderId], references: [id], onDelete: Cascade)
+  amountMinor       Int
+  currency          Currency     @default(INR)
+  status            String       @default("PROCESSED")
+  reason            String?
+  providerRefundId  String?
+  restockInventory  Boolean      @default(false)
+  createdAt         DateTime     @default(now())
+  updatedAt         DateTime     @updatedAt
+
+  @@index([merchantId, createdAt])
+  @@index([paymentId])
+  @@index([orderId])
+}
+
+model ReturnRequest {
+  id                String       @id @default(uuid())
+  merchantId        String
+  merchant          Merchant     @relation(fields: [merchantId], references: [id], onDelete: Cascade)
+  orderId           String
+  order             Order        @relation(fields: [orderId], references: [id], onDelete: Cascade)
+  status            String       @default("REQUESTED")
+  reason            String
+  inspectionNotes   String?
+  restocked         Boolean      @default(false)
+  refundAmountMinor Int?
+  createdAt         DateTime     @default(now())
+  updatedAt         DateTime     @updatedAt
+
+  items             ReturnItem[]
+
+  @@index([merchantId, createdAt])
+  @@index([orderId])
+}
+
+model ReturnItem {
+  id                String        @id @default(uuid())
+  returnRequestId   String
+  returnRequest     ReturnRequest @relation(fields: [returnRequestId], references: [id], onDelete: Cascade)
+  orderItemId       String
+  orderItem         OrderItem     @relation(fields: [orderItemId], references: [id], onDelete: Restrict)
+  quantity          Int
+  reason            String?
+  createdAt         DateTime      @default(now())
+
+  @@index([returnRequestId])
+}
+
+model Fulfillment {
+  id                   String            @id @default(uuid())
+  merchantId           String
+  merchant             Merchant          @relation(fields: [merchantId], references: [id], onDelete: Cascade)
+  orderId              String
+  order                Order             @relation(fields: [orderId], references: [id], onDelete: Cascade)
+  status               String            @default("PENDING")
+  trackingNumber       String?
+  carrier              String?
+  shippedAt            DateTime?
+  deliveredAt          DateTime?
+  estimatedDeliveryAt  DateTime?
+  createdAt            DateTime          @default(now())
+  updatedAt            DateTime          @updatedAt
+
+  items                FulfillmentItem[]
+
+  @@index([merchantId, createdAt])
+  @@index([orderId])
+}
+
+model FulfillmentItem {
+  id                String      @id @default(uuid())
+  fulfillmentId     String
+  fulfillment       Fulfillment @relation(fields: [fulfillmentId], references: [id], onDelete: Cascade)
+  orderItemId       String
+  orderItem         OrderItem   @relation(fields: [orderItemId], references: [id], onDelete: Restrict)
+  quantity          Int
+  createdAt         DateTime    @default(now())
+
+  @@index([fulfillmentId])
+}
+
+model Dispute {
+  id                    String    @id @default(uuid())
+  merchantId            String
+  merchant              Merchant  @relation(fields: [merchantId], references: [id], onDelete: Cascade)
+  paymentId             String
+  payment               Payment   @relation(fields: [paymentId], references: [id], onDelete: Cascade)
+  orderId               String
+  order                 Order     @relation(fields: [orderId], references: [id], onDelete: Cascade)
+  providerDisputeId     String?
+  amountMinor           Int
+  currency              Currency  @default(INR)
+  status                String    @default("OPEN")
+  reason                String
+  evidenceText          String?
+  evidenceSubmittedAt   DateTime?
+  feeMinor              Int       @default(0)
+  openedAt              DateTime  @default(now())
+  resolvedAt            DateTime?
+  createdAt             DateTime  @default(now())
+  updatedAt             DateTime  @updatedAt
+
+  @@index([merchantId, createdAt])
+  @@index([paymentId])
+  @@index([orderId])
 }

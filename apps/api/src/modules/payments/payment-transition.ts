@@ -13,6 +13,21 @@
  * persisted (`Payment`, `Order`) or came from a signature-verified /
  * directly-fetched provider response (PART 07 §20).
  */
+/**
+ * The single place a verified provider fact becomes an internal
+ * `Payment`/`Order`/`CheckoutSession` state change (PART 07 §20-§22,
+ * §52-§57). Called from three places — the webhook processor, the client-
+ * completion verification route, and manual reconciliation — so all three
+ * evidence sources go through the exact same deterministic transition
+ * logic, never three separately-maintained copies (PART 07 §41's evidence
+ * hierarchy is enforced structurally: whichever caller has the freshest
+ * verified fact calls this function, and illegal/stale transitions are
+ * rejected here regardless of which caller triggered them).
+ *
+ * No AI dependency, no frontend trust: every input here is either already
+ * persisted (`Payment`, `Order`) or came from a signature-verified /
+ * directly-fetched provider response (PART 07 §20).
+ */
 import type { Order, Payment, PaymentState, Prisma } from "@prisma/client";
 import { canTransitionPaymentState } from "@razorgrowth/domain";
 import { normalizeRazorpayFailure } from "./failure-mapper.js";
@@ -20,18 +35,15 @@ import { applyPaymentTransition } from "./payment-repository.js";
 import { setOrderStatus } from "../commerce/order-repository.js";
 import { updateCheckoutStatus } from "../commerce/checkout-repository.js";
 import { appendLedgerEvent } from "../audit/ledger.js";
+import { tryAutoConvertCampaignOnPaymentCapture } from "../campaigns/auto-attribution.js";
 import type { ProviderPaymentInfo } from "./gateway.js";
 
-export type PaymentEvidenceSource = "WEBHOOK" | "CLIENT_VERIFICATION" | "RECONCILE";
+export type PaymentEvidenceSource = "WEBHOOK" | "CLIENT_VERIFICATION" | "RECONCILE" | "FACILITATOR";
 
 export interface ResolvePaymentEventResult {
   applied: boolean;
   fromState: PaymentState;
   toState: PaymentState;
-  /** `true` when the provider evidence's amount/currency/order linkage did
-   * not match what this checkout actually authorized (PART 07 §55-§57) —
-   * the transition was refused specifically because of that mismatch,
-   * never silently normalized. */
   integrityError: boolean;
   reason: string;
 }
@@ -132,6 +144,20 @@ export async function resolvePaymentEvent(
   if (!candidate) {
     return { applied: false, fromState: payment.state, toState: payment.state, integrityError: false, reason: `UNMODELED_PROVIDER_STATUS:${providerInfo.providerStatus}` };
   }
+  if ((candidate === "AUTHORIZED" || candidate === "CAPTURED") && !providerInfo.providerPaymentId) {
+    await appendLedgerEvent(tx, {
+      workflowId: params.workflowId,
+      merchantId: params.merchantId,
+      actorType: "PAYMENT_SYSTEM",
+      actionType: "PAYMENT_FINANCIAL_INTEGRITY_ERROR",
+      status: "FAILED",
+      conciseReason: `Provider evidence claimed ${candidate} without a transaction identifier; the transition was refused.`,
+      relatedEntityType: "Payment",
+      relatedEntityId: payment.id,
+      executedAt: now,
+    });
+    return { applied: false, fromState: payment.state, toState: payment.state, integrityError: true, reason: "MISSING_PROVIDER_PAYMENT_ID" };
+  }
 
   // PART 07 §21-§24 — the domain state machine is the single authority on
   // transition legality; a stale/out-of-order event that would regress a
@@ -178,12 +204,47 @@ export async function resolvePaymentEvent(
   if (candidate === "CAPTURED") {
     await applyPaymentTransition(tx, payment.id, {
       state: "CAPTURED",
-      providerPaymentId: providerInfo.providerPaymentId,
+      customerDebitStatus: "DEBITED",
+      merchantCreditStatus: "CREDITED",
+      automaticRetryBlocked: false,
+      providerPaymentId: providerInfo.providerPaymentId!,
       capturedAt: providerInfo.capturedAt ?? now,
       providerMetadata: { method: providerInfo.method } as Prisma.InputJsonValue,
     });
     await setOrderStatus(tx, order.id, "PAID");
     await updateCheckoutStatus(tx, params.checkoutId, "COMPLETED");
+    if (order.source === "AGENT_GATEWAY" && order.authorizationId) {
+      const decision = await tx.decisionRecord.findUnique({ where: { id: order.authorizationId } });
+      if (decision && decision.merchantId === params.merchantId) {
+        const settled = await tx.decisionRecord.updateMany({
+          where: {
+            id: decision.id,
+            OR: [{ settlementStatus: null }, { settlementStatus: { not: "CAPTURED" } }],
+          },
+          data: {
+            providerPaymentId: providerInfo.providerPaymentId!,
+            settlementStatus: "CAPTURED",
+            settledAt: providerInfo.capturedAt ?? now,
+          },
+        });
+        // Trust is earned only by the first verified capture transition,
+        // never by provider-order creation or a browser callback alone.
+        if (settled.count === 1 && decision.agentIdentityId) {
+          await tx.agentIdentity.update({
+            where: { id: decision.agentIdentityId },
+            data: { settledOrderCount: { increment: 1 } },
+          });
+        }
+        await tx.acpCheckoutSession.updateMany({
+          where: { decisionRecordId: decision.id },
+          data: { status: "completed" },
+        });
+      }
+    }
+
+    // Automatically record campaign conversion if this order is attributed to an active campaign
+    await tryAutoConvertCampaignOnPaymentCapture(tx, payment.id).catch(() => undefined);
+
     // PART 07 §98-§103 — this is the first point an order's value may
     // legitimately become OBSERVED (paid) revenue; attribution fields are
     // read straight off the already-persisted Order, never recomputed.
@@ -203,6 +264,7 @@ export async function resolvePaymentEvent(
         source: order.source,
         growthProposalId: order.growthProposalId,
         authorizationId: order.authorizationId,
+        gatewayDecisionId: order.source === "AGENT_GATEWAY" ? order.authorizationId : null,
       },
       executedAt: now,
     });
@@ -213,6 +275,9 @@ export async function resolvePaymentEvent(
     const failureCategory = normalizeRazorpayFailure(providerInfo.errorCode, providerInfo.errorDescription);
     await applyPaymentTransition(tx, payment.id, {
       state: "FAILED",
+      customerDebitStatus: "UNKNOWN",
+      merchantCreditStatus: "NOT_CREDITED",
+      automaticRetryBlocked: true,
       providerPaymentId: providerInfo.providerPaymentId,
       failureCode: providerInfo.errorCode,
       failureCategory,
@@ -220,6 +285,36 @@ export async function resolvePaymentEvent(
     });
     await setOrderStatus(tx, order.id, "FAILED");
     await updateCheckoutStatus(tx, params.checkoutId, "FAILED");
+    if (order.source === "AGENT_GATEWAY" && order.authorizationId) {
+      const releaseClaim = await tx.decisionRecord.updateMany({
+        where: { id: order.authorizationId, merchantId: params.merchantId, inventoryReleasedAt: null },
+        data: { inventoryReleasedAt: now, settlementStatus: "FAILED" },
+      });
+      if (releaseClaim.count === 1) {
+        const lines = await tx.orderItem.findMany({ where: { orderId: order.id }, select: { variantId: true, quantity: true } });
+        for (const line of lines) {
+          await tx.inventory.update({
+            where: { variantId: line.variantId },
+            data: { availableQuantity: { increment: line.quantity } },
+          });
+        }
+        await appendLedgerEvent(tx, {
+          workflowId: params.workflowId,
+          merchantId: params.merchantId,
+          actorType: "COMMERCE",
+          actionType: "AGENT_INVENTORY_RESERVATION_RELEASED",
+          status: "EXECUTED",
+          conciseReason: "Verified terminal payment failure released the external agent order's inventory reservation exactly once.",
+          relatedEntityType: "Order",
+          relatedEntityId: order.id,
+          executedAt: now,
+        });
+      }
+      await tx.acpCheckoutSession.updateMany({
+        where: { decisionRecordId: order.authorizationId },
+        data: { status: "payment_failed" },
+      });
+    }
     await appendLedgerEvent(tx, {
       workflowId: params.workflowId,
       merchantId: params.merchantId,

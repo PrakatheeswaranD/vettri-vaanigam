@@ -33,6 +33,13 @@ import { registerPaymentRoutes } from "./modules/payments/routes.js";
 import { registerPaymentWebhookRoutes } from "./modules/payments/webhook-routes.js";
 import { registerAuthRoutes } from "./modules/auth/routes.js";
 import { authenticateRequest } from "./modules/auth/middleware.js";
+import { registerCampaignRoutes } from "./modules/campaigns/routes.js";
+import { registerPostPurchaseRoutes } from "./modules/post-purchase/routes.js";
+import { registerMarketplaceRoutes } from "./modules/marketplace/routes.js";
+import { registerBuyerPolicyRoutes } from "./modules/buyer-policy/routes.js";
+import { registerBuyerPurchaseRoutes } from "./modules/buyer-policy/purchase-routes.js";
+import { registerPlatformAdminRoutes } from "./modules/marketplace/admin-routes.js";
+import { createPublicRateLimitHook } from "./http/rate-limit.js";
 
 export function buildApp(): FastifyInstance {
   // Cast to the default FastifyInstance shape: passing a concrete Pino
@@ -47,6 +54,17 @@ export function buildApp(): FastifyInstance {
 
   app.addHook("onRequest", async (request, reply) => {
     reply.header("x-request-id", request.id);
+  });
+  app.addHook("onRequest", createPublicRateLimitHook());
+  app.addHook("onSend", async (_request, reply, payload) => {
+    reply.header("x-content-type-options", "nosniff");
+    reply.header("referrer-policy", "no-referrer");
+    reply.header("content-security-policy", "default-src 'none'; frame-ancestors 'none'; base-uri 'none'");
+    reply.header("permissions-policy", "camera=(), microphone=(), geolocation=(), payment=()");
+    if (env.NODE_ENV === "production") {
+      reply.header("strict-transport-security", "max-age=31536000; includeSubDomains");
+    }
+    return payload;
   });
 
   void app.register(cors, {
@@ -117,6 +135,12 @@ export function buildApp(): FastifyInstance {
   registerCommerceRoutes(app, v1);
   registerPaymentRoutes(app, v1);
   registerPaymentWebhookRoutes(app, v1);
+  registerCampaignRoutes(app, v1);
+  registerPostPurchaseRoutes(app, v1);
+  registerMarketplaceRoutes(app, v1);
+  registerBuyerPolicyRoutes(app, v1);
+  registerBuyerPurchaseRoutes(app, v1);
+  registerPlatformAdminRoutes(app, v1);
   registerSandboxRoutes(app, v1);
 
   return app;

@@ -11,6 +11,7 @@ import { DemoDataBadge } from "../components/ui/DemoDataBadge";
 import { GrowthProposalPanel } from "../components/merchant-agent/GrowthProposalPanel";
 import { GrowthSummaryPanel } from "../components/growth/GrowthSummaryPanel";
 import { AgentDrivenGrowth } from "../components/growth/AgentDrivenGrowth";
+import { CampaignManager } from "../components/growth/CampaignManager";
 import { useGatewayPolicy } from "../hooks/use-agent-gateway";
 import { formatMoney } from "../lib/format";
 import { ApiError } from "../lib/api-client";
@@ -129,6 +130,8 @@ export default function GrowthPage() {
       <GrowthSummaryPanel />
 
       <AgentDrivenGrowth />
+
+      <CampaignManager />
 
       <GrowthPreviewSection />
 

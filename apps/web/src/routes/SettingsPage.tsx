@@ -17,6 +17,7 @@ import { ErrorState, Skeleton } from "../components/ui/States";
 import { formatDateTime } from "../lib/format";
 import { ApiError } from "../lib/api-client";
 import { CapabilitiesPanel } from "../components/capabilities/CapabilitiesPanel";
+import { NamedSpecialists } from "../components/capabilities/NamedSpecialists";
 import { AgentAuthorityTable } from "../components/capabilities/AgentAuthorityTable";
 import { BusinessTriggers } from "../components/capabilities/BusinessTriggers";
 import { CapabilityStrip } from "../components/capabilities/CapabilityStrip";
@@ -165,6 +166,7 @@ export default function SettingsPage() {
         </div>
       ) : tab === "capabilities" ? (
         <div className="space-y-6">
+          <NamedSpecialists />
           <CapabilitiesPanel />
           <div className="grid gap-6 lg:grid-cols-2">
             <BusinessTriggers />

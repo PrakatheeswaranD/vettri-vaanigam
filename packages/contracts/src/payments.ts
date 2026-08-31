@@ -16,6 +16,8 @@ import { paymentProviderSchema, paymentStateSchema } from "./transactions.js";
 export const PAYMENTS_SCHEMA_VERSION = "1.0" as const;
 
 export const paymentFailureCategorySchema = z.enum(PAYMENT_FAILURE_CATEGORIES);
+export const customerDebitStatusSchema = z.enum(["UNKNOWN", "NOT_DEBITED", "DEBITED"]);
+export const merchantCreditStatusSchema = z.enum(["UNKNOWN", "NOT_CREDITED", "CREDITED"]);
 
 /** PART 07 §63 — the ONLY input the client controls: which checkout to
  * initiate payment for. The server loads amount, currency, and every
@@ -68,6 +70,9 @@ export const paymentDTOSchema = z.object({
   amountMinor: z.number().int().min(0),
   currency: z.enum(SUPPORTED_CURRENCIES),
   state: paymentStateSchema,
+  customerDebitStatus: customerDebitStatusSchema,
+  merchantCreditStatus: merchantCreditStatusSchema,
+  automaticRetryBlocked: z.boolean(),
   failureCode: z.string().nullable(),
   failureCategory: paymentFailureCategorySchema.nullable(),
   createdAt: z.string().datetime(),
@@ -78,6 +83,22 @@ export const paymentDTOSchema = z.object({
 });
 export type PaymentDTO = z.infer<typeof paymentDTOSchema>;
 
+export const failureFirstDemoSchema = z.object({
+  classification: z.literal("DEBIT_CREDIT_MISMATCH"),
+  payment: paymentDTOSchema,
+  automaticRetry: z.literal("BLOCKED"),
+  reason: z.string(),
+  nextAction: z.literal("INVESTIGATION_AND_RECONCILIATION_REQUIRED"),
+  risk: z.object({
+    category: z.literal("DEBIT_CREDIT_MISMATCH"),
+    score: z.number().int().min(0).max(100),
+    level: z.literal("CRITICAL"),
+    reasons: z.array(z.string()),
+    automaticRetryAllowed: z.literal(false),
+  }),
+});
+export type FailureFirstDemoDTO = z.infer<typeof failureFirstDemoSchema>;
+
 /** PART 07 §72 — a compact summary embedded in `CheckoutSessionDTO` so the
  * frontend can read current payment state without a second round trip;
  * the payment domain (`GET /payments/:id`) remains the authoritative
@@ -86,6 +107,9 @@ export const paymentSummaryDTOSchema = z.object({
   id: z.string().uuid(),
   provider: paymentProviderSchema,
   state: paymentStateSchema,
+  customerDebitStatus: customerDebitStatusSchema,
+  merchantCreditStatus: merchantCreditStatusSchema,
+  automaticRetryBlocked: z.boolean(),
   failureCategory: paymentFailureCategorySchema.nullable(),
   capturedAt: z.string().datetime().nullable(),
 });

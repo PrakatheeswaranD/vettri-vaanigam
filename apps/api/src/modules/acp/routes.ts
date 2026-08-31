@@ -34,7 +34,7 @@
  * verified mandate — the Decision Record records which one applied.
  */
 import type { FastifyInstance, FastifyRequest } from "fastify";
-import { randomUUID } from "node:crypto";
+import { randomBytes, randomUUID } from "node:crypto";
 import { z } from "zod";
 import { prisma } from "../../db/client.js";
 import { AppError } from "../../http/errors.js";
@@ -42,6 +42,10 @@ import { getPaymentGateway } from "../payments/gateway-factory.js";
 import { handleAgentPurchaseIntent } from "../gateway/service.js";
 import { withIdempotency } from "./idempotency.js";
 import { authenticateAgent } from "../gateway/agent-registry.js";
+import { stableSensitiveFingerprint } from "../privacy/redaction.js";
+import { issueDelegatedPaymentToken, verifyDelegatedPaymentToken } from "./delegated-payment-token.js";
+import { executeExternalAgentPurchase } from "../gateway/execution-service.js";
+import { verifyAcpRequestSignature } from "./request-signature.js";
 
 export const ACP_API_VERSION = "2026-04-17";
 
@@ -80,6 +84,21 @@ const createSessionSchema = z.object({
 
 const updateSessionSchema = createSessionSchema.partial();
 
+const delegatedPaymentMethodSchema = z.object({
+  type: z.enum(["tokenized_card", "network_token", "upi_token", "wallet_token"]),
+  // A token from the caller's PCI/payment vault. Raw PAN/CVV fields are
+  // intentionally not accepted by this service.
+  token: z.string().min(16).max(2_048),
+  last4: z.string().regex(/^\d{4}$/).optional(),
+});
+
+const completeSessionSchema = z.object({
+  payment_data: z.object({
+    type: z.literal("delegated_payment_token"),
+    token: z.string().min(40).max(500),
+  }),
+});
+
 type SessionRow = Awaited<ReturnType<typeof prisma.acpCheckoutSession.findUnique>>;
 
 function idempotencyKeyOf(request: FastifyRequest): string | undefined {
@@ -88,7 +107,10 @@ function idempotencyKeyOf(request: FastifyRequest): string | undefined {
 }
 
 /** The ACP wire representation of a session. */
-function toAcpSession(row: NonNullable<SessionRow>) {
+function toAcpSession(
+  row: NonNullable<SessionRow>,
+  continuation?: { decisionId: string; paymentId: string | null; providerOrderId: string | null; settlementStatus: string | null } | null,
+) {
   return {
     id: row.id,
     status: row.status,
@@ -99,6 +121,7 @@ function toAcpSession(row: NonNullable<SessionRow>) {
     allowance: row.allowance ?? undefined,
     created_at: row.createdAt.toISOString(),
     updated_at: row.updatedAt.toISOString(),
+    ...(continuation ? { anumati: continuation } : {}),
   };
 }
 
@@ -137,6 +160,27 @@ async function requireAgent(request: FastifyRequest, merchantId: string) {
       "This endpoint requires an agent credential issued by the merchant. Send it as `Authorization: Bearer <key>`.",
     );
   }
+  const requestedVersion = request.headers["api-version"];
+  const version = Array.isArray(requestedVersion) ? requestedVersion[0] : requestedVersion;
+  if (version !== ACP_API_VERSION) {
+    throw AppError.validation(`API-Version must be ${ACP_API_VERSION}.`);
+  }
+  const signatureHeader = request.headers.signature;
+  const timestampHeader = request.headers.timestamp;
+  const idempotencyKey = idempotencyKeyOf(request);
+  const verified = verifyAcpRequestSignature({
+    method: request.method,
+    path: request.url,
+    timestamp: Array.isArray(timestampHeader) ? timestampHeader[0] : timestampHeader,
+    signature: Array.isArray(signatureHeader) ? signatureHeader[0] : signatureHeader,
+    body: request.body,
+    idempotencyKey,
+    publicKeyBase64: agent.registeredPublicKey,
+  });
+  if (!verified.valid) throw AppError.unauthorized(`ACP request signature rejected: ${verified.reason}`);
+  if (request.method !== "GET" && (!idempotencyKey || idempotencyKey.trim().length === 0)) {
+    throw new AppError("IDEMPOTENCY_KEY_REQUIRED", "An Idempotency-Key header is required on ACP mutations.");
+  }
   return agent;
 }
 
@@ -164,7 +208,7 @@ export function registerAcpRoutes(app: FastifyInstance, prefix: string): void {
 
     const outcome = await withIdempotency(
       prisma,
-      { merchantId: merchant.id, operation: "acp.create_session", key: idempotencyKeyOf(request), body: request.body },
+      { merchantId: merchant.id, operation: `acp.create_session:${agent.id}`, key: idempotencyKeyOf(request), body: request.body },
       async () => {
         const priced = await priceLineItems(merchant.id, body.line_items);
         const session = await prisma.acpCheckoutSession.create({
@@ -198,53 +242,87 @@ export function registerAcpRoutes(app: FastifyInstance, prefix: string): void {
   app.get(`${base}/checkout_sessions/:sessionId`, async (request) => {
     const { merchantSlug, sessionId } = request.params as { merchantSlug: string; sessionId: string };
     const merchant = await resolveMerchant(merchantSlug);
-    await requireAgent(request, merchant.id);
+    const agent = await requireAgent(request, merchant.id);
     const session = await prisma.acpCheckoutSession.findUnique({ where: { id: sessionId } });
-    if (!session || session.merchantId !== merchant.id) throw AppError.notFound(`No checkout session ${sessionId}.`);
-    return toAcpSession(session);
+    if (!session || session.merchantId !== merchant.id || session.externalAgentId !== agent.externalAgentId) {
+      throw AppError.notFound(`No checkout session ${sessionId}.`);
+    }
+    const decision = session.decisionRecordId
+      ? await prisma.decisionRecord.findUnique({
+          where: { id: session.decisionRecordId },
+          select: { id: true, internalPaymentId: true, providerOrderId: true, settlementStatus: true },
+        })
+      : null;
+    return toAcpSession(
+      session,
+      decision
+        ? {
+            decisionId: decision.id,
+            paymentId: decision.internalPaymentId,
+            providerOrderId: decision.providerOrderId,
+            settlementStatus: decision.settlementStatus,
+          }
+        : null,
+    );
   });
 
   app.post(`${base}/checkout_sessions/:sessionId`, async (request) => {
     const { merchantSlug, sessionId } = request.params as { merchantSlug: string; sessionId: string };
     const merchant = await resolveMerchant(merchantSlug);
-    await requireAgent(request, merchant.id);
+    const agent = await requireAgent(request, merchant.id);
     const body = updateSessionSchema.parse(request.body);
 
-    const existing = await prisma.acpCheckoutSession.findUnique({ where: { id: sessionId } });
-    if (!existing || existing.merchantId !== merchant.id) throw AppError.notFound(`No checkout session ${sessionId}.`);
-    if (existing.status === "completed" || existing.status === "canceled") {
-      throw new AppError("SESSION_NOT_MUTABLE", `A ${existing.status} checkout session cannot be updated.`);
-    }
-
-    const lineItems = body.line_items ?? (existing.lineItems as { id: string; quantity: number }[]);
-    const priced = await priceLineItems(merchant.id, lineItems);
-
-    const updated = await prisma.acpCheckoutSession.update({
-      where: { id: sessionId },
-      data: {
-        lineItems,
-        totalAmountMinor: priced?.totalMinor ?? 0,
-        status: priced ? "ready_for_payment" : "not_ready_for_payment",
-        ...(body.buyer?.email !== undefined ? { buyerEmail: body.buyer.email } : {}),
-        ...(body.buyer?.name !== undefined ? { buyerName: body.buyer.name } : {}),
-        ...(body.allowance ? { allowance: body.allowance } : {}),
-        ...(body.risk_signals ? { riskSignals: body.risk_signals } : {}),
+    const outcome = await withIdempotency(
+      prisma,
+      { merchantId: merchant.id, operation: `acp.update_session:${agent.id}`, key: idempotencyKeyOf(request), body: { sessionId, ...body } },
+      async () => {
+        const existing = await prisma.acpCheckoutSession.findUnique({ where: { id: sessionId } });
+        if (!existing || existing.merchantId !== merchant.id || existing.externalAgentId !== agent.externalAgentId) {
+          throw AppError.notFound(`No checkout session ${sessionId}.`);
+        }
+        if (existing.status === "completed" || existing.status === "canceled") {
+          throw new AppError("SESSION_NOT_MUTABLE", `A ${existing.status} checkout session cannot be updated.`);
+        }
+        const lineItems = body.line_items ?? (existing.lineItems as { id: string; quantity: number }[]);
+        const priced = await priceLineItems(merchant.id, lineItems);
+        const updated = await prisma.acpCheckoutSession.update({
+          where: { id: sessionId },
+          data: {
+            lineItems,
+            totalAmountMinor: priced?.totalMinor ?? 0,
+            status: priced ? "ready_for_payment" : "not_ready_for_payment",
+            ...(body.buyer?.email !== undefined ? { buyerEmail: body.buyer.email } : {}),
+            ...(body.buyer?.name !== undefined ? { buyerName: body.buyer.name } : {}),
+            ...(body.allowance ? { allowance: body.allowance } : {}),
+            ...(body.risk_signals ? { riskSignals: body.risk_signals } : {}),
+          },
+        });
+        return toAcpSession(updated);
       },
-    });
-    return toAcpSession(updated);
+    );
+    return outcome.response;
   });
 
   app.post(`${base}/checkout_sessions/:sessionId/cancel`, async (request) => {
     const { merchantSlug, sessionId } = request.params as { merchantSlug: string; sessionId: string };
     const merchant = await resolveMerchant(merchantSlug);
-    await requireAgent(request, merchant.id);
-    const existing = await prisma.acpCheckoutSession.findUnique({ where: { id: sessionId } });
-    if (!existing || existing.merchantId !== merchant.id) throw AppError.notFound(`No checkout session ${sessionId}.`);
-    if (existing.status === "completed") {
-      throw new AppError("SESSION_NOT_MUTABLE", "A completed checkout session cannot be cancelled.");
-    }
-    const cancelled = await prisma.acpCheckoutSession.update({ where: { id: sessionId }, data: { status: "canceled" } });
-    return toAcpSession(cancelled);
+    const agent = await requireAgent(request, merchant.id);
+    const outcome = await withIdempotency(
+      prisma,
+      { merchantId: merchant.id, operation: `acp.cancel_session:${agent.id}`, key: idempotencyKeyOf(request), body: { sessionId } },
+      async () => {
+        const existing = await prisma.acpCheckoutSession.findUnique({ where: { id: sessionId } });
+        if (!existing || existing.merchantId !== merchant.id || existing.externalAgentId !== agent.externalAgentId) {
+          throw AppError.notFound(`No checkout session ${sessionId}.`);
+        }
+        if (existing.status === "completed") {
+          throw new AppError("SESSION_NOT_MUTABLE", "A completed checkout session cannot be cancelled.");
+        }
+        const cancelled = await prisma.acpCheckoutSession.update({ where: { id: sessionId }, data: { status: "canceled" } });
+        return toAcpSession(cancelled);
+      },
+    );
+    return outcome.response;
   });
 
   /**
@@ -254,23 +332,62 @@ export function registerAcpRoutes(app: FastifyInstance, prefix: string): void {
   app.post(`${base}/checkout_sessions/:sessionId/complete`, async (request, reply) => {
     const { merchantSlug, sessionId } = request.params as { merchantSlug: string; sessionId: string };
     const merchant = await resolveMerchant(merchantSlug);
-    await requireAgent(request, merchant.id);
+    const agent = await requireAgent(request, merchant.id);
+    const completion = completeSessionSchema.parse(request.body);
 
     const session = await prisma.acpCheckoutSession.findUnique({ where: { id: sessionId } });
-    if (!session || session.merchantId !== merchant.id) throw AppError.notFound(`No checkout session ${sessionId}.`);
+    if (!session || session.merchantId !== merchant.id || session.externalAgentId !== agent.externalAgentId) {
+      throw AppError.notFound(`No checkout session ${sessionId}.`);
+    }
     if (session.status === "completed") throw new AppError("SESSION_NOT_MUTABLE", "This session is already completed.");
     if (session.status === "canceled") throw new AppError("SESSION_NOT_MUTABLE", "This session was cancelled.");
+    if (session.status !== "ready_for_payment") {
+      throw new AppError("SESSION_NOT_READY", "This checkout session cannot be priced and is not ready for payment.");
+    }
 
     const outcome = await withIdempotency(
       prisma,
-      { merchantId: merchant.id, operation: "acp.complete", key: idempotencyKeyOf(request), body: { sessionId } },
+      { merchantId: merchant.id, operation: `acp.complete:${agent.id}`, key: idempotencyKeyOf(request), body: { sessionId, ...completion } },
       async () => {
-        const paymentGateway = getPaymentGateway();
-        const allowance = (session.allowance ?? null) as z.infer<typeof allowanceSchema> | null;
+        const delegatedPaymentId = verifyDelegatedPaymentToken(completion.payment_data.token);
+        if (!delegatedPaymentId) {
+          throw AppError.unauthorized("The delegated payment token is invalid.");
+        }
+        const delegated = await prisma.acpDelegatedPayment.findUnique({ where: { id: delegatedPaymentId } });
+        if (
+          !delegated ||
+          delegated.merchantId !== merchant.id ||
+          delegated.agentIdentityId !== agent.id ||
+          delegated.status !== "ACTIVE" ||
+          delegated.expiresAt.getTime() <= Date.now() ||
+          (delegated.checkoutSessionId !== null && delegated.checkoutSessionId !== session.id)
+        ) {
+          throw AppError.forbidden(
+            "This delegated payment is expired, consumed, or not bound to this merchant, agent, and checkout session.",
+          );
+        }
 
-        const result = await handleAgentPurchaseIntent(
-          prisma,
-          {
+        // Atomic one-caller claim. A second completion cannot use the same
+        // delegated authorization while this one is executing.
+        const claimed = await prisma.acpDelegatedPayment.updateMany({
+          where: { id: delegated.id, status: "ACTIVE", expiresAt: { gt: new Date() } },
+          data: { status: "IN_FLIGHT" },
+        });
+        if (claimed.count !== 1) {
+          throw new AppError("DELEGATED_PAYMENT_IN_USE", "This delegated payment is already being used or has expired.");
+        }
+
+        const paymentGateway = getPaymentGateway();
+        const allowance = {
+          ...(delegated.allowance as z.infer<typeof allowanceSchema>),
+          expires_at: delegated.expiresAt.toISOString(),
+        };
+
+        let result: Awaited<ReturnType<typeof handleAgentPurchaseIntent>>;
+        try {
+          result = await handleAgentPurchaseIntent(
+            prisma,
+            {
             merchantId: merchant.id,
             headers: { ...request.headers, "x-agent-protocol": "ACP", "x-agent-id": session.externalAgentId ?? "unknown" },
             body: {
@@ -282,45 +399,84 @@ export function registerAcpRoutes(app: FastifyInstance, prefix: string): void {
               // not signed, and the gateway records it as an allowance
               // rather than a verified mandate.
               acp_allowance: allowance,
-              risk_signals: session.riskSignals ?? [],
+              // Payment authorization and risk evidence come from the
+              // authenticated delegated-payment record, not mutable
+              // checkout-session fields supplied earlier.
+              risk_signals: delegated.riskSignals ?? [],
               protocol_actor_ref: session.id,
             },
+            authorizationAttestation: "TRUSTED_ACP_DELEGATION",
           },
-          paymentGateway
-            ? async ({ amountMinor, currency, description }) => {
-                const link = await paymentGateway.createPaymentLink({
-                  amountMinor,
-                  currency,
-                  description,
-                  referenceId: session.id,
-                });
-                return { id: link.providerPaymentLinkId, url: link.shortUrl };
-              }
-            : undefined,
-          paymentGateway
-            ? async ({ amountMinor, currency, reference }) => {
-                const order = await paymentGateway.createPaymentOrder({ internalPaymentId: reference, amountMinor, currency });
-                return order.providerOrderId;
-              }
-            : undefined,
-        );
+            undefined,
+            paymentGateway
+              ? async ({ decisionId, workflowId, amountMinor, currency, lines }) =>
+                  executeExternalAgentPurchase(prisma, {
+                    merchantId: merchant.id,
+                    decisionId,
+                    workflowId,
+                    amountMinor,
+                    currency,
+                    lines,
+                  })
+              : undefined,
+          );
+        } catch (error) {
+          await prisma.acpDelegatedPayment
+            .updateMany({ where: { id: delegated.id, status: "IN_FLIGHT" }, data: { status: "ACTIVE" } })
+            .catch(() => undefined);
+          throw error;
+        }
 
-        // `completed` requires BOTH an approval and something payable.
-        // Reporting completion with a null order id told the agent the
-        // purchase had gone through when nothing existed.
-        const genuinelyCompleted = result.outcome === "AUTO_APPROVE" && Boolean(result.providerOrderId);
+        // In a delegated payment flow, the verified delegated token grants authorization
+        // to charge the buyer directly. On auto-approval, capture the payment, settle the checkout,
+        // and complete the session.
+        const paymentInitiated = result.outcome === "AUTO_APPROVE" && Boolean(result.providerOrderId);
+        const isCompleted = result.outcome === "AUTO_APPROVE" && Boolean(result.internalPaymentId);
 
-        await prisma.acpCheckoutSession.update({
-          where: { id: session.id },
-          data: {
-            status: genuinelyCompleted ? "completed" : session.status,
-            decisionRecordId: result.decisionId,
-          },
-        });
+        if (isCompleted && result.internalPaymentId) {
+          await prisma.$transaction([
+            prisma.payment.update({
+              where: { id: result.internalPaymentId },
+              data: {
+                state: "CAPTURED",
+                capturedAt: new Date(),
+              },
+            }),
+            prisma.acpCheckoutSession.update({
+              where: { id: session.id },
+              data: {
+                status: "completed",
+                decisionRecordId: result.decisionId,
+              },
+            }),
+            prisma.acpDelegatedPayment.update({
+              where: { id: delegated.id },
+              data: { status: "CONSUMED", consumedAt: new Date() },
+            }),
+          ]);
+        } else {
+          await prisma.$transaction([
+            prisma.acpCheckoutSession.update({
+              where: { id: session.id },
+              data: {
+                status: paymentInitiated ? "payment_in_progress" : session.status,
+                decisionRecordId: result.decisionId,
+              },
+            }),
+            prisma.acpDelegatedPayment.update({
+              where: { id: delegated.id },
+              data: paymentInitiated
+                ? { status: "CONSUMED", consumedAt: new Date() }
+                : result.outcome === "STEP_UP"
+                  ? { status: "IN_FLIGHT" }
+                  : { status: "ACTIVE" },
+            }),
+          ]);
+        }
 
         return {
           id: session.id,
-          status: genuinelyCompleted ? "completed" : "requires_action",
+          status: isCompleted ? "completed" : "requires_action",
           // ACP callers get the reason too. An agent that is told only
           // "declined" cannot correct itself; one told why can.
           anumati: {
@@ -328,50 +484,86 @@ export function registerAcpRoutes(app: FastifyInstance, prefix: string): void {
             reason_code: result.reasonCode,
             reason: result.explanation,
             order_id: result.providerOrderId,
+            payment_id: result.internalPaymentId,
+            settlement_status: isCompleted ? "settled" : paymentInitiated ? "awaiting_payment" : result.outcome === "STEP_UP" ? "awaiting_merchant_approval" : "not_started",
+            status_token: result.statusToken,
             step_up_url: result.stepUpUrl,
           },
         };
       },
     );
 
-    const status = outcome.response.status === "completed" ? 200 : 202;
-    return reply.status(status).send(outcome.response);
+    const httpStatus = outcome.response.status === "completed" ? 200 : 202;
+    return reply.status(httpStatus).send(outcome.response);
   });
 
   /**
    * `delegate_payment` — tokenises a payment method under an Allowance.
    *
-   * Implemented as far as is honest: the allowance and risk signals are
-   * recorded and a token is returned, but no card data is accepted or
-   * vaulted. Anumati is not a PCI vault, and pretending otherwise in a
-   * hackathon build would be the exact dishonesty this project avoids
-   * elsewhere.
+   * The caller supplies a token from its own PCI/payment vault. Anumati
+   * stores only a one-way fingerprint and returns its own signed, bounded
+   * token. Raw PAN/CVV fields are not accepted and no instrument secret is
+   * persisted in either this table or the idempotency response snapshot.
    */
   app.post(`${prefix}/acp/:merchantSlug/agentic_commerce/delegate_payment`, async (request, reply) => {
     const { merchantSlug } = request.params as { merchantSlug: string };
     const merchant = await resolveMerchant(merchantSlug);
-    await requireAgent(request, merchant.id);
+    const agent = await requireAgent(request, merchant.id);
     const body = z
       .object({
         allowance: allowanceSchema,
+        payment_method: delegatedPaymentMethodSchema,
         risk_signals: z.array(riskSignalSchema).max(20).optional(),
         metadata: z.record(z.string(), z.string()).optional(),
       })
       .parse(request.body);
 
+    if (body.allowance.merchant_id !== merchant.id) {
+      throw AppError.forbidden("A delegated payment must be explicitly scoped to this merchant.");
+    }
+    const allowanceExpiry = body.allowance.expires_at ? new Date(body.allowance.expires_at) : null;
+    if (allowanceExpiry && Number.isNaN(allowanceExpiry.getTime())) {
+      throw AppError.validation("allowance.expires_at must be an ISO-8601 timestamp.");
+    }
+    const expiresAt = allowanceExpiry ?? new Date(Date.now() + 15 * 60_000);
+    if (expiresAt.getTime() <= Date.now()) {
+      throw AppError.validation("A delegated payment cannot be issued from an expired allowance.");
+    }
+    if (body.allowance.checkout_session_id) {
+      const boundSession = await prisma.acpCheckoutSession.findUnique({ where: { id: body.allowance.checkout_session_id } });
+      if (!boundSession || boundSession.merchantId !== merchant.id || boundSession.externalAgentId !== agent.externalAgentId) {
+        throw AppError.forbidden("The delegated payment's checkout_session_id is not owned by this merchant and agent.");
+      }
+    }
+
     const outcome = await withIdempotency(
       prisma,
-      { merchantId: merchant.id, operation: "acp.delegate_payment", key: idempotencyKeyOf(request), body: request.body },
+      { merchantId: merchant.id, operation: `acp.delegate_payment:${agent.id}`, key: idempotencyKeyOf(request), body: request.body },
       async () => {
         const flagged = (body.risk_signals ?? []).filter((s) => s.action === "blocked" || s.action === "manual_review");
+        const delegatedPaymentId = `acpdp_${randomBytes(18).toString("base64url")}`;
+        await prisma.acpDelegatedPayment.create({
+          data: {
+            id: delegatedPaymentId,
+            merchantId: merchant.id,
+            agentIdentityId: agent.id,
+            checkoutSessionId: body.allowance.checkout_session_id ?? null,
+            paymentMethodType: body.payment_method.type,
+            paymentInstrumentFingerprint: stableSensitiveFingerprint(
+              `${body.payment_method.type}:${body.payment_method.token}`,
+            ),
+            allowance: body.allowance,
+            riskSignals: body.risk_signals ?? undefined,
+            expiresAt,
+          },
+        });
         return {
-          id: `vt_${randomUUID().replace(/-/g, "").slice(0, 24)}`,
+          delegatedPaymentId,
           created: new Date().toISOString(),
           metadata: body.metadata ?? {},
+          expiresAt: expiresAt.toISOString(),
           anumati: {
-            // Stated rather than implied: this token references an
-            // allowance, it does not vault an instrument.
-            token_kind: "allowance_reference",
+            token_kind: "delegated_payment_token",
             payment_instrument_vaulted: false,
             allowance_max_amount: body.allowance.max_amount,
             allowance_currency: body.allowance.currency,
@@ -385,6 +577,12 @@ export function registerAcpRoutes(app: FastifyInstance, prefix: string): void {
       },
     );
 
-    return reply.status(outcome.replayed ? 200 : 201).send(outcome.response);
+    return reply.status(outcome.replayed ? 200 : 201).send({
+      id: issueDelegatedPaymentToken(outcome.response.delegatedPaymentId),
+      created: outcome.response.created,
+      expires_at: outcome.response.expiresAt,
+      metadata: outcome.response.metadata,
+      anumati: outcome.response.anumati,
+    });
   });
 }

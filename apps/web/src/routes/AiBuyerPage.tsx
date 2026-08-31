@@ -12,6 +12,9 @@ import type { BuyerAgentResponseDTO } from "@razorgrowth/contracts";
 import { PageHeader } from "../components/layout/PageHeader";
 import { Card, CardBody } from "../components/ui/Card";
 import { StarterQueries } from "../components/buyer-agent/StarterQueries";
+import { AgentBubble, BuyerBubble, ErrorBubble, TypingBubble } from "../components/buyer-agent/ChatTurn";
+import { RawResponseToggle } from "../components/buyer-agent/RawResponseToggle";
+import { useBuyerViewMode } from "../lib/buyer-view-mode";
 import { BuyerReasoningPipeline } from "../components/buyer-agent/BuyerReasoningPipeline";
 import { useResetBuyerConversation, useSendBuyerMessage } from "../hooks/use-buyer-agent";
 import { ApiError } from "../lib/api-client";
@@ -96,6 +99,7 @@ export default function AiBuyerPage() {
   const [turns, setTurns] = useState<Turn[]>([]);
   const [conversationId, setConversationId] = useState<string | undefined>();
   const [inputValue, setInputValue] = useState("");
+  const [viewMode, setViewMode] = useBuyerViewMode();
   const sendMessage = useSendBuyerMessage();
   const resetConversation = useResetBuyerConversation();
 
@@ -135,10 +139,33 @@ export default function AiBuyerPage() {
       <div className="flex flex-col gap-3 sm:flex-row sm:items-start sm:justify-between">
         <div>
           <PageHeader
-          title={"Agent’s-Eye View"}
-          lead={"Not a shopping tool — for a person, filters beat typing. This shows what an AI agent understands about your products, and which ones it cannot buy at all."}
-        />
+            title={"AI Buyer Agent"}
+            lead={"Let an AI agent discover, compare, and propose bounded purchases from the merchant's authoritative catalog."}
+          />
         </div>
+        <div className="flex shrink-0 items-center gap-2">
+          {/* The toggle is part of the pitch, not a settings checkbox:
+              switching to the trace mid-demo IS the demonstration. */}
+          <div className="inline-flex rounded-md border border-border bg-surface p-0.5" role="tablist" aria-label="Buyer agent view">
+            {([
+              ["buyer", "Buyer view"],
+              ["trace", "Agent trace"],
+            ] as const).map(([value, label]) => (
+              <button
+                key={value}
+                type="button"
+                role="tab"
+                aria-selected={viewMode === value}
+                onClick={() => setViewMode(value)}
+                className={
+                  "rounded px-3 py-1.5 text-sm font-medium transition-colors " +
+                  (viewMode === value ? "bg-brand-600 text-white" : "text-ink-muted hover:text-ink")
+                }
+              >
+                {label}
+              </button>
+            ))}
+          </div>
         {turns.length > 0 ? (
           <button
             type="button"
@@ -149,20 +176,20 @@ export default function AiBuyerPage() {
             New search
           </button>
         ) : null}
+        </div>
       </div>
 
       {turns.length === 0 ? (
         <>
-          <Card>
+          <Card className="border-brand-200/80 bg-gradient-to-br from-brand-50/60 to-surface">
             <CardBody className="flex flex-col items-center gap-3 py-10 text-center">
-              <div className="flex h-12 w-12 items-center justify-center rounded-full bg-brand-50 text-brand-600">
-                <Bot size={22} />
+              <div className="flex h-14 w-14 items-center justify-center rounded-2xl bg-brand-600 text-white shadow-md">
+                <Bot size={28} />
               </div>
-              <p className="text-base font-semibold text-ink">Try a real shopping request</p>
-              <p className="max-w-md text-sm text-ink-muted">
+              <h2 className="text-xl font-bold tracking-tight text-ink">Good afternoon 👋 What can I help you buy?</h2>
+              <p className="max-w-lg text-sm text-ink-muted leading-relaxed">
                 Recommendations are grounded in structured price, inventory, variant, and policy data from the
-                Agent-Readable Catalog — the AI interprets your language, but never invents a product, price, or
-                availability.
+                Agent-Readable Catalog — the AI interprets your language, but strictly obeys merchant floor margins and spending limits.
               </p>
               <StarterQueries onSelect={handleSend} />
             </CardBody>
@@ -185,11 +212,20 @@ export default function AiBuyerPage() {
           </div>
         </>
       ) : (
-        <div className="space-y-6">
+        <div className={viewMode === "buyer" ? "space-y-4" : "space-y-6"}>
           {turns.map((turn, i) => {
-            if (turn.role === "BUYER") return null; // rendered as step 1 inside the following pipeline
+            const precedingMessage =
+              i > 0 && turns[i - 1]!.role === "BUYER" ? (turns[i - 1] as { content: string }).content : "";
 
-            const precedingMessage = i > 0 && turns[i - 1]!.role === "BUYER" ? (turns[i - 1] as { content: string }).content : "";
+            // ── Simple mode: a conversation ──────────────────────────────
+            if (viewMode === "buyer") {
+              if (turn.role === "BUYER") return <BuyerBubble key={turn.id} message={turn.content} />;
+              if (turn.role === "AGENT_ERROR") return <ErrorBubble key={turn.id} message={turn.message} />;
+              return <AgentBubble key={turn.id} buyerMessage={precedingMessage} response={turn.response} />;
+            }
+
+            // ── Trace mode: the audit view, unchanged ────────────────────
+            if (turn.role === "BUYER") return null; // rendered as step 1 inside the following pipeline
 
             if (turn.role === "AGENT_ERROR") {
               return (
@@ -212,9 +248,12 @@ export default function AiBuyerPage() {
                   ) : null}
                   <span>{response.candidateCount} candidate{response.candidateCount === 1 ? "" : "s"} considered</span>
                 </div>
+                <RawResponseToggle response={response} />
               </div>
             );
           })}
+
+          {sendMessage.isPending && viewMode === "buyer" ? <TypingBubble /> : null}
         </div>
       )}
 

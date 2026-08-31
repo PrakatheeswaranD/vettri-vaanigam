@@ -53,6 +53,33 @@ const envSchema = z.object({
   RAZORPAY_TIMEOUT_MS: z.coerce.number().int().positive().default(10000),
   // --- Merchant identity/auth (PART 10 §1) ---
   SESSION_VALIDITY_HOURS: z.coerce.number().int().positive().default(12),
+  // HMAC key for ACP delegated-payment tokens. It is not a payment-provider
+  // secret, but it must be unpredictable because possession authorizes one
+  // bounded completion. The development default is rejected in production.
+  ACP_DELEGATION_TOKEN_SECRET: z
+    .string()
+    .min(32)
+    .default("development-only-acp-token-secret-change-me"),
+  DATA_FINGERPRINT_SECRET: z
+    .string()
+    .min(32)
+    .default("development-only-data-fingerprint-change-me"),
+  PUBLIC_RATE_LIMIT_MAX: z.coerce.number().int().positive().default(120),
+  AUTH_RATE_LIMIT_MAX: z.coerce.number().int().positive().default(20),
+  RATE_LIMIT_WINDOW_MS: z.coerce.number().int().min(1_000).default(60_000),
+  RATE_LIMIT_MAX_BUCKETS: z.coerce.number().int().min(100).max(1_000_000).default(10_000),
+  FINANCIAL_IDEMPOTENCY_RETENTION_DAYS: z.coerce.number().int().min(365).max(3650).default(2555),
+  X402_FACILITATOR_URL: z.string().url().optional(),
+  X402_FACILITATOR_API_KEY: z.string().min(1).optional(),
+  X402_FACILITATOR_TIMEOUT_MS: z.coerce.number().int().positive().default(10_000),
+  X402_NETWORK: z.string().min(3).default("eip155:84532"),
+  X402_ASSET: z.string().min(8).optional(),
+  X402_PAY_TO: z.string().min(8).optional(),
+  X402_ASSET_CURRENCY: z.enum(["INR", "USD"]).default("USD"),
+  X402_ATOMIC_UNITS_PER_MINOR: z.coerce.number().int().positive().optional(),
+  DATA_RETENTION_DAYS: z.coerce.number().int().min(1).max(3650).default(30),
+  RETENTION_SWEEPER_ENABLED: z.enum(["true", "false"]).default("false").transform((value) => value === "true"),
+  RETENTION_SWEEP_INTERVAL_MS: z.coerce.number().int().min(60_000).default(24 * 60 * 60 * 1_000),
 });
 
 const parsed = envSchema.safeParse(process.env);
@@ -73,6 +100,32 @@ if (razorpayConfiguredCount > 0 && razorpayConfiguredCount < razorpayFields.leng
   throw new Error(
     "Partial Razorpay configuration: RAZORPAY_KEY_ID, RAZORPAY_KEY_SECRET, and RAZORPAY_WEBHOOK_SECRET must be set together, or not at all.",
   );
+}
+
+if (
+  parsed.data.NODE_ENV === "production" &&
+  parsed.data.ACP_DELEGATION_TOKEN_SECRET === "development-only-acp-token-secret-change-me"
+) {
+  throw new Error("ACP_DELEGATION_TOKEN_SECRET must be set to a unique secret in production.");
+}
+if (
+  parsed.data.NODE_ENV === "production" &&
+  parsed.data.DATA_FINGERPRINT_SECRET === "development-only-data-fingerprint-change-me"
+) {
+  throw new Error("DATA_FINGERPRINT_SECRET must be set to a unique secret in production.");
+}
+
+const x402SettlementFields = [
+  parsed.data.X402_ASSET,
+  parsed.data.X402_PAY_TO,
+  parsed.data.X402_ATOMIC_UNITS_PER_MINOR,
+];
+const x402SettlementCount = x402SettlementFields.filter((value) => value !== undefined).length;
+if (x402SettlementCount > 0 && x402SettlementCount < x402SettlementFields.length) {
+  throw new Error("Partial x402 configuration: X402_ASSET, X402_PAY_TO and X402_ATOMIC_UNITS_PER_MINOR must be set together.");
+}
+if (parsed.data.X402_FACILITATOR_URL && x402SettlementCount !== x402SettlementFields.length) {
+  throw new Error("X402_FACILITATOR_URL requires a complete asset/payee/unit configuration.");
 }
 
 export const env = parsed.data;

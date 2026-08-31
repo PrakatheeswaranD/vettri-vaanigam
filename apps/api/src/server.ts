@@ -1,8 +1,10 @@
 import { env } from "./config/env.js";
 import { buildApp } from "./app.js";
 import { prisma } from "./db/client.js";
+import { startRetentionSweeper } from "./modules/privacy/retention.js";
 
 const app = buildApp();
+const stopRetentionSweeper = startRetentionSweeper(prisma);
 
 async function main() {
   try {
@@ -16,6 +18,7 @@ async function main() {
 
 async function shutdown(signal: string) {
   app.log.info(`received ${signal}, shutting down...`);
+  stopRetentionSweeper();
   await app.close();
   await prisma.$disconnect();
   process.exit(0);

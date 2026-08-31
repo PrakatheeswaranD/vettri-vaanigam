@@ -15,6 +15,7 @@ build/
 
 # local dev database (PGlite data directory — see scripts/db-server.mjs)
 .dbdata/
+.dbdata-verification-*/
 
 # logs
 *.log

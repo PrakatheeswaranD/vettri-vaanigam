@@ -59,6 +59,9 @@ export function setPaymentProviderOrderId(prisma: PrismaClient, id: string, prov
 
 export interface ApplyPaymentTransitionInput {
   state: PaymentState;
+  customerDebitStatus?: "UNKNOWN" | "NOT_DEBITED" | "DEBITED";
+  merchantCreditStatus?: "UNKNOWN" | "NOT_CREDITED" | "CREDITED";
+  automaticRetryBlocked?: boolean;
   providerPaymentId?: string;
   failureCode?: string | null;
   failureCategory?: string | null;
@@ -73,6 +76,9 @@ export function applyPaymentTransition(tx: Prisma.TransactionClient, id: string,
     where: { id },
     data: {
       state: data.state,
+      customerDebitStatus: data.customerDebitStatus,
+      merchantCreditStatus: data.merchantCreditStatus,
+      automaticRetryBlocked: data.automaticRetryBlocked,
       providerPaymentId: data.providerPaymentId,
       failureCode: data.failureCode,
       failureCategory: data.failureCategory,

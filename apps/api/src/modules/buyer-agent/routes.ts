@@ -14,6 +14,11 @@ import { getConversation, handleBuyerMessage, resetBuyerConversation } from "./s
 const conversationParamsSchema = z.object({ id: z.string().uuid() });
 
 export function registerBuyerAgentRoutes(app: FastifyInstance, prefix: string): void {
+  app.post(`${prefix}/buyer/marketplace/messages`, async (request) => {
+    const merchantId = getAuthenticatedMerchantId(request);
+    const body = buyerMessageRequestSchema.parse(request.body);
+    return handleBuyerMessage(prisma, { merchantId, conversationId: body.conversationId, message: body.message, marketplace: true });
+  });
   app.post(`${prefix}/buyer-agent/messages`, async (request) => {
     const merchantId = getAuthenticatedMerchantId(request);
     const body = buyerMessageRequestSchema.parse(request.body);
@@ -30,6 +35,6 @@ export function registerBuyerAgentRoutes(app: FastifyInstance, prefix: string): 
     const merchantId = getAuthenticatedMerchantId(request);
     const params = conversationParamsSchema.parse(request.params);
     await resetBuyerConversation(prisma, merchantId, params.id);
-    reply.status(204).send();
+    return reply.status(204).send();
   });
 }

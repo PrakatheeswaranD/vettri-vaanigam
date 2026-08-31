@@ -9,6 +9,9 @@ import type {
   MerchantDTO,
   MerchantPolicyDTO,
   MerchantStatsDTO,
+  MarketplaceDiscoveryResponseDTO,
+  BuyerSpendingPolicyDTO,
+  BuyerSpendingPolicyUpdateDTO,
   PaginationMetaDTO,
   ProductDTO,
   ProductSummaryDTO,
@@ -17,17 +20,18 @@ import type {
   SystemCapabilitiesDTO,
   TransactionDTO,
 } from "@razorgrowth/contracts";
-import { apiGet, apiPost, type QueryParams } from "../lib/api-client";
+import { apiGet, apiPost, apiPut, type QueryParams } from "../lib/api-client";
 
 interface Paginated<T> {
   items: T[];
   pagination: PaginationMetaDTO;
 }
 
-export function useMerchant() {
+export function useMerchant(enabled = true) {
   return useQuery({
     queryKey: ["merchant"],
     queryFn: () => apiGet<MerchantDTO>("/merchant"),
+    enabled,
   });
 }
 
@@ -67,6 +71,25 @@ export function useCatalogCategories() {
   return useQuery({
     queryKey: ["catalog", "categories"],
     queryFn: () => apiGet<{ items: string[] }>("/catalog/categories"),
+  });
+}
+
+export function useMarketplaceDiscovery(category?: string) {
+  return useQuery({
+    queryKey: ["marketplace", "discovery", category],
+    queryFn: () => apiGet<MarketplaceDiscoveryResponseDTO>("/marketplace/discovery", category ? { category } : undefined),
+  });
+}
+
+export function useBuyerSpendingPolicy() {
+  return useQuery({ queryKey: ["buyer", "policy"], queryFn: () => apiGet<BuyerSpendingPolicyDTO>("/buyer/policy") });
+}
+
+export function useUpdateBuyerSpendingPolicy() {
+  const queryClient = useQueryClient();
+  return useMutation({
+    mutationFn: (body: BuyerSpendingPolicyUpdateDTO) => apiPut<BuyerSpendingPolicyDTO>("/buyer/policy", body),
+    onSuccess: (data) => queryClient.setQueryData(["buyer", "policy"], data),
   });
 }
 

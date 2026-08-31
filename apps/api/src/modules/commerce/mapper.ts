@@ -13,6 +13,9 @@ export function toTransactionDTO(order: OrderWithLatestPayment): TransactionDTO 
     customerName: order.customer?.displayName ?? "Guest",
     amount: { amountMinor: order.totalAmountMinor, currency: order.currency },
     state: latestPayment?.state ?? "UNKNOWN",
+    customerDebitStatus: latestPayment?.customerDebitStatus ?? "UNKNOWN",
+    merchantCreditStatus: latestPayment?.merchantCreditStatus ?? "UNKNOWN",
+    automaticRetryBlocked: latestPayment?.automaticRetryBlocked ?? false,
     provider: latestPayment?.provider ?? "DEMO",
     providerOrderId: latestPayment?.providerOrderId ?? null,
     providerPaymentId: latestPayment?.providerPaymentId ?? null,
@@ -53,6 +56,9 @@ function toPaymentSummaryDTO(payment: Payment): PaymentSummaryDTO {
     id: payment.id,
     provider: payment.provider,
     state: payment.state,
+    customerDebitStatus: payment.customerDebitStatus,
+    merchantCreditStatus: payment.merchantCreditStatus,
+    automaticRetryBlocked: payment.automaticRetryBlocked,
     failureCategory: payment.failureCategory as PaymentFailureCategory | null,
     capturedAt: payment.capturedAt?.toISOString() ?? null,
   };
@@ -60,12 +66,17 @@ function toPaymentSummaryDTO(payment: Payment): PaymentSummaryDTO {
 
 export function toCheckoutSessionDTO(checkout: CheckoutSession & { payments?: Payment[] }): CheckoutSessionDTO {
   const payment = checkout.payments?.[0] ?? null;
+  const authorizationId = checkout.authorizationId ?? checkout.gatewayDecisionId;
+  if (!authorizationId) throw new Error(`Checkout ${checkout.id} has no authorization reference.`);
   return {
     id: checkout.id,
     merchantId: checkout.merchantId,
     cartId: checkout.cartId,
     orderId: checkout.orderId,
-    authorizationId: checkout.authorizationId,
+    // Both are server-side authorization records. Merchant growth
+    // checkouts use ExecutionAuthorization; outside-agent checkouts use
+    // the gateway DecisionRecord id.
+    authorizationId,
     status: checkout.status,
     amountMinor: checkout.amountMinor,
     currency: checkout.currency,

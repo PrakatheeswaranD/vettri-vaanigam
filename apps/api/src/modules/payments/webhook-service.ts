@@ -154,6 +154,10 @@ export async function processRazorpayWebhook(
 
   const now = systemClock.now();
   const result = await withLedgerConcurrencyRetry(prisma, async (tx) => {
+    await tx.paymentProviderEvent.update({
+      where: { id: created.id },
+      data: { merchantId, paymentId: payment.id },
+    });
     await appendLedgerEvent(tx, {
       workflowId: checkout.workflowId,
       merchantId,

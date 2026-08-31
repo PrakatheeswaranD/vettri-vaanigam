@@ -2,16 +2,13 @@
   "version": "0.0.1",
   "configurations": [
     {
-      "name": "api",
+      "name": "dev",
       "runtimeExecutable": "pnpm",
-      "runtimeArgs": ["run", "dev:api"],
-      "port": 4000
-    },
-    {
-      "name": "web",
-      "runtimeExecutable": "pnpm",
-      "runtimeArgs": ["run", "dev:web"],
-      "port": 5173
+      "runtimeArgs": [
+        "run",
+        "dev"
+      ],
+      "port": 3000
     }
   ]
 }

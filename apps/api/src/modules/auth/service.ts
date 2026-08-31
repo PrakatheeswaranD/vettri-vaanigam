@@ -10,12 +10,14 @@ import { createSession, revokeSession } from "./session.js";
  * enumerate registered merchant-user emails. */
 const INVALID_CREDENTIALS_MESSAGE = "Invalid email or password.";
 
-export async function login(prisma: PrismaClient, email: string, password: string): Promise<LoginResponseDTO> {
+export async function login(prisma: PrismaClient, email: string, password: string, experience?: "customer" | "merchant" | "admin"): Promise<LoginResponseDTO> {
   const user = await findMerchantUserByEmail(prisma, email);
   if (!user) throw AppError.unauthorized(INVALID_CREDENTIALS_MESSAGE);
 
   const valid = await verifyPassword(password, user.passwordHash);
   if (!valid) throw AppError.unauthorized(INVALID_CREDENTIALS_MESSAGE);
+  const actualExperience = user.role === "CUSTOMER" ? "customer" : user.role === "PLATFORM_ADMIN" ? "admin" : "merchant";
+  if (experience && experience !== actualExperience) throw AppError.forbidden("This account cannot access the selected role. Use its dedicated login.");
 
   const session = await createSession(prisma, user.id);
   return {

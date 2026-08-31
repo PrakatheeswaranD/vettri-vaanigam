@@ -2,10 +2,12 @@ import { useState } from "react";
 import { NavLink } from "react-router-dom";
 import { clsx } from "clsx";
 import { Menu, X, ShieldCheck } from "lucide-react";
-import { NAV_SECTIONS } from "./nav-items";
+import { getNavSections } from "./nav-items";
+import { useExperienceRole } from "../../lib/experience-role";
 
 export function MobileNav() {
   const [open, setOpen] = useState(false);
+  const sections = getNavSections(useExperienceRole());
 
   return (
     <div className="lg:hidden">
@@ -44,7 +46,7 @@ export function MobileNav() {
               </button>
             </div>
             <nav className="flex-1 space-y-4 overflow-y-auto px-3 py-4" aria-label="Primary">
-              {NAV_SECTIONS.map((section) => (
+              {sections.map((section) => (
                 <div key={section.id}>
                   <p className="px-3 pb-1.5 text-[11px] font-semibold uppercase tracking-wider text-ink-faint">{section.label}</p>
                   <div className="space-y-0.5">

@@ -40,6 +40,7 @@ const UNAUTHENTICATED_PATH_PREFIXES = [
  * slug sits in the middle of the path. */
 const UNAUTHENTICATED_PATH_PATTERNS = [
   /^\/api\/v1\/agent-gateway\/[^/]+\/intents(\?.*)?$/,
+  /^\/api\/v1\/agent-gateway\/decisions\/[^/]+\/status(\?.*)?$/,
   // Discovery documents are public on purpose — an agent must be able to
   // read the catalogue before it can have a session, and these expose
   // only what the merchant already publishes to human shoppers.
@@ -81,6 +82,12 @@ export async function authenticateRequest(request: FastifyRequest, _reply: Fasti
   request.merchantId = session.merchantId;
   request.merchantUserId = session.merchantUserId;
   request.merchantUserRole = session.role;
+  const path = request.url.split("?", 1)[0]!;
+  if (path.startsWith("/api/v1/admin/") && session.role !== "PLATFORM_ADMIN") throw AppError.forbidden("Platform administrator access required.");
+  if (session.role === "CUSTOMER") {
+    const allowed = path.startsWith("/api/v1/buyer/") || path.startsWith("/api/v1/buyer-agent/conversations/") || path.startsWith("/api/v1/marketplace/") || path.startsWith("/api/v1/auth/") || path.startsWith("/api/v1/system/");
+    if (!allowed) throw AppError.forbidden("Customer sessions cannot access merchant management APIs.");
+  }
 }
 
 /** RBAC: only OWNER or APPROVER may decide an approval (PART 10 §1).

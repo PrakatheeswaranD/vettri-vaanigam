@@ -83,9 +83,9 @@ export async function initiatePayment(prisma: PrismaClient, merchantId: string, 
     // `existing.state` is CREATED or UNKNOWN with no providerOrderId yet —
     // a prior provider-order-creation call never got a confirmed response
     // (PART 07 §43, §60). Retrying re-uses the SAME Payment row (and
-    // therefore the same `receipt`) rather than creating a new one — see
-    // the Known Issues note in PROGRESS.md for the residual risk this
-    // accepts.
+    // therefore the same `receipt`) rather than creating a new one. Until
+    // the provider confirms an outcome, the payment remains UNKNOWN and
+    // cannot be treated as settled.
     return continueProviderOrderCreation(prisma, merchantId, existing, checkout.workflowId, gateway, publicConfig, now);
   }
 

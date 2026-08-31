@@ -24,6 +24,11 @@ PART 09 — Full Integration, End-to-End Testing, Jury Demo, UX Polish, Document
 
 No PART 10 or later implementation part exists unless the project owner explicitly modifies this Master Engineering Contract.
 
+Current status (2026-08-29): PART 01 through PART 09 are implemented and
+verified. Agent-commerce hardening—ACP, x402, publishable catalogs, campaigns,
+external purchase lifecycle, privacy and abuse controls—was completed as final
+PART 09 hardening, not as a new implementation part. See `PROGRESS.md`.
+
 Sections, phases, tasks, milestones, checklists, or numbered implementation steps inside any PART are internal subdivisions only.
 
 For example, PART 01 contains multiple internal phases. Those phases do NOT create additional project parts.

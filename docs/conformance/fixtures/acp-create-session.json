@@ -1,0 +1,6 @@
+{
+  "line_items": [{ "id": "MER-PUL-UK9-BLK", "quantity": 1 }],
+  "currency": "INR",
+  "capabilities": ["dev.acp.tokenized.card"],
+  "buyer": { "email": "buyer@example.test", "name": "Example Buyer" }
+}

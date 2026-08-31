@@ -1070,12 +1070,12 @@ being true:
 - Merchant users authenticate with opaque server-side sessions and are
   role-scoped (OWNER/APPROVER/VIEWER); buyer agents authenticate to the
   ACP surface with merchant-issued credentials.
-- ACP is implemented against the published spec (sessions, idempotency,
-  delegate_payment). AP2 and x402 are compatibility SHIMS and are
-  labelled as such in the API response, the console and this document.
-  x402 implements the 402/X-PAYMENT exchange but does NOT settle: no
-  facilitator is called, so an x402 intent can never be auto-approved and
-  always escalates to a human. No scheduled job proactively
+- ACP is implemented against the published spec (signed/versioned sessions,
+  idempotency, scoped `delegate_payment`). AP2 is a compatibility shim and is
+  labelled as such. x402 v2 verifies and settles through a configured
+  facilitator, binds evidence to the issued quote, and rejects nonce replay;
+  without complete facilitator/asset/payee configuration it fails closed. No
+  scheduled job proactively
 expires stale approvals/authorizations/checkout sessions; expiry is
 checked lazily, exactly when the relevant action is attempted, which is
 correct for this demo's scale (see the README's Limitations section). No
@@ -1089,6 +1089,6 @@ Mode credentials are configured in this environment, so both the real
 `RazorpayPaymentGateway` adapter and the full failure-to-recovery-to-
 capture path have been verified by integration test suites against a
 deterministic provider double, never by an actual live transaction —
-see the README's Limitations section and `PROGRESS.md`'s Known Issues
+see the README's Limitations section and `PROGRESS.md`
 for exactly what that does and doesn't prove. See the README's "Current
 implementation status" and `PROGRESS.md` for what's next.

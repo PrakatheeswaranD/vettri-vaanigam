@@ -215,23 +215,51 @@ export function shouldNegotiate(lineCount: number, policy: AgentGatewayPolicy): 
   return policy.maxNegotiationDiscountBps > 0 && lineCount < policy.negotiatorMinBundleItems;
 }
 
+export interface OfferUnitEconomics {
+  /** Full bundle selling price before the proposed discount. */
+  revenueMinor: number;
+  /** Full bundle COGS. Null means the merchant has not supplied cost. */
+  costMinor: number | null;
+  discountBps: number;
+}
+
+/** Gross margin after discount, or null when it cannot be known safely. */
+export function projectedGrossMarginBps(economics: OfferUnitEconomics): number | null {
+  if (
+    !Number.isInteger(economics.revenueMinor) ||
+    economics.revenueMinor <= 0 ||
+    economics.costMinor === null ||
+    !Number.isInteger(economics.costMinor) ||
+    economics.costMinor < 0 ||
+    !Number.isInteger(economics.discountBps) ||
+    economics.discountBps < 0 ||
+    economics.discountBps > 10_000
+  ) {
+    return null;
+  }
+
+  // Round down revenue: a floor check may never gain a paisa through
+  // optimistic rounding. Negative margin is preserved rather than clamped.
+  const discountedRevenueMinor = Math.floor(
+    (economics.revenueMinor * (10_000 - economics.discountBps)) / 10_000,
+  );
+  if (discountedRevenueMinor <= 0) return null;
+  return Math.floor(
+    ((discountedRevenueMinor - economics.costMinor) * 10_000) / discountedRevenueMinor,
+  );
+}
+
 /**
- * Rejects — rather than clamps — an offer that would take the DISCOUNT
- * past the configured floor.
+ * Rejects an offer below the configured REAL gross-margin floor.
  *
- * NAMING CAVEAT, DELIBERATELY NOT PAPERED OVER: this compares against
- * remaining SALE PRICE, not gross margin, because the catalogue carries no
- * cost price. With no COGS there is no margin to protect, and computing
- * `100% - discount` and calling it margin would imply a guarantee that
- * does not exist. It bounds how deep a discount may go, which is real and
- * useful; it is not a margin floor until cost data exists.
- *
- * Clamping is right for a discount that is merely too generous; it is
- * wrong for one that would sell below the merchant's floor, because a
- * smaller below-floor discount is still below the floor. The honest answer
- * there is no offer at all.
+ * Unknown or malformed cost data fails closed. The negotiator is optional;
+ * protecting the approved base sale is not. This is intentionally stricter
+ * than treating missing cost as zero, which would manufacture 100% margin.
  */
-export function offerBreachesFloorMargin(discountBps: number, policy: AgentGatewayPolicy): boolean {
-  const remainingMarginBps = 10_000 - discountBps;
-  return remainingMarginBps < policy.negotiatorFloorMarginBps;
+export function offerBreachesFloorMargin(
+  economics: OfferUnitEconomics,
+  policy: AgentGatewayPolicy,
+): boolean {
+  const projected = projectedGrossMarginBps(economics);
+  return projected === null || projected < policy.negotiatorFloorMarginBps;
 }

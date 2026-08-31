@@ -6,13 +6,15 @@
  * burying them behind a collapsed "Agent trace" toggle. No step is shown
  * unless the underlying data for it actually exists.
  */
-import type { ReactNode } from "react";
-import type { BuyerAgentResponseDTO } from "@razorgrowth/contracts";
+import { useState, type ReactNode } from "react";
+import type { BuyerAgentResponseDTO, RecommendedProductDTO } from "@razorgrowth/contracts";
 import { CheckCircle2, MessageSquare } from "lucide-react";
 import { IntentPanel } from "./IntentPanel";
 import { RecommendationCard } from "./RecommendationCard";
 import { AgentTracePanel } from "./AgentTracePanel";
 import { AgentBuyabilityVerdict } from "./AgentBuyabilityVerdict";
+import { ProductComparisonTable } from "./ProductComparisonTable";
+import { PaymentProposalModal } from "./PaymentProposalModal";
 
 function traceDetail(response: BuyerAgentResponseDTO, stage: string): string | null {
   return response.trace.find((t) => t.stage === stage)?.detail ?? null;
@@ -46,25 +48,8 @@ function PipelineStep({
   );
 }
 
-/**
- * NO PURCHASE PATH LIVES HERE ANY MORE.
- *
- * This page previously let you "Select this" on a recommendation, which
- * opened a growth proposal panel carrying the MERCHANT's own Evaluate /
- * Approve / Reject buttons — inside what is presented as the buyer's
- * flow. A buyer was being shown the merchant's approval console and asked
- * to click it, which is a role boundary this whole product exists to keep.
- *
- * It also no longer describes anything real. A buyer agent never clicks
- * through a merchant console: it calls the gateway, and the gateway
- * decides. That chain — policy, approval, authorization, payment — is
- * demonstrated for real on the Agent Gateway page, by actual inbound
- * agents, with a Decision Record for each.
- *
- * So this page is what its title says: a view of what an agent can
- * understand and what it cannot buy. Diagnostics, not checkout.
- */
 export function BuyerReasoningPipeline({ buyerMessage, response }: { buyerMessage: string; response: BuyerAgentResponseDTO }) {
+  const [selectedForProposal, setSelectedForProposal] = useState<RecommendedProductDTO | null>(null);
   const catalogDetail = traceDetail(response, "CATALOG_FILTERED");
   const evaluationDetail = traceDetail(response, "CANDIDATES_EVALUATED");
   const groundingDetail = traceDetail(response, "RECOMMENDATION_GENERATED") ?? traceDetail(response, "RECOMMENDATION_FALLBACK");
@@ -100,7 +85,7 @@ export function BuyerReasoningPipeline({ buyerMessage, response }: { buyerMessag
       ) : null}
 
       {response.recommendations.length > 0 ? (
-        <PipelineStep index={6} label="Best Match">
+        <PipelineStep index={6} label="Grounded Product Matches & Comparison">
           <div className="mb-2 inline-flex items-center gap-1.5 rounded-full bg-success-subtle px-2 py-0.5 text-[11px] font-medium text-success-text">
             <CheckCircle2 size={11} />
             Grounding verified — every result is a real, currently-available catalog product
@@ -110,16 +95,29 @@ export function BuyerReasoningPipeline({ buyerMessage, response }: { buyerMessag
               <RecommendationCard key={rec.productId} recommendation={rec} />
             ))}
           </div>
+
+          <ProductComparisonTable
+            recommendations={response.recommendations}
+            onSelectProduct={(rec) => setSelectedForProposal(rec)}
+          />
+
           <div className="mt-3">
             <AgentBuyabilityVerdict recommendations={response.recommendations} />
           </div>
-
         </PipelineStep>
       ) : null}
 
       <div className="pl-9">
         <AgentTracePanel trace={response.trace} traceId={response.traceId} />
       </div>
+
+      {selectedForProposal && (
+        <PaymentProposalModal
+          recommendation={selectedForProposal}
+          buyerBudgetMinor={response.intent?.budget?.maxMinor ?? undefined}
+          onClose={() => setSelectedForProposal(null)}
+        />
+      )}
     </div>
   );
 }

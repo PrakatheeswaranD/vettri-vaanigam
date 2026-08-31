@@ -22,6 +22,7 @@
     "db:reset": "dotenv -e ../../.env -- prisma migrate reset --schema prisma/schema.prisma --force --skip-generate",
     "eval:intent": "node --env-file=../../.env --import tsx scripts/eval-intent.ts",
     "eval:recommendation": "node --env-file=../../.env --import tsx scripts/eval-recommendation.ts",
+    "demo:simulate": "node --env-file=../../.env --import tsx scripts/demo-simulate.ts",
     "demo:golden-path": "node --env-file=../../.env --import tsx scripts/demo-golden-path.ts",
     "demo:agent-swarm": "node --env-file=../../.env --import tsx scripts/demo-agent-swarm.ts"
   },

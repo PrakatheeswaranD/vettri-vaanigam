@@ -36,6 +36,7 @@ export interface CompileIssue {
 }
 
 export interface CompileResult {
+  compilationId: string;
   rowsRead: number;
   rowsCompiled: number;
   issues: CompileIssue[];
@@ -173,7 +174,159 @@ export async function compileCatalogCsv(
     "Catalogue compiled",
   );
 
-  return { rowsRead: rows.length, rowsCompiled: products.length, issues, products, providerMode: provider.mode };
+  const compilation = await prisma.catalogCompilation.create({
+    data: {
+      merchantId,
+      rowsRead: rows.length,
+      rowsCompiled: products.length,
+      issues: issues as never,
+      products: products as never,
+      providerMode: provider.mode,
+    },
+  });
+
+  return {
+    compilationId: compilation.id,
+    rowsRead: rows.length,
+    rowsCompiled: products.length,
+    issues,
+    products,
+    providerMode: provider.mode,
+  };
+}
+
+function compiledProductSlug(compilationId: string, index: number): string {
+  return `compiled-${compilationId.replace(/-/g, "").slice(0, 12)}-${index + 1}`;
+}
+
+/** Publish is an explicit, transactional state change. Compilation alone
+ * never leaks uncertain model output into the live agent catalogue. */
+export interface PublishOfferControl {
+  sku: string;
+  costMinor: number;
+  availableQuantity: number;
+}
+
+export async function publishCatalogCompilation(
+  prisma: PrismaClient,
+  merchantId: string,
+  compilationId: string,
+  offerControls: PublishOfferControl[],
+) {
+  return prisma.$transaction(async (tx) => {
+    const compilation = await tx.catalogCompilation.findUnique({ where: { id: compilationId } });
+    if (!compilation || compilation.merchantId !== merchantId) throw new Error("CATALOG_COMPILATION_NOT_FOUND");
+    if (compilation.status !== "DRAFT") throw new Error("CATALOG_COMPILATION_NOT_DRAFT");
+
+    const products = compilation.products as unknown as CompiledProduct[];
+    const purchasable = products.filter((product) => product.offers.length > 0);
+    if (purchasable.length === 0) throw new Error("CATALOG_NOT_PURCHASABLE");
+
+    const skus = purchasable.flatMap((product) => product.offers.map((offer) => offer.sku));
+    if (new Set(skus).size !== skus.length) throw new Error("CATALOG_DUPLICATE_SKU");
+    if (purchasable.some((product) => product.offers.some((offer) => offer.currency !== "INR" && offer.currency !== "USD"))) {
+      throw new Error("CATALOG_UNSUPPORTED_CURRENCY");
+    }
+    const controls = new Map(offerControls.map((control) => [control.sku, control]));
+    if (controls.size !== offerControls.length || controls.size !== skus.length || skus.some((sku) => !controls.has(sku))) {
+      throw new Error("CATALOG_OFFER_CONTROLS_INCOMPLETE");
+    }
+    const previous = await tx.catalogCompilation.findFirst({
+      where: { merchantId, status: "PUBLISHED" },
+      orderBy: { publishedAt: "desc" },
+    });
+    const conflictingSku = await tx.productVariant.findFirst({
+      where: {
+        sku: { in: skus },
+        product: {
+          merchantId,
+          ...(previous?.appliedProductIds.length ? { id: { notIn: previous.appliedProductIds } } : {}),
+        },
+      },
+      select: { sku: true },
+    });
+    if (conflictingSku) throw new Error(`CATALOG_SKU_ALREADY_EXISTS:${conflictingSku.sku}`);
+    if (previous) {
+      await tx.product.updateMany({
+        where: { merchantId, id: { in: previous.appliedProductIds } },
+        data: { status: "ARCHIVED" },
+      });
+      await tx.catalogCompilation.update({ where: { id: previous.id }, data: { status: "SUPERSEDED" } });
+    }
+
+    const appliedProductIds: string[] = [];
+    for (const [index, product] of purchasable.entries()) {
+      const created = await tx.product.create({
+        data: {
+          merchantId,
+          name: product.name,
+          slug: compiledProductSlug(compilation.id, index),
+          description: product.description ?? "",
+          category: product.category ?? "Uncategorized",
+          brand: product.brand ?? "Imported",
+          status: "ACTIVE",
+          variants: {
+            create: product.offers.map((offer) => {
+              const control = controls.get(offer.sku)!;
+              return {
+                sku: offer.sku,
+                title: `${product.name} — ${offer.sku}`,
+                priceMinor: offer.priceMinor,
+                currency: offer.currency as "INR" | "USD",
+                attributes: offer.attributes,
+                costMinor: control.costMinor,
+                active: true,
+                inventory: { create: { availableQuantity: control.availableQuantity } },
+              };
+            }),
+          },
+        },
+      });
+      appliedProductIds.push(created.id);
+    }
+
+    return tx.catalogCompilation.update({
+      where: { id: compilation.id },
+      data: {
+        status: "PUBLISHED",
+        publishedAt: new Date(),
+        appliedProductIds,
+        beforeSnapshot: { previousCompilationId: previous?.id ?? null },
+      },
+    });
+  }, { isolationLevel: "Serializable" });
+}
+
+export async function rollbackCatalogCompilation(prisma: PrismaClient, merchantId: string, compilationId: string) {
+  return prisma.$transaction(async (tx) => {
+    const compilation = await tx.catalogCompilation.findUnique({ where: { id: compilationId } });
+    if (!compilation || compilation.merchantId !== merchantId) throw new Error("CATALOG_COMPILATION_NOT_FOUND");
+    if (compilation.status !== "PUBLISHED") throw new Error("CATALOG_COMPILATION_NOT_PUBLISHED");
+
+    await tx.product.updateMany({
+      where: { merchantId, id: { in: compilation.appliedProductIds } },
+      data: { status: "ARCHIVED" },
+    });
+
+    const rolledBack = await tx.catalogCompilation.update({
+      where: { id: compilation.id },
+      data: { status: "ROLLED_BACK", rolledBackAt: new Date() },
+    });
+
+    const snapshot = compilation.beforeSnapshot as { previousCompilationId?: string | null } | null;
+    if (snapshot?.previousCompilationId) {
+      const previous = await tx.catalogCompilation.findUnique({ where: { id: snapshot.previousCompilationId } });
+      if (previous && previous.merchantId === merchantId && previous.status === "SUPERSEDED") {
+        await tx.product.updateMany({
+          where: { merchantId, id: { in: previous.appliedProductIds } },
+          data: { status: "ACTIVE" },
+        });
+        await tx.catalogCompilation.update({ where: { id: previous.id }, data: { status: "PUBLISHED" } });
+      }
+    }
+
+    return rolledBack;
+  });
 }
 
 /** The published `.well-known` document, built from the LIVE catalogue —

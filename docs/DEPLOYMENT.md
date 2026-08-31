@@ -203,17 +203,22 @@ which reports whether the live-model path actually ran.
 
 ## Before you switch to live Razorpay keys
 
-Known gaps that matter once real money is involved — see PROGRESS.md:
+Production controls that still require deployment infrastructure — see
+PROGRESS.md:
 
 - **No refund or chargeback flow.** You will need this.
 - **No scheduled reconciliation for `UNKNOWN` payments.** Today a payment
   stuck in `UNKNOWN` waits for someone to notice.
-- **No rate limiting on `/api/v1/auth/login`.** It is brute-forceable.
-- **No security headers** on the API (`helmet` is not installed).
+- **Rate limiting is per API process.** Put a shared edge/Redis limiter in
+  front of multiple replicas; the in-process login and public-protocol bounds
+  are defense in depth, not a cluster-wide quota.
+- **API security headers are applied centrally.** The frontend host should add
+  its own CSP tailored to the compiled assets and Razorpay Checkout origins.
 - **Session tokens are stored in `localStorage`**, so they are readable by
   any XSS. An `httpOnly` cookie is the stronger choice for production.
-- **Expiry is lazy, not scheduled** — expired approvals and
-  authorizations are rejected correctly on read, but the rows accumulate.
+- **Approval/authorization expiry is lazy** — expired capabilities are rejected
+  correctly when used. Privacy retention and expired login-session cleanup do
+  run on a scheduled sweep.
 
 These are not reasons to avoid deploying to Test Mode. They are reasons
 to fix before real customer money moves.

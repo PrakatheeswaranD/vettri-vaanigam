@@ -1,158 +1,82 @@
-/**
- * Entry point (Buildathon Track 01).
- *
- * Deliberately NOT a password wall. The track's bar is "every money
- * action explainable, bounded and gated" — that is about gating MONEY
- * ACTIONS (policy -> approval -> scoped authorization), not about gating
- * the app. Making a reviewer type credentials adds friction and proves
- * nothing.
- *
- * But identity is not removed either, because the approval step needs a
- * REAL approver to be meaningful: `Approval.approverId` is a foreign key
- * to a real `MerchantUser`, so "a human approved this" is a fact in the
- * database rather than a claim in a slide.
- *
- * So this screen turns identity into a demonstration of the guardrail:
- * enter as OWNER (can approve) or as VIEWER (cannot). Choosing VIEWER and
- * then trying to approve returns a real 403 from the server — the gate is
- * a server rule, not a hidden button.
- */
 import { useState } from "react";
-import { useNavigate } from "react-router-dom";
-import { ShieldCheck, Eye, ChevronDown, LogIn } from "lucide-react";
+import { Link, Navigate, useNavigate, useParams } from "react-router-dom";
+import { ArrowLeft, Bot, ShieldCheck, Store } from "lucide-react";
 import { useLogin } from "../hooks/use-auth";
 import { ApiError } from "../lib/api-client";
+import { ROLE_HOME, setExperienceRole, type ExperienceRole } from "../lib/experience-role";
 
 const DEMO_ACCOUNTS = {
-  OWNER: { email: "owner@meridianathletics.demo", password: "MeridianDemo!2026" },
-  VIEWER: { email: "viewer@meridianathletics.demo", password: "MeridianViewer!2026" },
-} as const;
+  merchant: { email: "owner@meridianathletics.demo", password: "MeridianDemo!2026" },
+  customer: { email: "customer@anumati.demo", password: "CustomerDemo!2026" },
+  admin: { email: "admin@anumati.demo", password: "AdminDemo!2026" },
+};
+const ROLE_COPY: Record<ExperienceRole, { title: string; purpose: string; icon: typeof Bot; accent: string }> = {
+  customer: { title: "Customer", purpose: "Buy with AI", icon: Bot, accent: "bg-brand-50 border-brand-200 text-brand-700" },
+  merchant: { title: "Merchant", purpose: "Grow with AI", icon: Store, accent: "bg-success-subtle border-success/30 text-success-text" },
+  admin: { title: "Razorpay Admin", purpose: "Enable and govern AI commerce", icon: ShieldCheck, accent: "bg-warning-subtle border-warning/30 text-warning-text" },
+};
 
 export default function LoginPage() {
+  const { role: rawRole } = useParams();
+  const role = rawRole as ExperienceRole | undefined;
   const login = useLogin();
   const navigate = useNavigate();
-  const [showManual, setShowManual] = useState(false);
   const [email, setEmail] = useState("");
   const [password, setPassword] = useState("");
 
-  async function enterAs(role: keyof typeof DEMO_ACCOUNTS) {
+  if (role && !(role in ROLE_COPY)) return <Navigate to="/login" replace />;
+
+  async function signIn(targetRole: ExperienceRole, credentials = DEMO_ACCOUNTS[targetRole]) {
     try {
-      await login.mutateAsync(DEMO_ACCOUNTS[role]);
-      navigate("/overview", { replace: true });
-    } catch {
-      /* surfaced below */
-    }
+      await login.mutateAsync({ ...credentials, experience: targetRole });
+      setExperienceRole(targetRole);
+      navigate(ROLE_HOME[targetRole], { replace: true });
+    } catch { /* error is rendered below */ }
   }
 
-  async function handleManual(e: React.FormEvent) {
-    e.preventDefault();
-    try {
-      await login.mutateAsync({ email, password });
-      navigate("/overview", { replace: true });
-    } catch {
-      /* surfaced below */
-    }
+  if (!role) {
+    return (
+      <div className="flex min-h-screen items-center justify-center bg-surface-subtle px-4 py-10">
+        <div className="w-full max-w-4xl">
+          <div className="mb-8 text-center">
+            <p className="text-xs font-semibold uppercase tracking-widest text-brand-600">Anumati · Razorpay Track 01</p>
+            <h1 className="mt-2 text-3xl font-bold tracking-tight text-ink">Choose your agentic-commerce experience</h1>
+            <p className="mt-2 text-sm text-ink-muted">Three roles. Three distinct jobs. One governed commerce layer.</p>
+          </div>
+          <div className="grid gap-4 md:grid-cols-3">
+            {(Object.entries(ROLE_COPY) as [ExperienceRole, (typeof ROLE_COPY)[ExperienceRole]][]).map(([key, item]) => (
+              <Link key={key} to={`/login/${key}`} className={`rounded-card border p-6 shadow-card transition hover:-translate-y-0.5 hover:shadow-popover ${item.accent}`}>
+                <item.icon size={28} />
+                <h2 className="mt-5 text-xl font-bold">{item.title}</h2>
+                <p className="mt-1 text-sm font-semibold">{item.purpose}</p>
+                <p className="mt-5 text-xs opacity-75">Open dedicated login →</p>
+              </Link>
+            ))}
+          </div>
+        </div>
+      </div>
+    );
   }
 
+  const copy = ROLE_COPY[role];
   return (
     <div className="flex min-h-screen items-center justify-center bg-surface-subtle px-4 py-10">
       <div className="w-full max-w-md rounded-card border border-border bg-surface p-7 shadow-popover">
-        <div className="mb-1 text-center">
-          <p className="text-xs font-semibold uppercase tracking-wide text-brand-600">Anumati</p>
-          <h1 className="mt-1 text-xl font-bold tracking-tight text-ink">अनुमति — consent for agent commerce</h1>
-          <p className="mt-2 text-sm text-ink-muted">
-            Be safely discoverable and payable by any AI buyer agent, on any protocol — without three separate
-            integrations.
-          </p>
-        </div>
-
-        <div className="my-6 space-y-3">
-          <button
-            type="button"
-            disabled={login.isPending}
-            onClick={() => enterAs("OWNER")}
-            className="flex w-full items-start gap-3 rounded-card border border-brand-200 bg-brand-50 px-4 py-3 text-left transition hover:border-brand-400 disabled:opacity-60"
-          >
-            <ShieldCheck size={18} className="mt-0.5 shrink-0 text-brand-600" />
-            <span>
-              <span className="block text-sm font-semibold text-ink">Enter as Merchant Owner</span>
-              <span className="mt-0.5 block text-xs text-ink-muted">
-                Full access — can approve or reject an AI growth proposal.
-              </span>
-            </span>
-          </button>
-
-          <button
-            type="button"
-            disabled={login.isPending}
-            onClick={() => enterAs("VIEWER")}
-            className="flex w-full items-start gap-3 rounded-card border border-border bg-surface px-4 py-3 text-left transition hover:bg-surface-subtle disabled:opacity-60"
-          >
-            <Eye size={18} className="mt-0.5 shrink-0 text-ink-faint" />
-            <span>
-              <span className="block text-sm font-semibold text-ink">Enter as Viewer (read-only)</span>
-              <span className="mt-0.5 block text-xs text-ink-muted">
-                Can see everything, but the server rejects any approval attempt with a real 403.
-              </span>
-            </span>
-          </button>
-        </div>
-
-        {login.isError ? (
-          <p className="mb-4 rounded-card bg-danger-subtle px-3 py-2 text-sm text-danger-text">
-            {login.error instanceof ApiError ? login.error.message : "Could not sign in."}
-          </p>
-        ) : null}
-
-        <p className="rounded-card bg-surface-subtle px-3 py-2.5 text-[11px] leading-relaxed text-ink-muted">
-          <span className="font-medium text-ink">Why two roles?</span> Approval is real backend state — an{" "}
-          <code className="font-mono">Approval</code> row references a real user, so &ldquo;a human approved
-          this&rdquo; is verifiable rather than asserted. Sign in as Viewer and try to approve to see the gate
-          enforced server-side.
-        </p>
-
-        <button
-          type="button"
-          onClick={() => setShowManual((v) => !v)}
-          aria-expanded={showManual}
-          className="mt-4 flex w-full items-center justify-center gap-1 text-xs text-ink-faint hover:text-ink"
-        >
-          <ChevronDown size={12} className={showManual ? "rotate-180 transition" : "transition"} />
-          Sign in with credentials instead
+        <Link to="/login" className="mb-6 inline-flex items-center gap-1 text-xs text-ink-muted hover:text-ink"><ArrowLeft size={13} /> All roles</Link>
+        <div className={`inline-flex rounded-lg border p-3 ${copy.accent}`}><copy.icon size={24} /></div>
+        <h1 className="mt-4 text-2xl font-bold text-ink">{copy.title} login</h1>
+        <p className="mt-1 text-sm font-medium text-ink-muted">{copy.purpose}</p>
+        <button type="button" disabled={login.isPending} onClick={() => void signIn(role)} className="mt-6 w-full rounded-md bg-brand-600 px-4 py-3 text-sm font-semibold text-white hover:bg-brand-700 disabled:opacity-50">
+          {login.isPending ? "Entering demo…" : `Enter ${copy.title} demo`}
         </button>
-
-        {showManual ? (
-          <form onSubmit={handleManual} className="mt-3 space-y-3 border-t border-border pt-4">
-            <label className="block">
-              <span className="text-xs font-medium text-ink-muted">Email</span>
-              <input
-                type="email"
-                required
-                value={email}
-                onChange={(e) => setEmail(e.target.value)}
-                className="mt-1 w-full rounded-md border border-border bg-surface px-3 py-2 text-sm text-ink focus:border-brand-500 focus:outline-none"
-              />
-            </label>
-            <label className="block">
-              <span className="text-xs font-medium text-ink-muted">Password</span>
-              <input
-                type="password"
-                required
-                value={password}
-                onChange={(e) => setPassword(e.target.value)}
-                className="mt-1 w-full rounded-md border border-border bg-surface px-3 py-2 text-sm text-ink focus:border-brand-500 focus:outline-none"
-              />
-            </label>
-            <button
-              type="submit"
-              disabled={login.isPending}
-              className="flex w-full items-center justify-center gap-1.5 rounded-md bg-brand-600 px-4 py-2.5 text-sm font-medium text-white hover:bg-brand-700 disabled:opacity-50"
-            >
-              <LogIn size={14} />
-              {login.isPending ? "Signing in…" : "Sign in"}
-            </button>
-          </form>
-        ) : null}
+        <div className="my-5 flex items-center gap-3 text-[11px] uppercase tracking-wider text-ink-faint"><span className="h-px flex-1 bg-border" />or use credentials<span className="h-px flex-1 bg-border" /></div>
+        <form onSubmit={(event) => { event.preventDefault(); void signIn(role, { email, password }); }} className="space-y-3">
+          <input aria-label="Email" type="email" required value={email} onChange={(event) => setEmail(event.target.value)} className="w-full rounded-md border border-border px-3 py-2 text-sm" />
+          <input aria-label="Password" type="password" required value={password} onChange={(event) => setPassword(event.target.value)} className="w-full rounded-md border border-border px-3 py-2 text-sm" />
+          <button disabled={login.isPending} className="w-full rounded-md border border-border px-4 py-2.5 text-sm font-medium hover:bg-surface-subtle">Sign in</button>
+        </form>
+        {login.isError ? <p className="mt-4 rounded-md bg-danger-subtle p-3 text-sm text-danger-text">{login.error instanceof ApiError ? login.error.message : "Could not sign in."}</p> : null}
+        <p className="mt-5 text-[11px] leading-relaxed text-ink-faint">Each demo uses a distinct authenticated account. The server enforces its role; selecting a login screen does not grant access.</p>
       </div>
     </div>
   );

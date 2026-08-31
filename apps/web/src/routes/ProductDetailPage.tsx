@@ -151,6 +151,7 @@ export default function ProductDetailPage() {
 
 function AgentView({ productId }: { productId: string }) {
   const { data, isLoading, isError, error, refetch } = useAgentProduct(productId);
+  const [showJson, setShowJson] = useState(false);
 
   if (isLoading) return <Skeleton className="h-96 w-full" />;
   if (isError || !data) {
@@ -167,15 +168,37 @@ function AgentView({ productId }: { productId: string }) {
   return (
     <div className="space-y-6">
       <Card className="border-brand-100 bg-brand-50/40">
-        <CardBody className="flex gap-3 text-sm">
-          <Bot size={16} className="mt-0.5 shrink-0 text-brand-600" />
-          <p className="text-ink-muted">
-            The structured commerce representation an AI buyer would read for this product —{" "}
-            <code className="rounded bg-surface px-1 py-0.5 text-xs">GET /api/v1/agent-commerce/catalog/{productId}</code>.
-            Not a claim of ACP/AP2/UCP/x402 protocol compliance — Anumati's own internal representation.
-          </p>
+        <CardBody className="flex flex-col sm:flex-row sm:items-center sm:justify-between gap-3 text-sm">
+          <div className="flex gap-3">
+            <Bot size={16} className="mt-0.5 shrink-0 text-brand-600" />
+            <p className="text-ink-muted">
+              The structured commerce representation an AI buyer reads for this product —{" "}
+              <code className="rounded bg-surface px-1 py-0.5 text-xs">GET /api/v1/agent-commerce/catalog/{productId}</code>
+            </p>
+          </div>
+          <button
+            onClick={() => setShowJson((prev) => !prev)}
+            className="inline-flex items-center gap-1.5 rounded-lg border border-brand-300 bg-surface px-3 py-1.5 text-xs font-semibold text-brand-700 shadow-sm hover:bg-brand-50 transition shrink-0"
+          >
+            {showJson ? "Hide Raw JSON" : "View JSON Representation"}
+          </button>
         </CardBody>
       </Card>
+
+      {showJson && (
+        <Card className="border-border bg-surface-sunken">
+          <CardHeader>
+            <CardTitle className="text-xs font-mono uppercase tracking-wider text-ink-faint">
+              Machine-Readable Schema Payload (JSON-LD / Agent Commerce)
+            </CardTitle>
+          </CardHeader>
+          <CardBody>
+            <pre className="max-h-96 overflow-y-auto rounded-lg bg-surface p-4 font-mono text-xs text-ink border border-border">
+              {JSON.stringify(data, null, 2)}
+            </pre>
+          </CardBody>
+        </Card>
+      )}
 
       <div className="grid gap-6 lg:grid-cols-2">
         <Card>

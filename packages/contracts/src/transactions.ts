@@ -1,17 +1,25 @@
 import { z } from "zod";
 import { moneySchema } from "./common.js";
 
-export const paymentStateSchema = z.enum(["CREATED", "AUTHORIZED", "CAPTURED", "FAILED", "CANCELLED", "UNKNOWN"]);
+export const paymentStateSchema = z.enum([
+  "CREATED",
+  "AUTHORIZED",
+  "CAPTURED",
+  "FAILED",
+  "CANCELLED",
+  "UNKNOWN",
+  "REFUNDED",
+  "PARTIALLY_REFUNDED",
+]);
 
-/** PART 07 §18 — `DEMO` marks seeded/synthetic history, `MOCK` the
- * deterministic test-double provider, `RAZORPAY` a real Test Mode
- * transaction. The three can never be confused with one another. */
-export const paymentProviderSchema = z.enum(["DEMO", "RAZORPAY", "MOCK"]);
+/** Financial evidence source. `X402` is facilitator-settled and never
+ * relabelled as Razorpay or as a test double. */
+export const paymentProviderSchema = z.enum(["DEMO", "RAZORPAY", "MOCK", "X402"]);
 
 /**
  * A payment/order row for the Transactions page. `provider` is always
  * `"DEMO"` for seeded data (PART 01 §77) — a real integration uses
- * `"RAZORPAY"` and only once genuine Test Mode calls back it.
+ * `"RAZORPAY"` for Test Mode or `"X402"` for facilitator settlement.
  */
 export const transactionSchema = z.object({
   orderId: z.string().uuid(),
@@ -19,6 +27,9 @@ export const transactionSchema = z.object({
   customerName: z.string(),
   amount: moneySchema,
   state: paymentStateSchema,
+  customerDebitStatus: z.enum(["UNKNOWN", "NOT_DEBITED", "DEBITED"]),
+  merchantCreditStatus: z.enum(["UNKNOWN", "NOT_CREDITED", "CREDITED"]),
+  automaticRetryBlocked: z.boolean(),
   provider: paymentProviderSchema,
   /** Safe, truncatable references only (PART 07 §82, §104) — never a full
    * provider payload. */

@@ -87,7 +87,7 @@ describe("Anumati gateway — protocol mesh", () => {
     expect(res.json()).toMatchObject({ outcome: "AUTO_APPROVE", protocol: "ACP", protocolFidelity: "SPEC_IMPLEMENTED" });
   });
 
-  it("accepts an x402 intent on the SAME endpoint and labels it a shim", async () => {
+  it("accepts an x402 intent on the same endpoint with implemented protocol fidelity", async () => {
     const res = await postIntent({
       x402Version: 1,
       currency: "INR",
@@ -97,7 +97,7 @@ describe("Anumati gateway — protocol mesh", () => {
     });
 
     expect(res.statusCode).toBe(200);
-    expect(res.json()).toMatchObject({ outcome: "AUTO_APPROVE", protocol: "X402", protocolFidelity: "COMPATIBILITY_SHIM" });
+    expect(res.json()).toMatchObject({ outcome: "AUTO_APPROVE", protocol: "X402", protocolFidelity: "SPEC_IMPLEMENTED" });
   });
 
   it("declines a request that identifies no protocol it can read", async () => {
