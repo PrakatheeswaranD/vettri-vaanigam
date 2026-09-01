@@ -448,6 +448,17 @@ export function GrowthProposalPanel({ proposal: initialProposal }: { proposal: G
             </div>
           ) : null}
 
+          {/* These three are a REFERENCE projection, not the charge.
+              Policy evaluates a product's reference price — the cheapest
+              variant not explicitly unavailable — while checkout charges
+              the cheapest actually-PURCHASABLE variant, which is a
+              different row whenever the cheapest one is out of stock.
+              Execution re-checks that the reference basis has not moved
+              (COMMERCE_STATE_CHANGED if it has), so the gap is bounded and
+              deliberate — but the console showed "₹5,400.00" here and
+              "Total ₹5,401.00" on the order below with nothing explaining
+              why, which reads as an arithmetic error in a financial
+              console. Naming the basis costs one line. */}
           {isProposed && proposal.opportunity ? (
             <div className="grid gap-3 sm:grid-cols-3">
               <div className="rounded-card bg-surface-subtle p-3">
@@ -468,6 +479,10 @@ export function GrowthProposalPanel({ proposal: initialProposal }: { proposal: G
                   +{formatMoney({ amountMinor: proposal.opportunity.opportunityDeltaMinor, currency: proposal.opportunity.currency })}
                 </p>
               </div>
+              <p className="text-xs text-ink-faint sm:col-span-3">
+                Reference prices, used to decide policy. The order total below is the variant actually in stock, so it can
+                differ slightly — the checkout is re-checked against this same reference before anything is charged.
+              </p>
             </div>
           ) : null}
 
