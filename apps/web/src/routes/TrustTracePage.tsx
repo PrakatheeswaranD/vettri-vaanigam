@@ -20,7 +20,7 @@ import { TrustTraceDetailDrawer } from "../features/trust-trace/TrustTraceDetail
 import { FinancialAuthorityStrip } from "../features/trust-trace/FinancialAuthorityStrip";
 import { GrowthEffectPanel } from "../features/trust-trace/GrowthEffectPanel";
 import { TrustBoundaryLegend } from "../features/trust-trace/ActorClassBadge";
-import { buildTrustTraceModel } from "../features/trust-trace/model";
+import { ACTION_GROUP, buildTrustTraceModel } from "../features/trust-trace/model";
 import { PageHeader } from "../components/layout/PageHeader";
 
 const OUTCOME_LABEL: Record<string, string> = {
@@ -32,16 +32,36 @@ const OUTCOME_LABEL: Record<string, string> = {
 
 export default function TrustTracePage() {
   const { data: recent } = useLedger({ limit: 50 });
+
+  /**
+   * Recent workflows, ORDER TRAILS FIRST.
+   *
+   * Not every ledger workflow is a purchase. A readiness recalculation or
+   * a growth scan writes a single event under its own workflow id, and
+   * those are frequently the newest rows — so a page called "Order Trail"
+   * opened on a workflow with no order in it, every stage reading "Not
+   * Reached", above a note explaining that its one event is not part of
+   * this view. Correct, and a terrible first impression of the feature.
+   *
+   * Workflows carrying at least one pipeline event are listed first, so
+   * the default selection is an actual order trail. Nothing is hidden —
+   * single-event workflows still appear, just below the ones this page
+   * can actually draw.
+   */
   const recentWorkflowIds = useMemo(() => {
-    const seen = new Set<string>();
-    const ids: string[] = [];
+    const events = new Map<string, string[]>();
     for (const item of recent?.items ?? []) {
-      if (!seen.has(item.workflowId)) {
-        seen.add(item.workflowId);
-        ids.push(item.workflowId);
-      }
+      const list = events.get(item.workflowId) ?? [];
+      list.push(item.actionType);
+      events.set(item.workflowId, list);
     }
-    return ids;
+    const pipelineEvents = (id: string) =>
+      (events.get(id) ?? []).filter((actionType) => actionType in ACTION_GROUP).length;
+    // Fullest trail first. Ordering only by "has any pipeline event" still
+    // opened on a lone GROWTH_PROPOSAL_CREATED — one stage lit, five
+    // reading "Not Reached". The workflow that best demonstrates the page
+    // is the one that got furthest through it.
+    return [...events.keys()].sort((a, b) => pipelineEvents(b) - pipelineEvents(a));
   }, [recent]);
 
   const [searchParams] = useSearchParams();

@@ -39,7 +39,13 @@ export interface TrustTraceModel {
 
 type RawGroup = "INTENT" | "PROPOSAL" | "POLICY" | "APPROVAL" | "AUTHORIZATION" | "COMMERCE" | "PAYMENT" | "RECOVERY";
 
-const ACTION_GROUP: Record<string, RawGroup> = {
+/**
+ * The action types this view can actually place in a pipeline. Exported
+ * so a caller can tell an order trail apart from a workflow that merely
+ * exists (a readiness recalculation, a catalogue scan) without keeping a
+ * second, drifting copy of this vocabulary.
+ */
+export const ACTION_GROUP: Record<string, RawGroup> = {
   BUYER_INTENT_EXTRACTED: "INTENT",
   PRODUCTS_DISCOVERED: "INTENT",
   RECOMMENDATION_PROPOSED: "INTENT",

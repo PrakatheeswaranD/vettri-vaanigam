@@ -116,11 +116,11 @@ export default function DemoTourPage() {
     {
       id: 1,
       title: "2. Multi-Protocol Agent Discovery (ACP, x402, UAP)",
-      subtitle: "One unified door for OpenAI, Coinbase, and NPCI protocols",
+      subtitle: "One endpoint that speaks ACP, x402 and UAP/UCP",
       icon: Radio,
       category: "Protocol Gateway",
       description:
-        "OpenAI uses ACP (2026-04-17), Coinbase uses x402 v2, and NPCI is rolling out UAP/UCP in India. Vaanigam's unified gateway (/api/v1/agent-gateway) auto-detects incoming headers and payloads, verifying cryptographic Ed25519 signatures and normalizing them into a single internal representation.",
+        "ACP (2026-04-17) is authored by OpenAI, x402 v2 by Coinbase, and UAP/UCP are emerging from NPCI in India — naming who wrote a protocol, not who is integrated here. Vaanigam's gateway (/api/v1/agent-gateway) detects which dialect arrived, verifies the Ed25519 mandate against the key the merchant registered, and normalizes it into one internal representation. ACP is implemented to spec; AP2 and x402 are compatibility shims — x402 issues a real 402 challenge but settles nothing on-chain, and every response says so.",
       problemSolved: "Merchants don't have to build 4 incompatible integration stacks; one gateway speaks every global agentic protocol.",
       consoleLink: "/protocols",
       consoleLinkLabel: "View Active Protocols",
@@ -349,7 +349,7 @@ export default function DemoTourPage() {
               Vaanigam End-to-End Guided Demo Tour
             </h1>
             <p className="max-w-3xl text-sm text-brand-200/90 leading-relaxed">
-              Step through the complete journey of how Vaanigam makes any Razorpay merchant safely sellable to AI buyer agents (ChatGPT, Coinbase, NPCI) while autonomously growing revenue inside governed bounds.
+              Step through the complete journey of how Vaanigam makes a Razorpay merchant safely payable by an autonomous AI buyer — on ACP, x402 or AP2 — while growth stays inside bounds a human set. ACP is built to spec; AP2 and x402 are compatibility shims, labelled as such wherever they appear.
             </p>
           </div>
           <div className="flex flex-wrap items-center gap-2.5 shrink-0">
