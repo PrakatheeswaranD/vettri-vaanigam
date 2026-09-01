@@ -13,9 +13,16 @@ build/
 .turbo/
 *.tsbuildinfo
 
-# local dev database (PGlite data directory — see scripts/db-server.mjs)
+# Local dev databases (PGlite data directories — see scripts/db-server.mjs).
+#
+# The glob matters: only `.dbdata/` was ignored, so every sibling created
+# for a test or verification run — .dbdata-local, .dbdata-qa,
+# .dbdata-verification-* — was tracked instead. That put ~3,500 binary
+# PGlite files in the repository, and those files ARE the demo database:
+# merchant password hashes and live session tokens included. None of it
+# belongs in version control.
 .dbdata/
-.dbdata-verification-*/
+.dbdata-*/
 
 # logs
 *.log
@@ -35,10 +42,9 @@ coverage/
 # Prisma
 apps/api/prisma/dev.db
 
-# PGlite data directories. `.dbdata` was already ignored; the local
-# variant was not, and a commit swept ~970 database files into the repo.
-.dbdata-local/
-**/.dbdata-local/
+# Throwaway query/repair scripts written while auditing against a live
+# database. Useful in the moment, never part of the product.
+.qa/
 
 # Vite/Vitest write these transient config shims next to the real config.
 *.timestamp-*.mjs
