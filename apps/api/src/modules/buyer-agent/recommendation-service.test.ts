@@ -73,6 +73,30 @@ describe("buildRecommendations", () => {
     expect(outcome.recommendations[0]?.productId).toBe("p1");
   });
 
+  it("explains the exact price, budget distance, required attributes, preference, stock, and evidence", async () => {
+    const set: EvaluatedCandidateSet = {
+      exact: [candidate("p1", { attributes: { size: "UK9", color: "Black", weight: "lightweight" } })],
+      nearMatch: [],
+    };
+    const outcome = await buildRecommendations(
+      createDemoRuleBasedProvider(),
+      set,
+      intent({
+        budget: { minMinor: null, maxMinor: 500000, currency: "INR" },
+        requiredAttributes: { size: "UK9", color: "Black" },
+        preferredAttributes: { weight: "lightweight" },
+      }),
+    );
+    const explanation = outcome.recommendations[0]!.explanation;
+    expect(explanation).toContain("Ranked #1");
+    expect(explanation).toContain("₹4,499");
+    expect(explanation).toContain("₹501 below your ₹5,000 maximum");
+    expect(explanation).toContain("size UK9 and color Black");
+    expect(explanation).toContain("weight lightweight");
+    expect(explanation).toContain("currently in stock");
+    expect(explanation).toContain("shipping, and return evidence");
+  });
+
   it("orders NEAR_MATCH candidates by closeness to budget, with no AI call", async () => {
     const provider = createFixtureProvider({
       rankCandidates: () => {

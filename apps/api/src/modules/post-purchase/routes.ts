@@ -4,6 +4,7 @@
  */
 import { randomUUID } from "node:crypto";
 import type { FastifyInstance } from "fastify";
+import type { Prisma } from "@prisma/client";
 import { z } from "zod";
 import {
   canTransitionPaymentState,
@@ -67,6 +68,48 @@ const calculateTaxSchema = z.object({
   buyerStateCode: z.string().min(2).max(10).default("KA"),
 });
 
+const MAX_SERIALIZABLE_ATTEMPTS = 5;
+
+async function runSerializable<T>(work: (tx: Prisma.TransactionClient) => Promise<T>): Promise<T> {
+  let lastError: unknown;
+  for (let attempt = 0; attempt < MAX_SERIALIZABLE_ATTEMPTS; attempt++) {
+    try {
+      return await prisma.$transaction(work, { isolationLevel: "Serializable" });
+    } catch (error) {
+      const code = typeof error === "object" && error !== null ? (error as { code?: unknown }).code : null;
+      if (code !== "P2034" && code !== "P2002") throw error;
+      lastError = error;
+    }
+  }
+  throw lastError;
+}
+
+function validateOrderItemQuantities(
+  orderItems: { id: string; quantity: number }[],
+  requestedItems: { orderItemId: string; quantity: number }[],
+  priorQuantities: Map<string, number>,
+  operation: "return" | "fulfillment",
+): void {
+  const orderedById = new Map(orderItems.map((item) => [item.id, item.quantity]));
+  const requestedById = new Map<string, number>();
+  for (const item of requestedItems) {
+    requestedById.set(item.orderItemId, (requestedById.get(item.orderItemId) ?? 0) + item.quantity);
+  }
+
+  for (const [orderItemId, requested] of requestedById) {
+    const ordered = orderedById.get(orderItemId);
+    if (ordered === undefined) {
+      throw AppError.validation(`Order item ${orderItemId} does not belong to this order.`);
+    }
+    const prior = priorQuantities.get(orderItemId) ?? 0;
+    if (prior + requested > ordered) {
+      throw AppError.conflict(
+        `Requested ${operation} quantity ${prior + requested} exceeds ordered quantity ${ordered} for item ${orderItemId}.`,
+      );
+    }
+  }
+}
+
 export function registerPostPurchaseRoutes(app: FastifyInstance, prefix: string): void {
   // ── Refunds ──────────────────────────────────────────────────────────
   app.post(`${prefix}/refunds`, async (request, reply) => {
@@ -74,38 +117,31 @@ export function registerPostPurchaseRoutes(app: FastifyInstance, prefix: string)
     requireApprovalRole(request);
     const body = createRefundSchema.parse(request.body);
 
-    const payment = await prisma.payment.findUnique({
-      where: { id: body.paymentId },
-      include: { order: true, refunds: true },
-    });
+    const result = await runSerializable(async (tx) => {
+      const payment = await tx.payment.findUnique({
+        where: { id: body.paymentId },
+        include: { order: true, refunds: true },
+      });
+      if (!payment || payment.merchantId !== merchantId) throw AppError.notFound("Payment not found.");
+      if (payment.state !== "CAPTURED" && payment.state !== "PARTIALLY_REFUNDED") {
+        throw AppError.conflict(`Cannot refund payment in state ${payment.state}.`);
+      }
 
-    if (!payment || payment.merchantId !== merchantId) {
-      throw AppError.notFound("Payment not found.");
-    }
+      const priorRefundedMinor = payment.refunds.reduce((sum, refund) => sum + refund.amountMinor, 0);
+      const availableMinor = payment.amountMinor - priorRefundedMinor;
+      if (body.amountMinor > availableMinor) {
+        throw AppError.conflict(
+          `Requested refund of ${body.amountMinor} exceeds available amount of ${availableMinor} minor units.`,
+        );
+      }
+      const nextPaymentState = body.amountMinor === availableMinor ? "REFUNDED" : "PARTIALLY_REFUNDED";
+      if (!canTransitionPaymentState(payment.state, nextPaymentState)) {
+        throw AppError.conflict(`Illegal transition from ${payment.state} to ${nextPaymentState}.`);
+      }
 
-    if (payment.state !== "CAPTURED" && payment.state !== "PARTIALLY_REFUNDED") {
-      throw AppError.conflict(`Cannot refund payment in state ${payment.state}.`);
-    }
-
-    const priorRefundedMinor = payment.refunds.reduce((sum, r) => sum + r.amountMinor, 0);
-    const availableMinor = payment.amountMinor - priorRefundedMinor;
-
-    if (body.amountMinor > availableMinor) {
-      throw AppError.conflict(
-        `Requested refund of ${body.amountMinor} exceeds available amount of ${availableMinor} minor units.`,
-      );
-    }
-
-    const nextPaymentState = body.amountMinor === availableMinor ? "REFUNDED" : "PARTIALLY_REFUNDED";
-    if (!canTransitionPaymentState(payment.state, nextPaymentState)) {
-      throw AppError.conflict(`Illegal transition from ${payment.state} to ${nextPaymentState}.`);
-    }
-
-    const refundId = randomUUID();
-    const result = await prisma.$transaction(async (tx) => {
       const refund = await tx.refund.create({
         data: {
-          id: refundId,
+          id: randomUUID(),
           merchantId,
           orderId: payment.orderId,
           paymentId: payment.id,
@@ -158,20 +194,25 @@ export function registerPostPurchaseRoutes(app: FastifyInstance, prefix: string)
     const merchantId = getAuthenticatedMerchantId(request);
     const body = createReturnSchema.parse(request.body);
 
-    const order = await prisma.order.findUnique({
-      where: { id: body.orderId },
-      include: { items: true },
-    });
+    const returnRequest = await runSerializable(async (tx) => {
+      const order = await tx.order.findUnique({ where: { id: body.orderId }, include: { items: true } });
+      if (!order || order.merchantId !== merchantId) throw AppError.notFound("Order not found.");
+      const priorItems = await tx.returnItem.findMany({
+        where: {
+          orderItemId: { in: body.items.map((item) => item.orderItemId) },
+          returnRequest: { orderId: order.id, status: { not: "CANCELLED" } },
+        },
+        select: { orderItemId: true, quantity: true },
+      });
+      const priorQuantities = new Map<string, number>();
+      for (const item of priorItems) {
+        priorQuantities.set(item.orderItemId, (priorQuantities.get(item.orderItemId) ?? 0) + item.quantity);
+      }
+      validateOrderItemQuantities(order.items, body.items, priorQuantities, "return");
 
-    if (!order || order.merchantId !== merchantId) {
-      throw AppError.notFound("Order not found.");
-    }
-
-    const returnId = randomUUID();
-    const returnRequest = await prisma.$transaction(async (tx) => {
       const ret = await tx.returnRequest.create({
         data: {
-          id: returnId,
+          id: randomUUID(),
           merchantId,
           orderId: order.id,
           status: "REQUESTED",
@@ -261,20 +302,25 @@ export function registerPostPurchaseRoutes(app: FastifyInstance, prefix: string)
     requireApprovalRole(request);
     const body = createFulfillmentSchema.parse(request.body);
 
-    const order = await prisma.order.findUnique({
-      where: { id: body.orderId },
-      include: { items: true },
-    });
+    const fulfillment = await runSerializable(async (tx) => {
+      const order = await tx.order.findUnique({ where: { id: body.orderId }, include: { items: true } });
+      if (!order || order.merchantId !== merchantId) throw AppError.notFound("Order not found.");
+      const priorItems = await tx.fulfillmentItem.findMany({
+        where: {
+          orderItemId: { in: body.items.map((item) => item.orderItemId) },
+          fulfillment: { orderId: order.id, status: { not: "CANCELLED" } },
+        },
+        select: { orderItemId: true, quantity: true },
+      });
+      const priorQuantities = new Map<string, number>();
+      for (const item of priorItems) {
+        priorQuantities.set(item.orderItemId, (priorQuantities.get(item.orderItemId) ?? 0) + item.quantity);
+      }
+      validateOrderItemQuantities(order.items, body.items, priorQuantities, "fulfillment");
 
-    if (!order || order.merchantId !== merchantId) {
-      throw AppError.notFound("Order not found.");
-    }
-
-    const fulfillmentId = randomUUID();
-    const fulfillment = await prisma.$transaction(async (tx) => {
       const res = await tx.fulfillment.create({
         data: {
-          id: fulfillmentId,
+          id: randomUUID(),
           merchantId,
           orderId: order.id,
           status: "SHIPPED",
@@ -375,6 +421,11 @@ export function registerPostPurchaseRoutes(app: FastifyInstance, prefix: string)
 
     if (!payment || payment.merchantId !== merchantId) {
       throw AppError.notFound("Payment not found.");
+    }
+    if (body.amountMinor > payment.amountMinor) {
+      throw AppError.conflict(
+        `Dispute amount ${body.amountMinor} exceeds payment amount ${payment.amountMinor} minor units.`,
+      );
     }
 
     const disputeId = randomUUID();

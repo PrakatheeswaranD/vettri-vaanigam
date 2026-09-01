@@ -172,7 +172,7 @@ export default function DemoTourPage() {
         // Runs the real PRICE_TAMPERING attack against the live gateway.
         // The previous version invented `discountCeilingBps: 1500` and a
         // "repricing passed" summary without repricing anything.
-        const result = await apiPost<Record<string, unknown>>("/sandbox/break-the-agent/run", { presetId: "PRICE_TAMPERING" });
+        const result = await apiPost<Record<string, unknown>>("/sandbox/break-the-agent/run", { attackId: "PRICE_TAMPERING" });
         const held = result.held === true || result.outcome === "DECLINE";
         return {
           success: held,

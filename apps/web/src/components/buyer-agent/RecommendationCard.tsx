@@ -71,7 +71,10 @@ export function RecommendationCard({ recommendation }: { recommendation: Recomme
           ) : null}
 
           <div>
-            <p className="mb-1 text-xs font-semibold uppercase tracking-wide text-ink-faint">Why this matches</p>
+            <p className="mb-1 text-xs font-semibold uppercase tracking-wide text-ink-faint">Why the agent chose this</p>
+            <p className="mb-2 rounded-md border border-info/30 bg-info-subtle px-3 py-2 text-xs leading-relaxed text-info-text">
+              {recommendation.explanation}
+            </p>
             <ul className="space-y-1">
               {recommendation.reasonCodes.map((code) => (
                 <li key={code} className="flex items-start gap-1.5 text-xs text-ink-muted">

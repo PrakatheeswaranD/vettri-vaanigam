@@ -54,6 +54,24 @@ const rng = createRng(20260101);
 const pick = <T,>(arr: readonly T[]): T => arr[Math.floor(rng() * arr.length)]!;
 const int = (min: number, max: number) => min + Math.floor(rng() * (max - min + 1));
 
+/** Supabase/PgBouncer may recycle a connection during this intentionally
+ * large demo seed. Retrying only connection-closure failures keeps the seed
+ * robust without hiding validation, uniqueness, or integrity errors. */
+async function withConnectionRetry<T>(operation: () => Promise<T>, label: string): Promise<T> {
+  for (let attempt = 1; attempt <= 5; attempt++) {
+    try {
+      return await operation();
+    } catch (error) {
+      const isClosedConnection =
+        error instanceof Error && ("code" in error ? error.code === "P1017" : error.message.includes("closed the connection"));
+      if (!isClosedConnection || attempt === 5) throw error;
+      console.warn(`[seed] database connection recycled during ${label}; retrying (${attempt}/5)...`);
+      await new Promise((resolve) => setTimeout(resolve, attempt * 750));
+    }
+  }
+  throw new Error(`[seed] unreachable retry state for ${label}`);
+}
+
 interface ProductSeed {
   name: string;
   category: string;
@@ -61,9 +79,10 @@ interface ProductSeed {
   sizes: readonly string[];
   basePriceMinor: number;
   includePolicyInfo: boolean;
+  attributes?: Record<string, string>;
 }
 
-const PRODUCTS: ProductSeed[] = [
+const CORE_PRODUCTS: ProductSeed[] = [
   // Running Shoes
   { name: "Meridian Pulse Runner", category: "Running Shoes", description: "Everyday neutral trainer tuned for tempo runs, with a responsive foam midsole.", sizes: ["UK7", "UK8", "UK9", "UK10"], basePriceMinor: 449900, includePolicyInfo: true },
   { name: "Meridian Trailblaze GTX", category: "Running Shoes", description: "Waterproof trail shoe with an aggressive lug pattern for technical terrain.", sizes: ["UK7", "UK8", "UK9", "UK10"], basePriceMinor: 549900, includePolicyInfo: true },
@@ -96,6 +115,56 @@ const PRODUCTS: ProductSeed[] = [
   { name: "Meridian StrideLace Kit", category: "Accessories", description: "Elastic no-tie lace kit for a secure, adjustable fit.", sizes: ["One Size"], basePriceMinor: 24900, includePolicyInfo: true },
 ];
 
+interface ProductRange {
+  category: string;
+  count: number;
+  families: readonly string[];
+  uses: readonly string[];
+  sizes: readonly string[];
+  basePriceMinor: number;
+  priceStepMinor: number;
+  attributes: readonly Record<string, string>[];
+}
+
+/** Category-specific product families produce varied, reproducible demo
+ * data instead of hundreds of copied placeholder rows. The original core
+ * products remain stable for golden-path tests and growth relationships. */
+const PRODUCT_RANGES: readonly ProductRange[] = [
+  { category: "Running Shoes", count: 40, families: ["Tempo", "Nimbus", "Stride", "Pace", "Glide", "Terra", "Aero", "Endure"], uses: ["daily road training", "race-day speed", "recovery mileage", "technical trails", "long-distance comfort"], sizes: ["UK6", "UK7", "UK8", "UK9", "UK10", "UK11"], basePriceMinor: 329900, priceStepMinor: 19000, attributes: [{ surface: "road", cushioning: "balanced" }, { surface: "road", weight: "lightweight" }, { surface: "trail", feature: "waterproof" }, { surface: "road", cushioning: "maximum" }] },
+  { category: "Sportswear", count: 25, families: ["Motion Tee", "Core Shorts", "Storm Jacket", "Flex Leggings", "Thermal Layer"], uses: ["high-intensity training", "humid runs", "cold starts", "everyday recovery", "race warm-ups"], sizes: ["XS", "S", "M", "L", "XL"], basePriceMinor: 79900, priceStepMinor: 11000, attributes: [{ feature: "breathable" }, { weight: "lightweight" }, { feature: "wind-resistant" }, { feature: "quick-dry" }] },
+  { category: "Socks", count: 15, families: ["Aero Sock", "Trail Crew", "Cushion Low", "Merino Run", "Race No-Show"], uses: ["blister resistance", "trail protection", "race-day ventilation", "long-run cushioning"], sizes: ["S/M", "L/XL"], basePriceMinor: 29900, priceStepMinor: 4500, attributes: [{ feature: "breathable" }, { cushioning: "maximum" }, { surface: "trail" }] },
+  { category: "Hydration", count: 15, families: ["Flow Flask", "Endurance Vest", "Quick Belt", "Chill Bottle", "Race Cup"], uses: ["short training runs", "unsupported long runs", "race-day fueling", "temperature-controlled hydration"], sizes: ["One Size"], basePriceMinor: 59900, priceStepMinor: 17000, attributes: [{ capacity: "500ml", weight: "lightweight" }, { capacity: "750ml", feature: "insulated" }, { capacity: "1.5L", surface: "trail" }] },
+  { category: "Accessories", count: 15, families: ["Night Band", "Aero Cap", "Grip Glove", "Race Belt", "Phone Arm"], uses: ["low-light visibility", "sun protection", "cold-weather control", "hands-free storage"], sizes: ["One Size"], basePriceMinor: 34900, priceStepMinor: 9000, attributes: [{ feature: "reflective" }, { weight: "lightweight" }, { feature: "touchscreen" }] },
+  { category: "Walking Shoes", count: 15, families: ["City Walk", "Comfort Step", "Daily Ease", "Travel Glide", "Support Move"], uses: ["all-day commuting", "travel walking", "standing shifts", "casual recovery"], sizes: ["UK6", "UK7", "UK8", "UK9", "UK10", "UK11"], basePriceMinor: 249900, priceStepMinor: 16000, attributes: [{ surface: "road", cushioning: "maximum" }, { feature: "breathable", cushioning: "balanced" }, { feature: "water-resistant", support: "stability" }] },
+  { category: "Training Shoes", count: 15, families: ["Lift Base", "Circuit Flex", "Gym Drive", "Court Move", "Cross Power"], uses: ["strength training", "functional fitness", "indoor court sessions", "mixed gym workouts"], sizes: ["UK6", "UK7", "UK8", "UK9", "UK10", "UK11"], basePriceMinor: 299900, priceStepMinor: 21000, attributes: [{ purpose: "strength", support: "stable" }, { purpose: "cross-training", weight: "lightweight" }, { purpose: "court", feature: "grippy" }] },
+  { category: "Outdoor Gear", count: 15, families: ["Trail Shell", "Summit Pack", "Storm Light", "Trek Pole", "Base Camp"], uses: ["monsoon trails", "mountain day trips", "ultralight trekking", "technical hikes"], sizes: ["One Size"], basePriceMinor: 109900, priceStepMinor: 23000, attributes: [{ surface: "trail", feature: "waterproof" }, { surface: "trail", weight: "lightweight" }, { feature: "wind-resistant", durability: "rugged" }] },
+  { category: "Recovery", count: 10, families: ["Restore Roller", "Mobility Ball", "Calf Sleeve", "Recovery Slide", "Massage Stick"], uses: ["post-run mobility", "muscle recovery", "travel recovery", "warm-up activation"], sizes: ["One Size"], basePriceMinor: 49900, priceStepMinor: 13000, attributes: [{ purpose: "recovery", firmness: "medium" }, { purpose: "mobility", weight: "lightweight" }, { purpose: "recovery", support: "compression" }] },
+  { category: "Fitness Equipment", count: 10, families: ["Power Band", "Core Mat", "Speed Rope", "Balance Pad", "Kettle Bell"], uses: ["home strength sessions", "mobility training", "cardio conditioning", "balance work"], sizes: ["One Size"], basePriceMinor: 59900, priceStepMinor: 18000, attributes: [{ purpose: "strength", resistance: "medium" }, { purpose: "mobility", feature: "non-slip" }, { purpose: "cardio", weight: "lightweight" }] },
+];
+
+const GENERATED_PRODUCTS: ProductSeed[] = PRODUCT_RANGES.flatMap((range) =>
+  Array.from({ length: range.count }, (_, index) => {
+    const family = range.families[index % range.families.length]!;
+    const use = range.uses[index % range.uses.length]!;
+    const edition = Math.floor(index / range.families.length) + 1;
+    return {
+      name: `Meridian ${family} ${String(index + 1).padStart(2, "0")} E${edition}`,
+      category: range.category,
+      description: `${family} engineered for ${use}, with merchant-authored fit, availability and policy data for agent comparison.`,
+      sizes: range.sizes,
+      basePriceMinor: range.basePriceMinor + (index % 8) * range.priceStepMinor,
+      includePolicyInfo: index % 9 !== 7,
+      attributes: range.attributes[index % range.attributes.length],
+    };
+  }),
+);
+
+const PRODUCTS: ProductSeed[] = [...CORE_PRODUCTS, ...GENERATED_PRODUCTS];
+
+if (PRODUCTS.length !== 200) {
+  throw new Error(`[seed] catalogue definition must contain exactly 200 products; found ${PRODUCTS.length}`);
+}
+
 // PART 03 §131 — the Buyer Agent demo scenario needs a real color
 // attribute to filter on ("black running shoes"), not just size. Scoped to
 // categories where color is a meaningful buying attribute, in a fixed
@@ -103,6 +172,9 @@ const PRODUCTS: ProductSeed[] = [
 const COLORS_BY_CATEGORY: Record<string, readonly string[]> = {
   "Running Shoes": ["Black", "Grey", "Blue", "Red"],
   Sportswear: ["Black", "Grey", "Navy"],
+  "Walking Shoes": ["Black", "White", "Grey", "Navy"],
+  "Training Shoes": ["Black", "White", "Blue", "Red"],
+  "Outdoor Gear": ["Black", "Navy", "Red"],
 };
 
 /**
@@ -388,10 +460,12 @@ async function main() {
   // readiness engine has genuine evidence to score against instead of a
   // uniformly perfect catalog. Selected deterministically by index (not
   // randomly) so the seed remains fully reproducible.
-  let productIndex = 0;
+  const productRows: Prisma.ProductCreateManyInput[] = [];
+  const variantRows: Prisma.ProductVariantCreateManyInput[] = [];
+  const inventoryRows: Prisma.InventoryCreateManyInput[] = [];
   let globalVariantIndex = 0;
 
-  for (const p of PRODUCTS) {
+  for (const [productIndex, p] of PRODUCTS.entries()) {
     const slug = slugify(p.name);
     // Roughly a third ELIGIBLE, one in seven INELIGIBLE, the rest left at
     // the UNKNOWN default — a merchant that hasn't decided is realistic,
@@ -399,24 +473,24 @@ async function main() {
     const promotionEligibility =
       productIndex % 7 === 0 ? "INELIGIBLE" : productIndex % 3 === 0 ? "ELIGIBLE" : undefined;
 
-    const product = await prisma.product.create({
-      data: {
-        merchantId: merchant.id,
-        name: p.name,
-        slug,
-        description: p.description,
-        category: p.category,
-        brand: "Meridian",
-        status: "ACTIVE",
-        returnPolicySummary: p.includePolicyInfo
-          ? "Free returns within 30 days in original condition; refund issued to original payment method."
-          : null,
-        shippingSummary: p.includePolicyInfo ? "Ships within 2 business days; free shipping over ₹2,000." : null,
-        ...(promotionEligibility ? { promotionEligibility } : {}),
-      },
+    const productId = randomUUID();
+    productRows.push({
+      id: productId,
+      merchantId: merchant.id,
+      name: p.name,
+      slug,
+      description: p.description,
+      category: p.category,
+      brand: "Meridian",
+      status: "ACTIVE",
+      returnPolicySummary: p.includePolicyInfo
+        ? "Free returns within 30 days in original condition; refund issued to original payment method."
+        : null,
+      shippingSummary: p.includePolicyInfo ? "Ships within 2 business days; free shipping over ₹2,000." : null,
+      ...(promotionEligibility ? { promotionEligibility } : {}),
     });
     if (!p.includePolicyInfo) productsMissingPolicy.push(p.name);
-    productsByName[p.name] = product.id;
+    productsByName[p.name] = productId;
 
     for (const size of p.sizes) {
       const skuSuffix = size.replace(/[^A-Z0-9]/gi, "").toUpperCase();
@@ -446,21 +520,21 @@ async function main() {
       const colors = COLORS_BY_CATEGORY[p.category];
       const color = colors ? pick(colors) : null;
 
-      const variant = await prisma.productVariant.create({
-        data: {
-          productId: product.id,
-          sku,
-          title: `${p.name} — ${size}${color ? ` (${color})` : ""}`,
-          priceMinor,
-          // Synthetic but explicit demo COGS. Real merchants must import
-          // their own unit cost; absent cost remains NULL and disables
-          // negotiated discounts rather than pretending sale price is margin.
-          costMinor: Math.floor(priceMinor * 0.65),
-          currency: "INR",
-          attributes: hasAttributes ? { size, ...(color ? { color } : {}), ...(TRAITS_BY_PRODUCT[p.name] ?? {}) } : {},
-          active: isActive,
-          priceUpdatedAt,
-        },
+      const variantId = randomUUID();
+      variantRows.push({
+        id: variantId,
+        productId,
+        sku,
+        title: `${p.name} — ${size}${color ? ` (${color})` : ""}`,
+        priceMinor,
+        // Synthetic but explicit demo COGS. Real merchants must import
+        // their own unit cost; absent cost remains NULL and disables
+        // negotiated discounts rather than pretending sale price is margin.
+        costMinor: Math.floor(priceMinor * 0.65),
+        currency: "INR",
+        attributes: hasAttributes ? { size, ...(color ? { color } : {}), ...(TRAITS_BY_PRODUCT[p.name] ?? {}), ...(p.attributes ?? {}) } : {},
+        active: isActive,
+        priceUpdatedAt,
       });
 
       // Every 8th variant: inventory has never been recorded at all — a
@@ -484,16 +558,21 @@ async function main() {
         // signal survives without breaking the demo it is meant to describe.
         const deliberatelyOutOfStock = p.category !== "Running Shoes" && globalVariantIndex % 9 === 5;
         const availableQuantity = deliberatelyOutOfStock ? 0 : int(500, 900);
-        await prisma.inventory.create({
-          data: { variantId: variant.id, availableQuantity, updatedAt: priceUpdatedAt },
-        });
+        inventoryRows.push({ variantId, availableQuantity, updatedAt: priceUpdatedAt });
       }
 
-      allVariants.push({ id: variant.id, priceMinor, sku, productName: p.name });
+      allVariants.push({ id: variantId, priceMinor, sku, productName: p.name });
       globalVariantIndex++;
     }
-    productIndex++;
   }
+
+  // Three bounded database round-trips replace thousands of sequential
+  // writes. IDs are generated above so every dependent row remains fully
+  // deterministic within this run and historical-order seeding can reuse
+  // the exact variant identities.
+  await withConnectionRetry(() => prisma.product.createMany({ data: productRows }), "product batch");
+  await withConnectionRetry(() => prisma.productVariant.createMany({ data: variantRows }), "variant batch");
+  await withConnectionRetry(() => prisma.inventory.createMany({ data: inventoryRows }), "inventory batch");
 
   console.log("[seed] creating historical orders + payments...");
   const orderSpecs: { status: "PAID" | "FAILED" | "PENDING"; paymentState: "CAPTURED" | "FAILED" | "CREATED"; failureCategory: string | null }[] = [

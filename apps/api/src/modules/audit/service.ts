@@ -31,8 +31,12 @@ export async function listLedgerEntries(prisma: PrismaClient, params: ListLedger
  * the hash chain from persisted rows and reports whether it still lines
  * up. Never mutates anything, never exposes raw hashes beyond what the
  * DTO already carries per-event. */
-export async function verifyLedgerWorkflow(prisma: PrismaClient, workflowId: string): Promise<LedgerVerificationResultDTO> {
-  const result = await verifyWorkflowLedger(prisma, workflowId);
+export async function verifyLedgerWorkflow(
+  prisma: PrismaClient,
+  merchantId: string,
+  workflowId: string,
+): Promise<LedgerVerificationResultDTO> {
+  const result = await verifyWorkflowLedger(prisma, workflowId, merchantId);
   return { ...result, verifiedAt: new Date().toISOString() };
 }
 
@@ -50,9 +54,13 @@ function deriveFinancialOutcome(actionTypes: string[]): WorkflowFinancialOutcome
   return "PENDING";
 }
 
-export async function getWorkflowTrace(prisma: PrismaClient, workflowId: string): Promise<WorkflowTraceDTO> {
-  const events = await prisma.agentAction.findMany({ where: { workflowId }, orderBy: { sequence: "asc" } });
-  const integrity = await verifyWorkflowLedger(prisma, workflowId);
+export async function getWorkflowTrace(
+  prisma: PrismaClient,
+  merchantId: string,
+  workflowId: string,
+): Promise<WorkflowTraceDTO> {
+  const events = await prisma.agentAction.findMany({ where: { workflowId, merchantId }, orderBy: { sequence: "asc" } });
+  const integrity = await verifyWorkflowLedger(prisma, workflowId, merchantId);
 
   const steps = events.map((event) => ({
     sequence: event.sequence,

@@ -81,10 +81,20 @@ export function useCatalogCategories() {
  * the server's maximum, and the response now also carries the real total
  * so the screen can say when it is showing a subset.
  */
-export function useMarketplaceDiscovery(category?: string) {
+export function useMarketplaceDiscovery(filters: { category?: string; search?: string } = {}) {
+  const { category, search } = filters;
   return useQuery({
-    queryKey: ["marketplace", "discovery", category],
-    queryFn: () => apiGet<MarketplaceDiscoveryResponseDTO>("/marketplace/discovery", { limitPerMerchant: "20", ...(category ? { category } : {}) }),
+    queryKey: ["marketplace", "discovery", category ?? null, search ?? null],
+    queryFn: () =>
+      apiGet<MarketplaceDiscoveryResponseDTO>("/marketplace/discovery", {
+        limitPerMerchant: "20",
+        ...(category ? { category } : {}),
+        ...(search ? { search } : {}),
+      }),
+    // A filter change should redraw the table, not blank it: keeping the
+    // previous rows on screen while the next set loads is the difference
+    // between a filter and a page reload.
+    placeholderData: (previous) => previous,
   });
 }
 

@@ -24,7 +24,7 @@ export function PaymentProposalModal({ recommendation, buyerBudgetMinor, onClose
   const [proposal, setProposal] = useState<Proposal | null>(null);
   // Only fetched once there is a proposal to negotiate against — a shopper
   // browsing has no use for it and it would be a request per card.
-  const standing = useBuyerStanding(Boolean(proposal));
+  const standing = useBuyerStanding(recommendation.product.merchantId, Boolean(proposal));
   const [payment, setPayment] = useState<PaymentDTO | null>(null);
   const [busy, setBusy] = useState(false);
   const [attempted, setAttempted] = useState(false);
@@ -71,8 +71,9 @@ export function PaymentProposalModal({ recommendation, buyerBudgetMinor, onClose
           />
         ) : null}
         {proposal.outcome !== "DECLINE" && !attempted && <button disabled={busy} onClick={() => void perform(async () => {
+          const authorizedPayment = await apiPost<PaymentDTO>(`/buyer/purchase-proposals/${proposal.id}/authorize`, {});
+          setPayment(authorizedPayment);
           setAttempted(true);
-          setPayment(await apiPost<PaymentDTO>(`/buyer/purchase-proposals/${proposal.id}/authorize`, {}));
         })} className="rounded-lg bg-brand-600 px-4 py-3 text-white disabled:opacity-50">Authorize this purchase</button>}
       </div>}
       {attempted && <div className="mt-5 space-y-3 rounded-xl border border-border p-4">

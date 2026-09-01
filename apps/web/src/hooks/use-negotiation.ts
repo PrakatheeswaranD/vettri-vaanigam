@@ -38,11 +38,11 @@ export interface NegotiationResult {
   awaitingMerchant: boolean;
 }
 
-export function useBuyerStanding(enabled = true) {
+export function useBuyerStanding(merchantId?: string, enabled = true) {
   return useQuery({
-    queryKey: ["buyer", "standing"],
-    queryFn: () => apiGet<BuyerStanding>("/buyer/standing"),
-    enabled,
+    queryKey: ["buyer", "standing", merchantId],
+    queryFn: () => apiGet<BuyerStanding>(`/buyer/standing?merchantId=${encodeURIComponent(merchantId!)}`),
+    enabled: enabled && Boolean(merchantId),
   });
 }
 

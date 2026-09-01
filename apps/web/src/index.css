@@ -35,6 +35,541 @@
   }
 }
 
+/* AGENTIC COMMERCE OS — the public landing surface.
+ *
+ * WHY THIS IS ITS OWN DESIGN SYSTEM
+ *
+ * The product consoles are white, high-legibility and deliberately quiet.
+ * The landing page is a dark command centre. Those are two different jobs,
+ * and the previous attempt to serve both from one set of tokens — light
+ * components with a dark repaint bolted over them — produced a page where
+ * hairlines vanished, shadows did nothing, and neon was doing the work
+ * structure should have been doing.
+ *
+ * So this is a dark-first system in its own right. Everything is scoped
+ * under `.acos`, so nothing here can reach the merchant or buyer consoles.
+ *
+ * THE RULES IT KEEPS
+ *
+ * - Depth on black comes from a border plus an inner top highlight, never
+ *   from a drop shadow alone.
+ * - Colour is signal: cyan/blue/violet for system activity, green only for
+ *   a success, red only for a failure. Nothing is coloured to decorate.
+ * - One gradient family (blue → violet), used on the primary action and
+ *   one headline span. A second family anywhere would make both read as
+ *   ornament.
+ * - No layer uses `mix-blend-mode` or `filter` for atmosphere. Both
+ *   promote the layer to its own composite, and a promoted atmosphere
+ *   layer will happily paint over the content. Gradients are painted.
+ * - Every animation here is polish. With `prefers-reduced-motion` set, the
+ *   page must still show every state — see the block at the bottom.
+ */
+@layer components {
+  .acos {
+    --os-bg: #050505;
+    --os-bg-2: #080b12;
+    --os-bg-3: #0d1117;
+
+    --os-text: #f5f7fa;
+    --os-dim: #8b93a7;
+    --os-faint: #616a80;
+
+    --os-line: rgba(255, 255, 255, 0.08);
+    --os-line-2: rgba(255, 255, 255, 0.16);
+    --os-surface: rgba(255, 255, 255, 0.024);
+    --os-surface-2: rgba(255, 255, 255, 0.055);
+
+    --os-cyan: #22d3ee;
+    --os-blue: #3b82f6;
+    --os-violet: #8b5cf6;
+    --os-success: #34d399;
+    --os-danger: #f87171;
+    --os-warn: #fbbf24;
+
+    /* Written by the hero's pointer tracking; harmless defaults so the
+       page looks right before any pointer exists (and on touch). */
+    --os-mx: 50%;
+    --os-my: 0%;
+
+    position: relative;
+    isolation: isolate;
+    background-color: var(--os-bg);
+    color: var(--os-text);
+    letter-spacing: -0.011em;
+  }
+
+  /* ── Atmosphere ───────────────────────────────────────────── */
+  .os-ambient {
+    background-image:
+      radial-gradient(52rem 34rem at 12% -4rem, rgba(59, 130, 246, 0.16), transparent 62%),
+      radial-gradient(44rem 30rem at 92% 4rem, rgba(139, 92, 246, 0.13), transparent 60%),
+      radial-gradient(60rem 40rem at 50% 116%, rgba(34, 211, 238, 0.07), transparent 64%);
+  }
+
+  .os-grid {
+    background-image:
+      linear-gradient(rgba(255, 255, 255, 0.028) 1px, transparent 1px),
+      linear-gradient(90deg, rgba(255, 255, 255, 0.028) 1px, transparent 1px);
+    background-size: 64px 64px;
+  }
+
+  /* Follows the pointer across the hero. Painted, not composited. */
+  .os-cursor-glow {
+    background-image: radial-gradient(30rem 22rem at var(--os-mx) var(--os-my), rgba(59, 130, 246, 0.14), transparent 70%);
+    transition: opacity 400ms ease;
+  }
+
+  /* ── Surfaces ─────────────────────────────────────────────── */
+  .os-card {
+    position: relative;
+    border: 1px solid var(--os-line);
+    background:
+      linear-gradient(180deg, rgba(255, 255, 255, 0.045), rgba(255, 255, 255, 0.012)),
+      rgba(8, 11, 18, 0.72);
+    box-shadow:
+      inset 0 1px 0 rgba(255, 255, 255, 0.06),
+      0 28px 64px -44px rgba(0, 0, 0, 0.95);
+  }
+
+  /* Deliberately NOT applied to every card: content that carries the
+     argument breathes on the page, and only instrument panels get a
+     frame. */
+  /* Cards live in perspective. The rotation comes from two custom
+     properties written by `useCardMotion`, so hovering a grid is a
+     variable change on one element rather than a React render — and the
+     defaults (0deg) mean a card with no pointer over it, or on a device
+     with no pointer at all, is simply flat. */
+  .os-card-hover {
+    --os-rx: 0deg;
+    --os-ry: 0deg;
+    transform-style: preserve-3d;
+    transform: perspective(1200px) rotateX(var(--os-rx)) rotateY(var(--os-ry));
+    transition:
+      transform 260ms cubic-bezier(0.16, 1, 0.3, 1),
+      border-color 320ms ease,
+      box-shadow 320ms ease;
+  }
+  .os-card-hover:hover {
+    border-color: var(--os-line-2);
+    box-shadow:
+      inset 0 1px 0 rgba(255, 255, 255, 0.09),
+      0 30px 70px -40px rgba(0, 0, 0, 1),
+      0 0 40px -20px rgba(59, 130, 246, 0.55);
+  }
+  /* Specificity has to beat `.os-card-hover:hover`, or the lift would
+     replace the rotation rather than compose with it. */
+  .os-card-hover.os-card-hover:hover {
+    transform: perspective(1200px) rotateX(var(--os-rx)) rotateY(var(--os-ry)) translateY(-4px);
+  }
+
+  /* Anything that should sit ABOVE the face of a tilted card. Real Z, so
+     it parallaxes against the card as the card turns. */
+  .os-pop {
+    transform: translateZ(26px);
+  }
+
+  /* Spotlight. The pointer's position is written into the card by one
+     listener on the grid (see `useSpotlight`), and this paints the
+     highlight — so a nine-card grid costs one listener and no re-renders. */
+  .os-card-hover::after {
+    content: "";
+    position: absolute;
+    inset: 0;
+    border-radius: inherit;
+    pointer-events: none;
+    opacity: 0;
+    transition: opacity 320ms ease;
+    background: radial-gradient(
+      14rem 14rem at var(--os-cx, 50%) var(--os-cy, 0%),
+      rgba(125, 160, 255, 0.11),
+      transparent 68%
+    );
+  }
+  .os-card-hover:hover::after {
+    opacity: 1;
+  }
+
+  /* The hero telemetry strip. Two identical rows translated by exactly
+     half the track, so the loop has no seam and no JavaScript. */
+  .os-ticker {
+    mask-image: linear-gradient(90deg, transparent, black 6%, black 94%, transparent);
+    -webkit-mask-image: linear-gradient(90deg, transparent, black 6%, black 94%, transparent);
+  }
+  .os-ticker-track {
+    display: flex;
+    width: max-content;
+    animation: os-ticker 42s linear infinite;
+  }
+  .os-ticker:hover .os-ticker-track {
+    animation-play-state: paused;
+  }
+
+  @keyframes os-ticker {
+    from {
+      transform: translateX(0);
+    }
+    to {
+      transform: translateX(-50%);
+    }
+  }
+
+  /* A one-pixel light along the top edge of a large panel. Cheap, and it
+     does more for perceived quality than any amount of glow. */
+  .os-edge::before {
+    content: "";
+    position: absolute;
+    inset-inline: 14%;
+    top: -1px;
+    height: 1px;
+    background: linear-gradient(90deg, transparent, rgba(120, 170, 255, 0.6), transparent);
+  }
+
+  /* ── Controls ─────────────────────────────────────────────── */
+  .os-btn {
+    display: inline-flex;
+    align-items: center;
+    justify-content: center;
+    gap: 0.5rem;
+    border-radius: 0.625rem;
+    padding: 0.75rem 1.25rem;
+    font-size: 0.875rem;
+    font-weight: 600;
+    line-height: 1;
+    white-space: nowrap;
+    transition:
+      transform 220ms cubic-bezier(0.16, 1, 0.3, 1),
+      box-shadow 220ms ease,
+      border-color 220ms ease,
+      background-color 220ms ease;
+  }
+
+  .os-btn-primary {
+    color: #fff;
+    background-image: linear-gradient(110deg, #2563eb, #6d3ff0 58%, #0ea5e9);
+    box-shadow:
+      inset 0 1px 0 rgba(255, 255, 255, 0.24),
+      0 12px 30px -14px rgba(59, 130, 246, 0.9);
+  }
+  .os-btn-primary:hover {
+    box-shadow:
+      inset 0 1px 0 rgba(255, 255, 255, 0.3),
+      0 18px 40px -14px rgba(99, 102, 241, 0.95);
+  }
+
+  .os-btn-ghost {
+    color: var(--os-text);
+    border: 1px solid var(--os-line-2);
+    background: rgba(255, 255, 255, 0.03);
+  }
+  .os-btn-ghost:hover {
+    border-color: rgba(255, 255, 255, 0.3);
+    background: rgba(255, 255, 255, 0.07);
+  }
+
+  .os-chip {
+    display: inline-flex;
+    align-items: center;
+    gap: 0.5rem;
+    border-radius: 9999px;
+    border: 1px solid var(--os-line-2);
+    background: rgba(255, 255, 255, 0.035);
+    padding: 0.3125rem 0.75rem;
+    font-size: 0.6875rem;
+    font-weight: 600;
+    letter-spacing: 0.1em;
+    text-transform: uppercase;
+    color: var(--os-dim);
+  }
+
+  /* ── Type ─────────────────────────────────────────────────── */
+  .os-display {
+    font-weight: 600;
+    line-height: 1.03;
+    letter-spacing: -0.038em;
+  }
+
+  .os-gradient-text {
+    background-image: linear-gradient(96deg, #9ec5ff, #67e8f9 46%, #c4b5fd);
+    -webkit-background-clip: text;
+    background-clip: text;
+    color: transparent;
+  }
+
+  .os-label {
+    font-size: 0.625rem;
+    font-weight: 700;
+    letter-spacing: 0.16em;
+    text-transform: uppercase;
+  }
+
+  .os-mono {
+    font-family: "JetBrains Mono", ui-monospace, SFMono-Regular, monospace;
+    font-variant-numeric: tabular-nums;
+    letter-spacing: -0.01em;
+  }
+
+  /* ── The agent network ────────────────────────────────────── */
+  /* The network is a stage with real depth: the live participant steps
+     toward the viewer, the ones still waiting sit back, and the whole
+     stage leans a few degrees toward the pointer. Depth carries the same
+     information as the glow, which is what keeps it from being decoration
+     — you can see which node is live from across a room. */
+  .os-stage {
+    perspective: 1600px;
+    perspective-origin: 50% 45%;
+  }
+  .os-stage-inner {
+    --os-rx: 0deg;
+    --os-ry: 0deg;
+    transform-style: preserve-3d;
+    transform: rotateX(var(--os-rx)) rotateY(var(--os-ry));
+    transition: transform 500ms cubic-bezier(0.16, 1, 0.3, 1);
+  }
+
+  .os-node {
+    --os-z: -22px;
+    --os-nry: 0deg;
+    transform-style: preserve-3d;
+    transform: translateZ(var(--os-z)) rotateY(var(--os-nry));
+    transition:
+      border-color 400ms ease,
+      box-shadow 400ms ease,
+      transform 650ms cubic-bezier(0.16, 1, 0.3, 1);
+  }
+  .os-node[data-done="true"] {
+    --os-z: 0px;
+  }
+  .os-node[data-active="true"] {
+    --os-z: 52px;
+    border-color: rgba(34, 211, 238, 0.45);
+    box-shadow:
+      inset 0 1px 0 rgba(255, 255, 255, 0.08),
+      0 0 0 1px rgba(34, 211, 238, 0.18),
+      0 0 48px -18px rgba(34, 211, 238, 0.75);
+  }
+
+  /* A row of chips that lies back and straightens as it scrolls up. */
+  .os-ribbon {
+    perspective: 1400px;
+  }
+  .os-ribbon-inner {
+    --os-rot: 0deg;
+    transform-style: preserve-3d;
+    transform-origin: 50% 100%;
+    transform: rotateX(var(--os-rot));
+  }
+  .os-node[data-done="true"] {
+    border-color: rgba(52, 211, 153, 0.3);
+  }
+
+  /* A connector is a hairline track plus a light packet that crosses it
+     while that leg of the flow is live. */
+  .os-wire {
+    position: relative;
+    overflow: hidden;
+    background: linear-gradient(90deg, transparent, var(--os-line-2), transparent);
+  }
+  .os-wire-v {
+    background: linear-gradient(180deg, transparent, var(--os-line-2), transparent);
+  }
+  .os-packet {
+    position: absolute;
+    inset-block: 0;
+    width: 34%;
+    background: linear-gradient(90deg, transparent, var(--os-cyan), transparent);
+    /* The desktop wire is a single pixel tall, so the packet needs a halo
+       to read as light moving along it rather than as a dash. */
+    box-shadow: 0 0 12px 2px rgba(34, 211, 238, 0.45);
+    animation: os-packet-x 1.5s cubic-bezier(0.4, 0, 0.2, 1) infinite;
+  }
+  .os-packet-v {
+    inset-block: auto;
+    inset-inline: 0;
+    height: 34%;
+    width: auto;
+    background: linear-gradient(180deg, transparent, var(--os-cyan), transparent);
+    animation: os-packet-y 1.5s cubic-bezier(0.4, 0, 0.2, 1) infinite;
+  }
+
+  .os-pulse-ring::after {
+    content: "";
+    position: absolute;
+    inset: -5px;
+    border-radius: 9999px;
+    border: 1px solid currentColor;
+    opacity: 0;
+    animation: os-pulse 2.4s ease-out infinite;
+  }
+
+  /* ── Instruments ──────────────────────────────────────────── */
+  .os-meter {
+    overflow: hidden;
+    border-radius: 9999px;
+    background: rgba(255, 255, 255, 0.07);
+  }
+  .os-meter > span {
+    display: block;
+    height: 100%;
+    border-radius: 9999px;
+    transform-origin: left;
+    transition: width 1100ms cubic-bezier(0.16, 1, 0.3, 1);
+  }
+
+  /* Line charts draw themselves in once, on reveal. */
+  .os-draw {
+    stroke-dasharray: var(--os-len, 1200);
+    stroke-dashoffset: var(--os-len, 1200);
+    transition: stroke-dashoffset 1600ms cubic-bezier(0.22, 1, 0.36, 1);
+  }
+  .is-visible .os-draw {
+    stroke-dashoffset: 0;
+  }
+
+  .os-area {
+    opacity: 0;
+    transition: opacity 1200ms ease 500ms;
+  }
+  .is-visible .os-area {
+    opacity: 1;
+  }
+
+  /* ── Reveal ───────────────────────────────────────────────── */
+  .os-reveal {
+    opacity: 0;
+    transform: translateY(20px);
+    transition:
+      opacity 760ms cubic-bezier(0.16, 1, 0.3, 1),
+      transform 760ms cubic-bezier(0.16, 1, 0.3, 1);
+  }
+  .os-reveal.is-visible {
+    opacity: 1;
+    transform: none;
+  }
+
+  /* A step that arrives in a running sequence (ledger row, policy tick,
+     demo line). Same idea as reveal, driven by state rather than scroll. */
+  .os-step {
+    opacity: 0;
+    transform: translateY(6px);
+    transition:
+      opacity 380ms ease,
+      transform 380ms cubic-bezier(0.16, 1, 0.3, 1);
+  }
+  .os-step[data-shown="true"] {
+    opacity: 1;
+    transform: none;
+  }
+
+  /* The headline arrives a word at a time. Delays are set inline per
+     word, so this only needs the initial state and the animation. */
+  .os-word {
+    display: inline-block;
+    animation: os-word-in 760ms cubic-bezier(0.16, 1, 0.3, 1) both;
+  }
+
+  @keyframes os-word-in {
+    from {
+      opacity: 0;
+      transform: translateY(22px) rotateX(-40deg);
+    }
+    to {
+      opacity: 1;
+      transform: none;
+    }
+  }
+
+  @keyframes os-packet-x {
+    from {
+      transform: translateX(-110%);
+    }
+    to {
+      transform: translateX(310%);
+    }
+  }
+
+  @keyframes os-packet-y {
+    from {
+      transform: translateY(-110%);
+    }
+    to {
+      transform: translateY(310%);
+    }
+  }
+
+  @keyframes os-pulse {
+    0% {
+      opacity: 0.65;
+      transform: scale(0.85);
+    }
+    100% {
+      opacity: 0;
+      transform: scale(2.2);
+    }
+  }
+
+  @keyframes os-blink {
+    0%,
+    100% {
+      opacity: 1;
+    }
+    50% {
+      opacity: 0.25;
+    }
+  }
+
+  .os-blink {
+    animation: os-blink 1.4s ease-in-out infinite;
+  }
+
+  /* Motion is polish, never information. With it suppressed every state
+     above must still be legible: nothing here hides content. */
+  @media (prefers-reduced-motion: reduce) {
+    .os-reveal,
+    .os-step {
+      opacity: 1;
+      transform: none;
+      transition: none;
+    }
+    .os-draw {
+      stroke-dashoffset: 0;
+      transition: none;
+    }
+    .os-area {
+      opacity: 1;
+      transition: none;
+    }
+    .os-packet,
+    .os-packet-v,
+    .os-pulse-ring::after,
+    .os-blink,
+    .os-ticker-track {
+      animation: none;
+    }
+    .os-word {
+      animation: none;
+      opacity: 1;
+    }
+    .os-packet,
+    .os-packet-v {
+      opacity: 0.55;
+      transform: none;
+      inset: 0;
+      width: 100%;
+      height: 100%;
+    }
+    /* Depth is an enhancement; the data-active border and glow already
+       carry the same state, so flattening loses nothing. */
+    .os-card-hover,
+    .os-card-hover.os-card-hover:hover,
+    .os-node,
+    .os-stage-inner,
+    .os-ribbon-inner,
+    .os-pop {
+      transform: none;
+    }
+  }
+}
+
 @layer utilities {
   /* Long-form copy reads better broken on sense rather than on width. */
   .text-balance {

@@ -30,7 +30,14 @@ const FAILURE_CATEGORY_TEXT: Record<string, string> = {
 
 type LocalPhase = "IDLE" | "INITIATING" | "AWAITING_COMPLETION" | "VERIFYING" | "ERROR";
 
-export function PaymentPanel({ checkoutId }: { checkoutId: string }) {
+export function PaymentPanel({
+  checkoutId,
+  context = "buyer",
+}: {
+  checkoutId: string;
+  context?: "buyer" | "merchant-simulation";
+}) {
+  const isMerchantSimulation = context === "merchant-simulation";
   const [phase, setPhase] = useState<LocalPhase>("IDLE");
   const [paymentId, setPaymentId] = useState<string | null>(null);
   const [errorMessage, setErrorMessage] = useState<string | null>(null);
@@ -104,7 +111,8 @@ export function PaymentPanel({ checkoutId }: { checkoutId: string }) {
         </CardHeader>
         <CardBody className="space-y-1 text-sm">
           <p className="text-ink">
-            Order paid — <span className="font-medium">{formatMoney({ amountMinor: payment.data!.amountMinor, currency: payment.data!.currency })}</span> (Observed).
+            {isMerchantSimulation ? "Test payment verified" : "Order paid"} — <span className="font-medium">{formatMoney({ amountMinor: payment.data!.amountMinor, currency: payment.data!.currency })}</span>
+            {isMerchantSimulation ? ". No real funds moved." : " (Observed)."}
           </p>
           <p className="text-xs text-ink-faint">Provider payment reference: {payment.data!.providerPaymentId?.slice(0, 18)}…</p>
         </CardBody>
@@ -149,9 +157,9 @@ export function PaymentPanel({ checkoutId }: { checkoutId: string }) {
   return (
     <div className="flex items-center justify-between rounded-card border border-dashed border-border px-4 py-3">
       <div>
-        <p className="text-sm font-medium text-ink">Ready for payment</p>
+        <p className="text-sm font-medium text-ink">{isMerchantSimulation ? "Optional Razorpay buyer simulation" : "Ready for payment"}</p>
         <p className="text-xs text-ink-muted">
-          {phase === "INITIATING" ? "Preparing Razorpay Test Mode checkout…" : phase === "AWAITING_COMPLETION" ? "Complete the payment in the Razorpay window…" : phase === "VERIFYING" ? "Verifying payment securely…" : "Razorpay Test Mode — no real money is processed."}
+          {phase === "INITIATING" ? "Preparing Razorpay Test Mode checkout…" : phase === "AWAITING_COMPLETION" ? "Complete the test payment in the Razorpay window…" : phase === "VERIFYING" ? "Verifying the test payment securely…" : isMerchantSimulation ? "Act as the buyer to verify order creation, provider handoff, and payment evidence. No real money is processed." : "Razorpay Test Mode — no real money is processed."}
         </p>
         {errorMessage ? <p className="mt-1 text-xs text-danger-text">{errorMessage}</p> : null}
       </div>
@@ -162,7 +170,7 @@ export function PaymentPanel({ checkoutId }: { checkoutId: string }) {
         className="inline-flex items-center gap-1.5 rounded-md bg-brand-600 px-3 py-1.5 text-sm font-medium text-white hover:bg-brand-700 disabled:cursor-not-allowed disabled:opacity-50"
       >
         {phase === "INITIATING" || phase === "AWAITING_COMPLETION" || phase === "VERIFYING" ? <Loader2 size={14} className="animate-spin" /> : <ShieldCheck size={14} />}
-        Pay securely — TEST MODE
+        {isMerchantSimulation ? "Simulate buyer payment" : "Pay securely"} — TEST MODE
       </button>
     </div>
   );

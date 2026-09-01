@@ -83,8 +83,8 @@ export function CampaignManager() {
             <Megaphone size={18} />
           </div>
           <div>
-            <CardTitle>Autonomous Growth Campaigns</CardTitle>
-            <p className="text-xs text-ink-muted">Set bounded incentive budgets and randomized AB cohorts</p>
+          <CardTitle>Bounded growth campaigns</CardTitle>
+            <p className="text-xs text-ink-muted">Offers run for eligible buyer checkouts within your budget; creating one does not spend money.</p>
           </div>
         </div>
         <button
@@ -93,7 +93,7 @@ export function CampaignManager() {
           className="inline-flex items-center gap-1.5 rounded-md bg-brand-600 px-3 py-1.5 text-xs font-medium text-white shadow-sm hover:bg-brand-700 transition-colors"
         >
           <Plus size={14} />
-          New Campaign
+          Create campaign
         </button>
       </CardHeader>
 
@@ -197,8 +197,8 @@ export function CampaignManager() {
                   <Megaphone size={20} />
                 </div>
                 <div>
-                  <h3 className="text-base font-semibold text-ink">New Autonomous Campaign</h3>
-                  <p className="text-xs text-ink-muted">Set bounded budgets for autonomous conversion offers</p>
+                  <h3 className="text-base font-semibold text-ink">Create bounded campaign</h3>
+                  <p className="text-xs text-ink-muted">Define buyer eligibility and a maximum incentive budget. Spend occurs only on qualifying orders.</p>
                 </div>
               </div>
               <button
@@ -312,7 +312,7 @@ export function CampaignManager() {
                   disabled={createMutation.isPending}
                   className="inline-flex items-center gap-1.5 rounded-md bg-brand-600 px-4 py-2 text-sm font-medium text-white hover:bg-brand-700 disabled:opacity-50"
                 >
-                  {createMutation.isPending ? "Creating..." : "Launch Campaign"}
+                  {createMutation.isPending ? "Creating..." : "Create and activate"}
                 </button>
               </div>
             </form>

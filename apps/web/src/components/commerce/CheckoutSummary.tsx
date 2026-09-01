@@ -21,16 +21,29 @@ const SOURCE_LABEL: Record<string, string> = {
   AI_RECOVERY: "AI recovery offer",
 };
 
-export function CheckoutSummary({ checkout }: { checkout: CheckoutResponseDTO }) {
+export function CheckoutSummary({
+  checkout,
+  context = "buyer",
+}: {
+  checkout: CheckoutResponseDTO;
+  context?: "buyer" | "merchant-simulation";
+}) {
+  const isMerchantSimulation = context === "merchant-simulation";
   return (
     <div className="space-y-4">
       <Card className="border-success/40">
         <CardHeader className="flex flex-wrap items-center gap-2">
-          <CardTitle>Order Summary</CardTitle>
+          <CardTitle>{isMerchantSimulation ? "Simulated buyer order" : "Order summary"}</CardTitle>
           <span className="rounded-full bg-success-subtle px-2 py-0.5 text-[11px] font-medium text-success-text">{checkout.status.replace(/_/g, " ")}</span>
           <DemoDataBadge />
         </CardHeader>
         <CardBody className="space-y-3">
+          {isMerchantSimulation ? (
+            <p className="rounded-card bg-info-subtle px-3 py-2 text-xs text-info-text">
+              This test order demonstrates the buyer journey for the approved offer. It is not a merchant purchase and
+              is not realized revenue.
+            </p>
+          ) : null}
           <ul className="divide-y divide-border">
             {checkout.items.map((item) => (
               <li key={item.variantId} className="flex items-center justify-between gap-3 py-2 text-sm">
@@ -94,12 +107,12 @@ export function CheckoutSummary({ checkout }: { checkout: CheckoutResponseDTO })
           <div className="flex items-center gap-2">
             <Ban size={14} className="text-danger" />
             <span className="text-ink-muted">Payment status:</span>
-            <span className="font-medium text-ink">NOT STARTED</span>
+            <span className="font-medium text-ink">{isMerchantSimulation ? "TEST NOT STARTED" : "NOT STARTED"}</span>
           </div>
         </CardBody>
       </Card>
 
-      <PaymentPanel checkoutId={checkout.checkoutId} />
+      <PaymentPanel checkoutId={checkout.checkoutId} context={context} />
     </div>
   );
 }

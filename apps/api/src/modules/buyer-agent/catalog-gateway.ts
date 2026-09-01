@@ -14,18 +14,18 @@
  * near match. Price, required-attribute (size/color), and exclusion
  * filtering all happen deterministically in application code afterward —
  * a documented scope boundary (see docs/ARCHITECTURE.md), not an
- * accidental gap: category filtering already bounds this catalog's ~25
- * products down to a handful before any of that runs.
+ * accidental gap: category filtering already bounds the 200-product demo
+ * catalogue to one focused category before any of that runs.
  */
 import type { PrismaClient } from "@prisma/client";
 import type { AgentReadableProductDTO } from "@razorgrowth/contracts";
 import { listAgentCatalog } from "../agent-commerce/service.js";
 import { listCategories } from "../catalog/repository.js";
 
-/** Bounded server-side fetch before in-app price/attribute filtering
- * (PART 03 §31-§32) — generous enough to cover this catalog's full size
- * (~25 products) without ever sending an unbounded set downstream. */
-export const CATALOG_SEARCH_LIMIT = 100;
+/** Bounded server-side fetch before in-app price/attribute filtering.
+ * Large enough for the controlled demo catalogue while remaining an
+ * explicit hard cap for imported merchant data. */
+export const CATALOG_SEARCH_LIMIT = 250;
 
 export interface CatalogSearchCriteria {
   category: string | null;

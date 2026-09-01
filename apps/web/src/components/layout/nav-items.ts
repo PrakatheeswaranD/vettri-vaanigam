@@ -20,7 +20,7 @@ export const NAV_BY_ROLE: Record<ExperienceRole, NavSection[]> = {
     { to: "/customer/policy", label: "Spending Policy", icon: ShieldCheck, hint: "Autonomous and daily purchase limits" },
   ] }],
   merchant: [{ id: "merchant", label: "Grow with AI", items: [
-    { to: "/merchant/overview", label: "Overview", icon: LayoutDashboard, hint: "AI revenue and conversion at a glance" },
+    { to: "/merchant/overview", label: "Overview", icon: LayoutDashboard, hint: "Captured payments and growth signals" },
     { to: "/merchant/growth", label: "Growth", icon: TrendingUp, hint: "Revenue opportunities and bounded campaigns" },
     { to: "/merchant/ai-buyers", label: "AI Buyers", icon: Bot, hint: "Buyer intent and governed agent requests" },
     { to: "/merchant/catalog", label: "Catalog", icon: Package, hint: "AI-readable products and availability" },

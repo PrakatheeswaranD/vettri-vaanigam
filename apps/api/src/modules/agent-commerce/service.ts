@@ -8,6 +8,11 @@ import { toAgentReadableProduct } from "./mapper.js";
 export interface ListAgentCatalogParams {
   merchantId: string;
   category?: string;
+  /** Free-text match over name, brand and description. The repository has
+   * always supported it for the merchant's own catalogue; exposing it here
+   * is what lets a shopper reach a product that falls outside the first
+   * page of a large catalogue. */
+  search?: string;
   minPriceMinor?: number;
   maxPriceMinor?: number;
   availability?: AvailabilityState;

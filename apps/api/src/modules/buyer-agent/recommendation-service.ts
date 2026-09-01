@@ -13,7 +13,6 @@ import type { RecommendedProductDTO } from "@razorgrowth/contracts";
 import {
   deriveReasonCodes,
   fallbackRank,
-  renderExplanation,
   validateGrounding,
   type AvailabilityState,
   type BuyerIntent,
@@ -52,6 +51,52 @@ function countPreferenceMatches(candidate: EvaluatedCandidate, intent: BuyerInte
   }).length;
 }
 
+function money(amountMinor: number, currency: string): string {
+  return new Intl.NumberFormat("en-IN", {
+    style: "currency",
+    currency,
+    minimumFractionDigits: 0,
+    maximumFractionDigits: 2,
+  }).format(amountMinor / 100);
+}
+
+/** Explain one ranked variant using only normalized intent and authoritative
+ * catalogue facts. A model can influence ordering, never invent a reason. */
+function buildGroundedExplanation(candidate: EvaluatedCandidate, intent: BuyerIntent, rank: number): string {
+  const currency = candidate.product.commerce.currency;
+  const clauses: string[] = [
+    `Ranked #${rank}: this ${candidate.product.identity.category.toLowerCase()} costs ${money(candidate.priceMinor, currency)}`,
+  ];
+
+  if (intent.budget.maxMinor !== null) {
+    const difference = intent.budget.maxMinor - candidate.priceMinor;
+    clauses.push(
+      difference >= 0
+        ? `${money(difference, currency)} below your ${money(intent.budget.maxMinor, currency)} maximum`
+        : `${money(Math.abs(difference), currency)} above your ${money(intent.budget.maxMinor, currency)} maximum, disclosed as a near match`,
+    );
+  }
+
+  const requiredMatches = Object.entries(intent.requiredAttributes)
+    .filter(([key, expected]) => candidate.attributes[key.toLowerCase()]?.toLowerCase() === expected.toLowerCase())
+    .map(([key, expected]) => `${key} ${expected}`);
+  if (requiredMatches.length > 0) clauses.push(`matches required ${requiredMatches.join(" and ")}`);
+
+  const preferenceMatches = Object.entries(intent.preferredAttributes)
+    .filter(([key, expected]) => candidate.attributes[key.toLowerCase()]?.toLowerCase() === expected.toLowerCase())
+    .map(([key, expected]) => `${key} ${expected}`);
+  if (preferenceMatches.length > 0) clauses.push(`also matches preferred ${preferenceMatches.join(" and ")}`);
+
+  if (candidate.availabilityState === "IN_STOCK" || candidate.availabilityState === "LOW_STOCK") {
+    clauses.push(candidate.availabilityState === "LOW_STOCK" ? "is purchasable with low stock" : "is currently in stock");
+  }
+  if (candidate.product.readiness.state === "AGENT_READY") {
+    clauses.push("has complete merchant-authored price, inventory, shipping, and return evidence");
+  }
+
+  return `${clauses.join("; ")}.`;
+}
+
 function buildRecommendedProduct(
   candidate: EvaluatedCandidate,
   intent: BuyerIntent,
@@ -84,7 +129,7 @@ function buildRecommendedProduct(
     rank,
     matchType: candidate.matchType,
     reasonCodes: finalReasonCodes,
-    explanation: renderExplanation(finalReasonCodes),
+    explanation: buildGroundedExplanation(candidate, intent, rank),
     violations: candidate.violations,
     product: candidate.product,
   };

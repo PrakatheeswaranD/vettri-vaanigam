@@ -7,7 +7,7 @@ import { AppError } from "../../http/errors.js";
 
 export async function discoverMarketplace(
   prisma: PrismaClient,
-  filters: { category?: string; limitPerMerchant: number },
+  filters: { category?: string; search?: string; limitPerMerchant: number },
 ): Promise<MarketplaceDiscoveryResponseDTO> {
   const merchants = await prisma.merchant.findMany({
     where: {
@@ -28,6 +28,7 @@ export async function discoverMarketplace(
     const catalog = await listAgentCatalog(prisma, {
       merchantId: merchant.id,
       category: filters.category,
+      search: filters.search,
       page: 1,
       limit: filters.limitPerMerchant,
     });

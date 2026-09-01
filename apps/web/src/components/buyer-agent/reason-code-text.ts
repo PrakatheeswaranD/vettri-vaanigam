@@ -6,11 +6,11 @@
 import type { RecommendationReasonCodeDTO } from "@razorgrowth/contracts";
 
 export const REASON_CODE_TEXT: Record<RecommendationReasonCodeDTO, string> = {
-  WITHIN_BUDGET: "Within your budget",
-  MATCHES_REQUIRED_ATTRIBUTE: "Matches your required specification",
-  MATCHES_PREFERENCE: "Matches your stated preference",
-  IN_STOCK: "Currently in stock",
-  STRONG_METADATA: "Complete price, inventory, and policy information",
-  NEAR_MATCH_BUDGET: "Slightly above your stated budget",
-  NEAR_MATCH_ATTRIBUTE: "Doesn't match one of your required specifications",
+  WITHIN_BUDGET: "Price was checked against your stated budget",
+  MATCHES_REQUIRED_ATTRIBUTE: "The selected variant matches every required attribute",
+  MATCHES_PREFERENCE: "An optional preference improved this product's ranking",
+  IN_STOCK: "Merchant inventory says this selected variant is purchasable now",
+  STRONG_METADATA: "Merchant supplied complete price, inventory, shipping, and return evidence",
+  NEAR_MATCH_BUDGET: "No exact result met the budget; this is one of the closest disclosed alternatives",
+  NEAR_MATCH_ATTRIBUTE: "This alternative misses a required attribute; the mismatch is disclosed above",
 };

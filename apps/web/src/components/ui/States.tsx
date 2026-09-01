@@ -16,10 +16,15 @@ export function EmptyState({
   title,
   description,
   icon,
+  action,
 }: {
   title: string;
   description?: string;
   icon?: ReactNode;
+  /** A way out of the empty state — "clear filters", "add the first one".
+   * An empty screen that explains itself but offers no next step leaves
+   * the reader to work out that the filters are the problem. */
+  action?: ReactNode;
 }) {
   return (
     <div className="flex flex-col items-center justify-center gap-2 px-6 py-12 text-center">
@@ -28,6 +33,7 @@ export function EmptyState({
       </div>
       <p className="text-sm font-medium text-ink">{title}</p>
       {description ? <p className="max-w-sm text-sm text-ink-muted">{description}</p> : null}
+      {action ? <div className="mt-2">{action}</div> : null}
     </div>
   );
 }

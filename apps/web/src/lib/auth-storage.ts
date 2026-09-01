@@ -8,6 +8,7 @@
  * set or cleared, including by another browser tab (`storage` event).
  */
 const STORAGE_KEY = "razorgrowth.session.token";
+let memoryToken: string | null = null;
 
 type Listener = () => void;
 const listeners = new Set<Listener>();
@@ -18,13 +19,14 @@ function notify() {
 
 export function getToken(): string | null {
   try {
-    return localStorage.getItem(STORAGE_KEY);
+    return localStorage.getItem(STORAGE_KEY) ?? memoryToken;
   } catch {
-    return null;
+    return memoryToken;
   }
 }
 
 export function setToken(token: string): void {
+  memoryToken = token;
   try {
     localStorage.setItem(STORAGE_KEY, token);
   } catch {
@@ -35,6 +37,7 @@ export function setToken(token: string): void {
 }
 
 export function clearToken(): void {
+  memoryToken = null;
   try {
     localStorage.removeItem(STORAGE_KEY);
   } catch {
@@ -46,7 +49,10 @@ export function clearToken(): void {
 export function subscribeToken(listener: Listener): () => void {
   listeners.add(listener);
   const onStorage = (e: StorageEvent) => {
-    if (e.key === STORAGE_KEY) listener();
+    if (e.key === STORAGE_KEY) {
+      memoryToken = e.newValue;
+      listener();
+    }
   };
   window.addEventListener("storage", onStorage);
   return () => {

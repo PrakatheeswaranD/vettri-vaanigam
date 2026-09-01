@@ -20,18 +20,20 @@ export function registerLedgerRoutes(app: FastifyInstance, prefix: string): void
     return listLedgerEntries(prisma, { merchantId, ...query });
   });
 
-  // PART 05 §62 — read-only integrity check, no auth beyond the existing
-  // single-demo-merchant model; never mutates ledger rows.
+  // PART 05 §62 — read-only integrity check scoped to the authenticated
+  // merchant; never mutates ledger rows or reveals another tenant's chain.
   app.get(`${prefix}/action-ledger/workflows/:workflowId/verify`, async (request) => {
+    const merchantId = getAuthenticatedMerchantId(request);
     const params = workflowParamsSchema.parse(request.params);
-    return verifyLedgerWorkflow(prisma, params.workflowId);
+    return verifyLedgerWorkflow(prisma, merchantId, params.workflowId);
   });
 
   // PART 08 §72, §107 — the financial-flow trace view: one workflow's
   // complete, ordered story, derived entirely from already-persisted
   // ledger rows.
   app.get(`${prefix}/action-ledger/workflows/:workflowId/trace`, async (request) => {
+    const merchantId = getAuthenticatedMerchantId(request);
     const params = workflowParamsSchema.parse(request.params);
-    return getWorkflowTrace(prisma, params.workflowId);
+    return getWorkflowTrace(prisma, merchantId, params.workflowId);
   });
 }

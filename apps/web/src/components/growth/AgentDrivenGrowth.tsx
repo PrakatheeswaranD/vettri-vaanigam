@@ -1,5 +1,6 @@
 /**
- * What AI agents actually bought, and what the negotiator offered on it.
+ * Which AI-buyer requests the gateway approved, and what the negotiator
+ * offered on them. Payment capture is intentionally reported elsewhere.
  *
  * REPLACES A PANEL THAT ASKED THE WRONG QUESTION
  *
@@ -60,7 +61,7 @@ export function AgentDrivenGrowth() {
 
         {!decisions.isPending && approved.length === 0 ? (
           <p className="rounded-card border border-border bg-surface-subtle px-3 py-2.5 text-sm text-ink-muted">
-            No agent has completed a purchase yet, so there is nothing to negotiate on.{" "}
+            No AI-buyer request has been approved yet, so there is nothing to report.{" "}
             <Link to="/agent-gateway" className="font-medium text-brand-600 hover:underline">
               Run the demo from the Agent Gateway
             </Link>{" "}
@@ -106,7 +107,8 @@ export function AgentDrivenGrowth() {
 
         {approved.length > 0 ? (
           <p className="text-xs text-ink-faint">
-            {negotiated.length} of {approved.length} agent purchases received an offer. Every one was clamped in code
+            {negotiated.length} of {approved.length} approved buyer requests received an offer. Approval is not payment;
+            captured payments appear in Payments. Every offer was clamped in code
             to your ceiling before it reached the agent — the model proposes, your policy disposes.
           </p>
         ) : null}

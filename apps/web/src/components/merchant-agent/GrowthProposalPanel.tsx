@@ -277,9 +277,17 @@ function ExecutionAuthorizationCard({
           </div>
         </CardBody>
         {!alreadyConsumed && !executeCheckout.data ? (
-          <CardBody className="flex flex-wrap items-center gap-3 border-t border-border">
+          <CardBody className="space-y-3 border-t border-border">
+            <div className="rounded-card border border-info/30 bg-info-subtle px-3 py-2 text-sm text-info-text">
+              <p className="font-medium">Optional buyer journey simulation</p>
+              <p className="mt-0.5 text-xs">
+                Approval makes this offer eligible for buyers; it does not charge anyone. Use the control below only
+                to test how an AI buyer would create an order. Razorpay remains in Test Mode and no real money moves.
+              </p>
+            </div>
+            <div className="flex flex-wrap items-center gap-3">
             <label className="flex items-center gap-2 text-sm text-ink-muted">
-              Quantity
+              Simulated buyer quantity
               <input
                 type="number"
                 min={1}
@@ -303,17 +311,18 @@ function ExecutionAuthorizationCard({
               className="inline-flex items-center gap-1.5 rounded-md bg-brand-600 px-3 py-1.5 text-sm font-medium text-white hover:bg-brand-700 disabled:cursor-not-allowed disabled:opacity-50"
             >
               <ShieldCheck size={14} />
-              {executeCheckout.isPending ? "Executing…" : "Execute authorized checkout"}
+              {executeCheckout.isPending ? "Creating test order…" : "Simulate AI-buyer checkout"}
             </button>
             {!variantId ? <span className="text-xs text-warning-text">No purchasable variant found for this product.</span> : null}
             {executeCheckout.isError ? (
               <span className="text-sm text-danger-text">{executeCheckout.error instanceof ApiError ? executeCheckout.error.message : "Checkout failed."}</span>
             ) : null}
+            </div>
           </CardBody>
         ) : null}
       </Card>
 
-      {executeCheckout.data ? <CheckoutSummary checkout={executeCheckout.data} /> : null}
+      {executeCheckout.data ? <CheckoutSummary checkout={executeCheckout.data} context="merchant-simulation" /> : null}
     </div>
   );
 }
@@ -399,8 +408,11 @@ function GovernanceControls({ proposal }: { proposal: GrowthActionProposalDTO })
           className="inline-flex items-center gap-1.5 rounded-md bg-brand-600 px-3 py-1.5 text-sm font-medium text-white hover:bg-brand-700 disabled:cursor-not-allowed disabled:opacity-50"
         >
           <KeyRound size={14} />
-          {issueAuthorization.isPending ? "Requesting…" : "Request execution authorization"}
+          {issueAuthorization.isPending ? "Activating…" : "Activate offer for buyer checkout"}
         </button>
+        <p className="text-xs text-ink-muted">
+          Activation permits a future buyer checkout within these exact terms. It does not create an order or charge a customer.
+        </p>
         {issueAuthorization.isSuccess && "denied" in issueAuthorization.data ? (
           <p className="rounded-card bg-danger-subtle px-3 py-2 text-sm text-danger-text">
             Not authorized: {issueAuthorization.data.explanation}

@@ -5,6 +5,11 @@ import { discoverMarketplace, getMarketplaceProduct } from "./service.js";
 
 const querySchema = z.object({
   category: z.string().trim().min(1).max(100).optional(),
+  // A shopper sees at most `limitPerMerchant` products from each merchant,
+  // so a large catalogue is only ever partly on screen. Search is how they
+  // reach the rest: it filters SERVER-side, across every published product,
+  // rather than over the handful already fetched.
+  search: z.string().trim().min(1).max(100).optional(),
   limitPerMerchant: z.coerce.number().int().min(1).max(20).default(10),
 });
 

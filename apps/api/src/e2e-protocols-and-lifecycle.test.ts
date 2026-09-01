@@ -20,6 +20,7 @@ import { buildApp } from "./app.js";
 import { createSession } from "./modules/auth/session.js";
 import { sweepExpiredCheckouts } from "./modules/commerce/maintenance-service.js";
 import { tryAutoAttributeOrder, tryAutoConvertCampaignOnPaymentCapture } from "./modules/campaigns/auto-attribution.js";
+import { appendLedgerEvent } from "./modules/audit/ledger.js";
 
 describe("E2E Protocols and Lifecycle Test Suite", () => {
   const app = buildApp();
@@ -298,6 +299,30 @@ describe("E2E Protocols and Lifecycle Test Suite", () => {
       expect(payment2.state).toBe("REFUNDED");
     });
 
+    it("serializes concurrent refunds so their total cannot exceed the payment", async () => {
+      if (!dbAvailable) return;
+      const concurrentPayment = await prisma.payment.create({
+        data: {
+          id: randomUUID(), merchantId, orderId, provider: "DEMO", amountMinor: 100000,
+          currency: "INR", state: "CAPTURED", attemptNumber: 2,
+        },
+      });
+      const request = () => app.inject({
+        method: "POST",
+        url: "/api/v1/refunds",
+        headers: { authorization: `Bearer ${authBearer}` },
+        payload: { paymentId: concurrentPayment.id, amountMinor: 75000, reason: "Concurrent refund guard" },
+      });
+
+      const responses = await Promise.all([request(), request()]);
+      expect(responses.map((response) => response.statusCode).sort()).toEqual([201, 409]);
+      const total = await prisma.refund.aggregate({
+        where: { paymentId: concurrentPayment.id },
+        _sum: { amountMinor: true },
+      });
+      expect(total._sum.amountMinor).toBe(75000);
+    });
+
     it("creates and transitions return requests", async () => {
       if (!dbAvailable) return;
       const res = await app.inject({
@@ -323,6 +348,13 @@ describe("E2E Protocols and Lifecycle Test Suite", () => {
       });
       expect(resApprove.statusCode).toBe(200);
       expect(resApprove.json().status).toBe("APPROVED");
+
+      const excessive = await app.inject({
+        method: "POST", url: "/api/v1/returns",
+        headers: { authorization: `Bearer ${authBearer}` },
+        payload: { orderId, reason: "Duplicate return", items: [{ orderItemId, quantity: 1 }] },
+      });
+      expect(excessive.statusCode).toBe(409);
     });
 
     it("creates fulfillment tracking and updates status", async () => {
@@ -350,10 +382,24 @@ describe("E2E Protocols and Lifecycle Test Suite", () => {
       });
       expect(resDelivered.statusCode).toBe(200);
       expect(resDelivered.json().status).toBe("DELIVERED");
+
+      const excessive = await app.inject({
+        method: "POST", url: "/api/v1/fulfillments",
+        headers: { authorization: `Bearer ${authBearer}` },
+        payload: { orderId, carrier: "BlueDart", trackingNumber: "BD-DUPLICATE", items: [{ orderItemId, quantity: 1 }] },
+      });
+      expect(excessive.statusCode).toBe(409);
     });
 
     it("records and updates disputes", async () => {
       if (!dbAvailable) return;
+      const excessive = await app.inject({
+        method: "POST", url: "/api/v1/disputes",
+        headers: { authorization: `Bearer ${authBearer}` },
+        payload: { paymentId, amountMinor: 200001, reason: "Impossible over-payment dispute" },
+      });
+      expect(excessive.statusCode).toBe(409);
+
       const res = await app.inject({
         method: "POST",
         url: "/api/v1/disputes",
@@ -379,6 +425,28 @@ describe("E2E Protocols and Lifecycle Test Suite", () => {
       });
       expect(resReview.statusCode).toBe(200);
       expect(resReview.json().status).toBe("UNDER_REVIEW");
+    });
+
+    it("does not expose another merchant's workflow trace or verification data", async () => {
+      if (!dbAvailable) return;
+      const otherMerchantId = randomUUID();
+      const workflowId = randomUUID();
+      await prisma.merchant.create({
+        data: { id: otherMerchantId, name: "Private Merchant", slug: `private-${Date.now()}`, status: "ACTIVE", businessCategory: "Retail", defaultCurrency: "INR" },
+      });
+      await appendLedgerEvent(prisma, {
+        merchantId: otherMerchantId, workflowId, actorType: "SYSTEM", actionType: "PRIVATE_EVENT",
+        status: "EXECUTED", conciseReason: "Must stay inside the owning tenant.",
+      });
+
+      const trace = await app.inject({ method: "GET", url: `/api/v1/action-ledger/workflows/${workflowId}/trace`, headers: { authorization: `Bearer ${authBearer}` } });
+      const verification = await app.inject({ method: "GET", url: `/api/v1/action-ledger/workflows/${workflowId}/verify`, headers: { authorization: `Bearer ${authBearer}` } });
+      expect(trace.statusCode).toBe(200);
+      expect(trace.json().steps).toEqual([]);
+      expect(verification.statusCode).toBe(200);
+      expect(verification.json().eventCount).toBe(0);
+
+      await prisma.merchant.delete({ where: { id: otherMerchantId } });
     });
   });
 

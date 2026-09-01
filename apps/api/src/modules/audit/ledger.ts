@@ -194,9 +194,13 @@ export interface WorkflowVerificationResult {
  * match what the chain recorded at write time — sequence gap, tampered
  * field, or a hash that doesn't recompute to what's stored.
  */
-export async function verifyWorkflowLedger(prisma: PrismaClient, workflowId: string): Promise<WorkflowVerificationResult> {
+export async function verifyWorkflowLedger(
+  prisma: PrismaClient,
+  workflowId: string,
+  merchantId?: string,
+): Promise<WorkflowVerificationResult> {
   const events = await prisma.agentAction.findMany({
-    where: { workflowId },
+    where: { workflowId, ...(merchantId ? { merchantId } : {}) },
     orderBy: { sequence: "asc" },
   });
 

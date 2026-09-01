@@ -105,7 +105,7 @@ function GrowthPreviewSection() {
                 Proposing…
               </>
             ) : (
-              "Propose Growth Action"
+            "Generate preview proposal"
             )}
           </button>
         </div>
@@ -156,7 +156,7 @@ export default function GrowthPage() {
     <div className="space-y-6">
       <PageHeader
         title="Basket Growth"
-        lead="What AI agents bought, and what the negotiator offered to make those baskets bigger — always inside the limits you set."
+        lead="Which AI-buyer requests the gateway approved, and what the negotiator offered to grow those baskets — payment is reported separately."
       />
       <GrowthSummaryPanel />
       <AgentDrivenGrowth />
