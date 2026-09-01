@@ -1,5 +1,5 @@
 /**
- * Buyer-side spend mandates — the "anumati" (consent) the gateway is named
+ * Buyer-side spend mandates — the "vaanigam" (consent) the gateway is named
  * for.
  *
  * SECURITY NOTE — READ BEFORE CHANGING ANYTHING HERE

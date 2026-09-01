@@ -34,7 +34,7 @@ export function MobileNav() {
                 <div className="flex h-7 w-7 items-center justify-center rounded-lg bg-brand-600 text-white">
                   <ShieldCheck size={15} />
                 </div>
-                <span className="text-sm font-semibold text-ink">Anumati</span>
+                <span className="text-sm font-semibold text-ink">Vaanigam</span>
               </div>
               <button
                 type="button"

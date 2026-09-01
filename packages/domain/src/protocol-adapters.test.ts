@@ -46,7 +46,7 @@ describe("ACP adapter", () => {
     const result = parseAcpIntent(
       {
         items: [{ id: "SKU-1" }],
-        anumati_mandate: {
+        vaanigam_mandate: {
           mandateId: "m1",
           buyerAgentId: "agent-chatgpt-1",
           merchantScope: "merchant-1",
@@ -172,5 +172,53 @@ describe("adapter mesh routing", () => {
     // There is deliberately no field on ParsedIntent that any caller could
     // mistake for a charge amount.
     expect(result.ok && Object.keys(result.intent)).not.toContain("totalMinor");
+  });
+});
+
+/**
+ * The product was renamed from Anumati to Vaanigam. A rename on our side
+ * must not silently break an integration that was working — dropping the
+ * old field name would surface to a caller as a MANDATE_MISSING decline
+ * they have no way to explain.
+ */
+describe("mandate field — the pre-rename name still works", () => {
+  const mandate = {
+    mandateId: "m-1",
+    buyerAgentId: "agent-1",
+    merchantScope: "merchant-1",
+    maxAmountMinor: 500_000,
+    currency: "INR",
+    notBefore: new Date(Date.now() - 60_000).toISOString(),
+    expiresAt: new Date(Date.now() + 600_000).toISOString(),
+    nonce: "nonce-1",
+    publicKey: "a".repeat(43),
+    signature: "b".repeat(86),
+  };
+
+  function parse(field: string) {
+    return parseIntentForProtocol(
+      "ACP",
+      { items: [{ id: "SKU-1", quantity: 1 }], buyer: {}, [field]: mandate },
+      { "x-agent-id": "agent-1" },
+      null,
+    );
+  }
+
+  it("reads a mandate sent under the new name", () => {
+    const result = parse("vaanigam_mandate");
+    expect(result.ok).toBe(true);
+    if (result.ok) expect(result.intent.mandate?.mandateId).toBe("m-1");
+  });
+
+  it("still reads one sent under the old name", () => {
+    const result = parse("anumati_mandate");
+    expect(result.ok).toBe(true);
+    if (result.ok) expect(result.intent.mandate?.mandateId).toBe("m-1");
+  });
+
+  it("reads the protocol-neutral name too", () => {
+    const result = parse("mandate");
+    expect(result.ok).toBe(true);
+    if (result.ok) expect(result.intent.mandate?.mandateId).toBe("m-1");
   });
 });

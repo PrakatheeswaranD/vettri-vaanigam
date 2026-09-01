@@ -11,13 +11,13 @@ export function RequireAuth() {
   const token = useAuthToken();
   const user = useCurrentUser();
   const location = useLocation();
-  const role = user.data?.role === "CUSTOMER" ? "customer" : user.data?.role === "PLATFORM_ADMIN" ? "admin" : "merchant";
+  const role = user.data?.role === "CUSTOMER" ? "customer" : "merchant";
   useEffect(() => { if (user.data) setExperienceRole(role); }, [user.data, role]);
   if (!token) return <Navigate to="/login" replace />;
   if (user.isPending) return <p role="status" className="p-6">Verifying account access…</p>;
   if (user.isError) return <Navigate to="/login" replace />;
   const requestedRole = location.pathname.split("/")[1];
-  if (["customer", "merchant", "admin"].includes(requestedRole ?? "") && requestedRole !== role) return <Navigate to={ROLE_HOME[role]} replace />;
+  if (["customer", "merchant"].includes(requestedRole ?? "") && requestedRole !== role) return <Navigate to={ROLE_HOME[role]} replace />;
   if (role !== "merchant" && requestedRole !== role) return <Navigate to={ROLE_HOME[role]} replace />;
   return <Outlet />;
 }

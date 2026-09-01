@@ -1,7 +1,7 @@
 import type { FastifyInstance } from "fastify";
 import { z } from "zod";
 import { prisma } from "../../db/client.js";
-import { discoverMarketplace } from "./service.js";
+import { discoverMarketplace, getMarketplaceProduct } from "./service.js";
 
 const querySchema = z.object({
   category: z.string().trim().min(1).max(100).optional(),
@@ -12,5 +12,10 @@ export function registerMarketplaceRoutes(app: FastifyInstance, prefix: string):
   app.get(`${prefix}/marketplace/discovery`, async (request) => {
     const query = querySchema.parse(request.query);
     return discoverMarketplace(prisma, query);
+  });
+
+  app.get(`${prefix}/marketplace/products/:productId`, async (request) => {
+    const { productId } = z.object({ productId: z.string().uuid() }).parse(request.params);
+    return getMarketplaceProduct(prisma, productId);
   });
 }

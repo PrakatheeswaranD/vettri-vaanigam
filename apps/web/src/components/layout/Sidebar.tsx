@@ -28,7 +28,7 @@ export function Sidebar() {
           <ShieldCheck size={17} />
         </div>
         <div className="min-w-0">
-          <p className="text-sm font-semibold tracking-tight text-ink">Anumati</p>
+          <p className="text-sm font-semibold tracking-tight text-ink">Vaanigam</p>
           <p className="truncate text-micro text-ink-faint">{ROLE_LABELS[role]}</p>
         </div>
       </div>

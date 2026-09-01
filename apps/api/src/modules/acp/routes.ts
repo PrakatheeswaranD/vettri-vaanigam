@@ -15,7 +15,7 @@
  * WHERE THE GOVERNANCE HAPPENS
  *
  * `/complete` is the only endpoint that can move money, so that is the one
- * that runs the full Anumati gate: mandate, then merchant policy, then a
+ * that runs the full Vaanigam gate: mandate, then merchant policy, then a
  * Decision Record. Creating or updating a session commits the merchant to
  * nothing, so those are deliberately cheap.
  *
@@ -46,6 +46,7 @@ import { stableSensitiveFingerprint } from "../privacy/redaction.js";
 import { issueDelegatedPaymentToken, verifyDelegatedPaymentToken } from "./delegated-payment-token.js";
 import { executeExternalAgentPurchase } from "../gateway/execution-service.js";
 import { verifyAcpRequestSignature } from "./request-signature.js";
+import { buildAcpMessages, type AcpMessage } from "@razorgrowth/domain";
 
 export const ACP_API_VERSION = "2026-04-17";
 
@@ -119,9 +120,13 @@ function toAcpSession(
     totals: { total: row.totalAmountMinor },
     buyer: row.buyerEmail || row.buyerName ? { email: row.buyerEmail, name: row.buyerName } : undefined,
     allowance: row.allowance ?? undefined,
+    // ACP's own channel back to the calling agent. Always an array, never
+    // omitted: a client that reads `messages.length` should not have to
+    // handle undefined on the happy path.
+    messages: (row.messages as AcpMessage[] | null) ?? [],
     created_at: row.createdAt.toISOString(),
     updated_at: row.updatedAt.toISOString(),
-    ...(continuation ? { anumati: continuation } : {}),
+    ...(continuation ? { vaanigam: continuation } : {}),
   };
 }
 
@@ -327,7 +332,7 @@ export function registerAcpRoutes(app: FastifyInstance, prefix: string): void {
 
   /**
    * The only ACP endpoint that can move money — so the only one that runs
-   * the full Anumati gate.
+   * the full Vaanigam gate.
    */
   app.post(`${base}/checkout_sessions/:sessionId/complete`, async (request, reply) => {
     const { merchantSlug, sessionId } = request.params as { merchantSlug: string; sessionId: string };
@@ -433,6 +438,13 @@ export function registerAcpRoutes(app: FastifyInstance, prefix: string): void {
         const paymentInitiated = result.outcome === "AUTO_APPROVE" && Boolean(result.providerOrderId);
         const isCompleted = result.outcome === "AUTO_APPROVE" && Boolean(result.internalPaymentId);
 
+        const acpMessages = buildAcpMessages({
+          outcome: result.outcome,
+          reasonCode: result.reasonCode,
+          explanation: result.explanation,
+          stepUpUrl: result.stepUpUrl,
+        });
+
         if (isCompleted && result.internalPaymentId) {
           await prisma.$transaction([
             prisma.payment.update({
@@ -447,6 +459,7 @@ export function registerAcpRoutes(app: FastifyInstance, prefix: string): void {
               data: {
                 status: "completed",
                 decisionRecordId: result.decisionId,
+                messages: acpMessages as never,
               },
             }),
             prisma.acpDelegatedPayment.update({
@@ -461,6 +474,7 @@ export function registerAcpRoutes(app: FastifyInstance, prefix: string): void {
               data: {
                 status: paymentInitiated ? "payment_in_progress" : session.status,
                 decisionRecordId: result.decisionId,
+                messages: acpMessages as never,
               },
             }),
             prisma.acpDelegatedPayment.update({
@@ -477,9 +491,14 @@ export function registerAcpRoutes(app: FastifyInstance, prefix: string): void {
         return {
           id: session.id,
           status: isCompleted ? "completed" : "requires_action",
-          // ACP callers get the reason too. An agent that is told only
-          // "declined" cannot correct itself; one told why can.
-          anumati: {
+          // ACP's own `messages` array — the protocol field built for
+          // exactly this, rather than a private one we invented. An agent
+          // that speaks only ACP can act on `approval_required` without
+          // knowing anything about Vaanigam.
+          messages: acpMessages,
+          // The machine-readable Vaanigam reason stays in our own
+          // namespace, alongside rather than inside the protocol's enum.
+          vaanigam: {
             decision: result.outcome,
             reason_code: result.reasonCode,
             reason: result.explanation,
@@ -500,7 +519,7 @@ export function registerAcpRoutes(app: FastifyInstance, prefix: string): void {
   /**
    * `delegate_payment` — tokenises a payment method under an Allowance.
    *
-   * The caller supplies a token from its own PCI/payment vault. Anumati
+   * The caller supplies a token from its own PCI/payment vault. Vaanigam
    * stores only a one-way fingerprint and returns its own signed, bounded
    * token. Raw PAN/CVV fields are not accepted and no instrument secret is
    * persisted in either this table or the idempotency response snapshot.
@@ -562,7 +581,7 @@ export function registerAcpRoutes(app: FastifyInstance, prefix: string): void {
           created: new Date().toISOString(),
           metadata: body.metadata ?? {},
           expiresAt: expiresAt.toISOString(),
-          anumati: {
+          vaanigam: {
             token_kind: "delegated_payment_token",
             payment_instrument_vaulted: false,
             allowance_max_amount: body.allowance.max_amount,
@@ -582,7 +601,7 @@ export function registerAcpRoutes(app: FastifyInstance, prefix: string): void {
       created: outcome.response.created,
       expires_at: outcome.response.expiresAt,
       metadata: outcome.response.metadata,
-      anumati: outcome.response.anumati,
+      vaanigam: outcome.response.vaanigam,
     });
   });
 }

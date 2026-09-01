@@ -36,6 +36,8 @@ import type {
   NormalizeCatalogRowParams,
   RawNormalizedProduct,
   ProposeAgentUpsellParams,
+  CompilePolicyParams,
+  RawPolicyDraftResponse,
   RawAgentUpsell,
 } from "../ai-provider.js";
 
@@ -355,6 +357,97 @@ export function createDemoRuleBasedProvider(): AIProvider {
         discountBps: Math.floor(params.maxDiscountBps / 2),
         pitch: `Adding ${complement.name} completes this order, and the merchant will take a little off the total for the larger basket.`,
       };
+    },
+
+    /**
+     * Deterministic policy authoring, for demos and for CI.
+     *
+     * Genuinely parses the sentence rather than returning a fixture: the
+     * demo path has to be able to fail on input it cannot read, or it
+     * teaches the wrong thing about what the feature does. Anything it
+     * cannot parse comes back as an empty draft, which the diff layer
+     * reports as "nothing changed" — the same honest answer a model is
+     * instructed to give.
+     */
+    async compilePolicyFromInstruction(params: CompilePolicyParams): Promise<RawPolicyDraftResponse> {
+      const text = params.instruction.toLowerCase();
+      const draft: RawPolicyDraftResponse = {};
+
+      /** "10,000" / "10000" / "10k" / "1 lakh" -> minor units. */
+      function amountsIn(segment: string): number[] {
+        const found: number[] = [];
+        const pattern = /(?:₹|rs\.?|inr)?\s*([0-9][0-9,]*(?:\.[0-9]+)?)\s*(k|thousand|lakh|lakhs|l|cr|crore)?/gi;
+        for (const match of segment.matchAll(pattern)) {
+          const base = Number(match[1]!.replace(/,/g, ""));
+          if (!Number.isFinite(base)) continue;
+          const unit = (match[2] ?? "").toLowerCase();
+          const multiplier =
+            unit === "k" || unit === "thousand" ? 1_000
+            : unit === "lakh" || unit === "lakhs" || unit === "l" ? 100_000
+            : unit === "cr" || unit === "crore" ? 10_000_000
+            : 1;
+          found.push(Math.round(base * multiplier * 100));
+        }
+        return found;
+      }
+
+      function percentIn(segment: string): number | null {
+        const match = segment.match(/([0-9]+(?:\.[0-9]+)?)\s*(?:%|percent|per cent)/i);
+        return match ? Math.round(Number(match[1]) * 100) : null;
+      }
+
+      // Split so "unknown agents ₹10,000 and known agents ₹50,000" maps
+      // each amount to the clause that mentioned it, rather than taking
+      // the first number twice.
+      // Split on conjunctions and sentence boundaries, but NEVER on a
+      // comma or period sitting between digits: "25,000" and "1.5 lakh"
+      // are how people actually write amounts, and splitting them turns
+      // ₹25,000 into ₹25.
+      const clauses = text
+        .split(/(?<![0-9])\s*,\s*(?![0-9])| and | but |;|\.(?![0-9])/)
+        .filter((c: string) => c.trim().length > 0);
+
+      for (const clause of clauses) {
+        const mentionsUnknown = /unknown|new|never|first[- ]time|stranger|haven't|have not/.test(clause);
+        const mentionsKnown = /known|recognis|recogniz|returning|repeat|trusted|regular/.test(clause);
+        const mentionsSpend = /spend|limit|ceiling|cap|order|purchase|buy/.test(clause);
+
+        if (mentionsSpend || mentionsUnknown || mentionsKnown) {
+          const amounts = amountsIn(clause);
+          if (amounts.length > 0) {
+            if (mentionsUnknown) draft.unknownAgentCeilingMinor = amounts[0];
+            else if (mentionsKnown) draft.knownAgentCeilingMinor = amounts[0];
+          }
+        }
+
+        if (/discount|off|negotiat/.test(clause)) {
+          const percent = percentIn(clause);
+          if (percent !== null) draft.maxNegotiationDiscountBps = percent;
+        }
+
+        if (/margin|below cost|cogs/.test(clause)) {
+          const percent = percentIn(clause);
+          if (percent !== null) draft.negotiatorFloorMarginBps = percent;
+        }
+
+        if (/per hour|an hour|hourly|rate limit|velocity|attempts/.test(clause)) {
+          const match = clause.match(/([0-9]+)\s*(?:purchases?|orders?|attempts?|requests?|intents?)?\s*(?:per hour|an hour|hourly)/);
+          if (match) draft.velocityMaxIntentsPerHour = Number(match[1]);
+        }
+
+        // Blocking is stated against the merchant's OWN category names —
+        // never a name invented from the sentence.
+        if (/block|never|don't sell|do not sell|forbid|ban|not allowed/.test(clause)) {
+          const matched = params.knownCategories.filter((category: string) => clause.includes(category.toLowerCase()));
+          if (matched.length > 0) {
+            const existing = new Set(params.current.blockedCategories);
+            for (const category of matched) existing.add(category);
+            draft.blockedCategories = [...existing];
+          }
+        }
+      }
+
+      return draft;
     },
   };
 }

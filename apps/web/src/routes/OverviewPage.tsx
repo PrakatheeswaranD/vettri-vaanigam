@@ -35,7 +35,7 @@ export default function OverviewPage() {
     <div className="space-y-6">
       {/* Hero — product identity (spec §6): what this is, in one glance */}
       <div className="rounded-card border border-border bg-gradient-to-br from-brand-50 to-surface px-6 py-6">
-        <p className="text-xs font-semibold uppercase tracking-wide text-brand-600">Anumati</p>
+        <p className="text-xs font-semibold uppercase tracking-wide text-brand-600">Vaanigam</p>
         <h1 className="mt-1 text-2xl font-bold tracking-tight text-ink">Agent Commerce Gateway</h1>
         <p className="mt-1.5 max-w-2xl text-sm text-ink-muted">
           Be safely payable by any AI buyer agent, on any protocol — every financial action stays

@@ -1,6 +1,13 @@
 import { useSyncExternalStore } from "react";
 
-export type ExperienceRole = "customer" | "merchant" | "admin";
+/**
+ * Two roles, deliberately.
+ *
+ * A platform-admin experience existed and was removed: it was a third door
+ * onto a console nobody demoing this product needs, and it diluted the two
+ * that carry the actual story — an agent buying, and a merchant governing.
+ */
+export type ExperienceRole = "customer" | "merchant";
 const STORAGE_KEY = "razorgrowth.experience.role";
 const listeners = new Set<() => void>();
 const notify = () => listeners.forEach((listener) => listener());
@@ -8,7 +15,7 @@ const notify = () => listeners.forEach((listener) => listener());
 export function getExperienceRole(): ExperienceRole {
   try {
     const value = localStorage.getItem(STORAGE_KEY);
-    if (value === "customer" || value === "admin" || value === "merchant") return value;
+    if (value === "customer" || value === "merchant") return value;
   } catch { /* storage can be unavailable */ }
   return "merchant";
 }
@@ -35,5 +42,4 @@ export function useExperienceRole(): ExperienceRole {
 export const ROLE_HOME: Record<ExperienceRole, string> = {
   customer: "/customer/buyer-agent",
   merchant: "/merchant/overview",
-  admin: "/admin/overview",
 };

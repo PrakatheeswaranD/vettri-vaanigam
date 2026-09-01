@@ -1,5 +1,5 @@
 /**
- * Anumati Core — the merchant-policy half of the gate.
+ * Vaanigam Core — the merchant-policy half of the gate.
  *
  * A verified mandate says the BUYER consented. This says whether the
  * MERCHANT consents. Both must pass before anything touches a payment API,
@@ -26,6 +26,7 @@
  * discount, but its ceiling is enforced here, in code.
  */
 import type { AgentTrustLevel } from "./agent-protocol.js";
+import type { TrustBand } from "./agent-trust-score.js";
 import type { CurrencyCode } from "./money.js";
 
 export const GATEWAY_DECISIONS = ["AUTO_APPROVE", "STEP_UP", "DECLINE"] as const;
@@ -82,6 +83,23 @@ export interface GatewayEvaluationContext {
   /** Intents already seen from this agent in the trailing hour. */
   recentIntentCount: number;
   protocolSupported: boolean;
+  /**
+   * The adaptive ceiling derived from this agent's own history, when the
+   * caller computed one. Optional on purpose: this function stays usable —
+   * and testable — without a database behind it, and a caller that passes
+   * nothing gets exactly the old flat known/unknown behaviour.
+   *
+   * When present it REPLACES the binary ceiling in both directions. It can
+   * never exceed `knownAgentCeilingMinor`, so a derived score cannot hand
+   * out authority the merchant never configured.
+   */
+  adaptiveTrust?: {
+    score: number;
+    band: TrustBand;
+    ceilingMinor: number;
+    /** The score pulled the ceiling below the unknown-agent floor. */
+    collapsed: boolean;
+  } | null;
 }
 
 export interface GatewayEvaluationResult {
@@ -92,6 +110,10 @@ export interface GatewayEvaluationResult {
   /** The ceiling that applied, so the console can show the comparison. */
   appliedCeilingMinor: number;
   policyVersion: number;
+  /** The score behind the ceiling, when an adaptive one was supplied.
+   * Null means the flat known/unknown binary decided this. */
+  trustScore: number | null;
+  trustBand: TrustBand | null;
 }
 
 function majorUnits(minor: number, currency: CurrencyCode): string {
@@ -103,10 +125,18 @@ export function evaluateAgentGatewayPolicy(
   policy: AgentGatewayPolicy,
   context: GatewayEvaluationContext,
 ): GatewayEvaluationResult {
-  const ceiling =
-    context.agentTrust === "KNOWN" ? policy.knownAgentCeilingMinor : policy.unknownAgentCeilingMinor;
+  const ceiling = context.adaptiveTrust
+    ? context.adaptiveTrust.ceilingMinor
+    : context.agentTrust === "KNOWN"
+      ? policy.knownAgentCeilingMinor
+      : policy.unknownAgentCeilingMinor;
 
-  const base = { appliedCeilingMinor: ceiling, policyVersion: policy.policyVersion };
+  const base = {
+    appliedCeilingMinor: ceiling,
+    policyVersion: policy.policyVersion,
+    trustScore: context.adaptiveTrust?.score ?? null,
+    trustBand: context.adaptiveTrust?.band ?? null,
+  };
 
   if (!context.protocolSupported) {
     return {
@@ -173,15 +203,48 @@ export function evaluateAgentGatewayPolicy(
 
   if (context.orderTotalMinor > ceiling) {
     const over = context.orderTotalMinor - ceiling;
+    const reasonCode =
+      context.agentTrust === "KNOWN" ? "KNOWN_AGENT_CEILING_EXCEEDED" : "UNKNOWN_AGENT_CEILING_EXCEEDED";
+
+    // A collapsed agent has a ceiling of zero, so "3.2x your limit" would
+    // read as "Infinityx". Say the true thing instead.
+    if (ceiling === 0) {
+      return {
+        ...base,
+        decision: "STEP_UP",
+        reasonCode,
+        explanation: `This agent's trust score has fallen to ${context.adaptiveTrust?.score ?? 0} after earlier flagged behaviour, so its automatic limit is currently nothing at all. Every order it sends — including this ${majorUnits(context.orderTotalMinor, context.currency)} one — comes to you for approval until it rebuilds a record.`,
+      };
+    }
+
     const multiple = (context.orderTotalMinor / ceiling).toFixed(1);
+
+    if (context.adaptiveTrust?.collapsed) {
+      return {
+        ...base,
+        decision: "STEP_UP",
+        reasonCode,
+        explanation: `This agent's trust score of ${context.adaptiveTrust.score} has pulled its automatic limit down to ${majorUnits(ceiling, context.currency)}, below what a stranger would get. ${majorUnits(context.orderTotalMinor, context.currency)} is ${majorUnits(over, context.currency)} over that, so it comes to you rather than going through.`,
+      };
+    }
+
     return {
       ...base,
       decision: "STEP_UP",
-      reasonCode: context.agentTrust === "KNOWN" ? "KNOWN_AGENT_CEILING_EXCEEDED" : "UNKNOWN_AGENT_CEILING_EXCEEDED",
+      reasonCode,
       explanation:
         context.agentTrust === "KNOWN"
           ? `This agent has bought from you before, but ${majorUnits(context.orderTotalMinor, context.currency)} is ${multiple}x your ${majorUnits(ceiling, context.currency)} automatic limit — ${majorUnits(over, context.currency)} over. Sending it to you for approval instead of charging it.`
           : `This agent hasn't transacted with you before, and the order is ${multiple}x your ${majorUnits(ceiling, context.currency)} unknown-agent limit — ${majorUnits(over, context.currency)} over. Declining automatic approval and sending it to you for review.`,
+    };
+  }
+
+  if (context.adaptiveTrust?.score != null && context.adaptiveTrust.ceilingMinor > policy.unknownAgentCeilingMinor) {
+    return {
+      ...base,
+      decision: "AUTO_APPROVE",
+      reasonCode: "WITHIN_ENVELOPE",
+      explanation: `${majorUnits(context.orderTotalMinor, context.currency)} is within the ${majorUnits(ceiling, context.currency)} limit this agent has earned — a trust score of ${context.adaptiveTrust.score} from its own record with you, capped at the ${majorUnits(policy.knownAgentCeilingMinor, context.currency)} maximum you set. Nothing in the basket is restricted. Approved automatically.`,
     };
   }
 

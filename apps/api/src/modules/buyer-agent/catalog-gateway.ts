@@ -50,6 +50,34 @@ export async function getKnownCategories(prisma: PrismaClient, merchantId: strin
   return rows.map((r) => r.category);
 }
 
+/**
+ * The category vocabulary for a MARKETPLACE conversation.
+ *
+ * A shopper signs in as their own identity context, and that context sells
+ * nothing. Scoping the vocabulary to it — as the merchant-side path
+ * correctly does — hands the extractor an EMPTY category list, so the
+ * model has no legal value to return, no category survives normalization,
+ * and `needsClarification` asks "what type of product are you looking
+ * for?" forever no matter how plainly the shopper answers. The customer
+ * journey never reaches a product.
+ *
+ * The same mistake, in the same shape, was fixed once already for buyer
+ * spending policies (migration 20260831070000): a buyer context is not a
+ * merchant, so anything scoped "to the buyer's merchantId" is scoped to
+ * nothing. A marketplace shopper can buy from any active merchant, so the
+ * vocabulary is what is purchasable across active merchants.
+ */
+export async function getMarketplaceCategories(prisma: PrismaClient): Promise<string[]> {
+  const rows = await prisma.product.findMany({
+    where: { status: "ACTIVE", merchant: { status: "ACTIVE" } },
+    select: { category: true },
+    distinct: ["category"],
+    orderBy: { category: "asc" },
+    take: CATALOG_SEARCH_LIMIT,
+  });
+  return rows.map((row) => row.category);
+}
+
 /** How many distinct values to show per attribute key. Enough to convey
  * the value FORMAT (that sizes read `UK9`, not `9`) without pasting the
  * whole catalog into every prompt. */
@@ -96,10 +124,15 @@ export function sampleValues(values: string[], limit: number): string[] {
  */
 export async function getKnownAttributes(
   prisma: PrismaClient,
-  merchantId: string,
+  merchantId: string | null,
 ): Promise<Record<string, string[]>> {
+  // `null` means a marketplace conversation: sample the attribute naming
+  // across active merchants rather than from the shopper's own context,
+  // which owns no variants. See getMarketplaceCategories.
   const variants = await prisma.productVariant.findMany({
-    where: { product: { merchantId } },
+    where: merchantId === null
+      ? { product: { status: "ACTIVE", merchant: { status: "ACTIVE" } } }
+      : { product: { merchantId } },
     select: { attributes: true },
   });
 

@@ -7,6 +7,9 @@ export const buyerSpendingPolicySchema = z.object({
   autonomousPurchaseLimitMinor: z.number().int().min(0),
   dailyLimitMinor: z.number().int().min(0),
   allowedCategories: z.array(z.string()),
+  /** Explicit "every category is permitted". Never inferred from a
+   *  magic word inside `allowedCategories` — see resolve-policy.ts. */
+  allowAllCategories: z.boolean(),
   approvalRequiredAboveLimit: z.boolean(),
   updatedAt: z.string().datetime(),
 });
@@ -16,6 +19,7 @@ export const buyerSpendingPolicyUpdateSchema = z.object({
   autonomousPurchaseLimitMinor: z.number().int().min(0).max(100_000_000),
   dailyLimitMinor: z.number().int().min(0).max(100_000_000),
   allowedCategories: z.array(z.string().trim().min(1).max(100)).max(50),
+  allowAllCategories: z.boolean().optional(),
   approvalRequiredAboveLimit: z.boolean(),
 }).refine((value) => value.dailyLimitMinor >= value.autonomousPurchaseLimitMinor, {
   message: "Daily limit must be at least the autonomous purchase limit.",

@@ -1,7 +1,7 @@
 # Deployment — from local demo to a real deployment
 
 This is the checklist for the six things that must be provisioned before
-Anumati can run outside a laptop. Items 1, 2, 3 and 6 need your
+Vaanigam can run outside a laptop. Items 1, 2, 3 and 6 need your
 accounts and payment method; the scaffolding for all of them is already
 in the repository.
 

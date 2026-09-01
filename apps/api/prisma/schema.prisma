@@ -348,7 +348,7 @@ model Merchant {
   merchantUsers           MerchantUser[]
   buyerSpendingPolicy     BuyerSpendingPolicy?
 
-  // Anumati gateway — agent-facing commerce.
+  // Vaanigam gateway — agent-facing commerce.
   agentIdentities         AgentIdentity[]
   spendMandateNonces      SpendMandateNonce[]
   agentGatewayPolicy      AgentGatewayPolicy?
@@ -871,6 +871,17 @@ model BuyerSpendingPolicy {
   autonomousPurchaseLimitMinor    Int      @default(200000)
   dailyLimitMinor                 Int      @default(1000000)
   allowedCategories               Json     @default("[]")
+  /// Explicit "every category is permitted" state.
+  ///
+  /// The allow-list is matched literally, so a shopper who typed "all"
+  /// into the categories field got one category NAMED "all" and every
+  /// purchase declined CATEGORY_NOT_ALLOWED — a plausible input that
+  /// silently disabled buying. The fix is a real boolean rather than a
+  /// magic string: a wildcard hidden inside user-supplied text is exactly
+  /// the value an injection would aim for, and an auditor cannot tell a
+  /// deliberate "allow everything" from a typo. Defaults to false, so no
+  /// existing policy is widened by this column appearing.
+  allowAllCategories              Boolean  @default(false)
   approvalRequiredAboveLimit      Boolean  @default(true)
   createdAt                       DateTime @default(now())
   updatedAt                       DateTime @updatedAt
@@ -1180,7 +1191,7 @@ model GrowthActionProposal {
 }
 
 // ─────────────────────────────────────────────────────────────────────────
-// ANUMATI GATEWAY — agent-facing commerce
+// VAANIGAM GATEWAY — agent-facing commerce
 //
 // Everything below serves one question: can an AI agent this merchant has
 // never seen buy from them safely, whatever protocol it speaks? The
@@ -1310,6 +1321,28 @@ model AgentGatewayPolicy {
   /// an authenticated merchant user before any signed mandate it presents
   /// can be verified against anything trusted.
   allowFirstUseKeyPinning   Boolean  @default(false)
+
+  /// ── Customer negotiation ────────────────────────────────────────
+  ///
+  /// A shopper asking for a better price is answered by code reading
+  /// their own settled history, not by a person and not by a model.
+  ///
+  /// Above `negotiationAutoApplyCeilingBps` the request goes to the
+  /// merchant instead of applying. Past `negotiationMaxDiscountBps` the
+  /// answer is simply no — there is no point troubling a human with a
+  /// number they have already said they will never accept.
+  negotiationAutoApplyCeilingBps Int @default(500)
+  negotiationMaxDiscountBps      Int @default(1500)
+  /// The rupee stop, and the reason this is safe to automate at all.
+  ///
+  /// A percentage is not a limit on a large basket: 5% of a ₹5,00,000
+  /// order is ₹25,000 handed over with nobody in the loop. Whatever the
+  /// percentage works out to, an automatic discount may not exceed this
+  /// absolute amount — past it, a human decides.
+  negotiationMaxAutoApplyMinor   Int @default(200000)
+  /// Off switch. With this false, every request goes to the merchant.
+  negotiationAutomationEnabled   Boolean @default(true)
+
   updatedAt                 DateTime @updatedAt
   createdAt                 DateTime @default(now())
 }
@@ -1341,6 +1374,14 @@ model AcpCheckoutSession {
   externalAgentId  String?
   /// The gateway decision this session most recently produced.
   decisionRecordId String?
+
+  /// ACP `CheckoutSessionBase.messages` — the protocol's own channel for
+  /// telling the CALLING AGENT why something did not simply go through.
+  ///
+  /// Persisted rather than recomputed on read so a later GET on the
+  /// session returns the same messages the completion returned. An agent
+  /// that polls must not see the reason change under it.
+  messages         Json?
   createdAt        DateTime @default(now())
   updatedAt        DateTime @updatedAt
 
@@ -1351,7 +1392,7 @@ model AcpCheckoutSession {
 
 /// A server-issued ACP delegated-payment authorization. The external
 /// payment-method token itself is never stored: only a keyed HMAC fingerprint
-/// is retained, while the client receives a signed Anumati token that is
+/// is retained, while the client receives a signed Vaanigam token that is
 /// bound to this row, merchant, authenticated agent and optional session.
 model AcpDelegatedPayment {
   id                           String        @id
@@ -1525,9 +1566,56 @@ model DecisionRecord {
   appliedCeilingMinor Int?
   currency          Currency?
 
+  /// The adaptive trust score (0-100) behind `appliedCeilingMinor`, and
+  /// the band it fell in. Snapshotted per decision rather than read live
+  /// from the agent: the console must be able to show the score AS IT WAS
+  /// when the call was made, not as it is now. A later attack must not
+  /// silently rewrite the reason an earlier order was approved.
+  ///
+  /// Null on historical rows and on any decision the flat known/unknown
+  /// binary made.
+  trustScoreAtDecision Int?
+  trustBandAtDecision  String?
+
   /// Set when the negotiator offered something. Always within
   /// `AgentGatewayPolicy.maxNegotiationDiscountBps`.
   negotiatedDiscountBps Int?
+
+  /// ── Customer-initiated negotiation ──────────────────────────────
+  ///
+  /// What the shopper ASKED for, kept beside what was granted. A record
+  /// that stores only the outcome cannot answer "did we give them what
+  /// they wanted?", which is the first question anyone asks of a
+  /// negotiation after the fact.
+  negotiationRequestedBps Int?
+  /// AUTO_APPLIED | PENDING_MERCHANT | MERCHANT_APPROVED |
+  /// MERCHANT_REJECTED | DECLINED. Null when nobody negotiated.
+  negotiationStatus       String?
+  /// The plain-English answer the shopper was given. Stored rather than
+  /// recomputed so it can never drift from the decision it explained.
+  negotiationExplanation  String?
+  /// The loyalty tier that produced the entitlement, snapshotted. A
+  /// customer's later refund must not rewrite why an earlier discount
+  /// was granted.
+  customerTierAtDecision  String?
+  /// The basket total BEFORE any discount was applied.
+  ///
+  /// Without this the amount given away is unrecoverable: once
+  /// `computedTotalMinor` is reduced, nothing records what it was reduced
+  /// from, and a merchant auditing their own margin has no baseline.
+  preNegotiationTotalMinor Int?
+
+  /// What the MODEL actually proposed, before any clamping or grounding.
+  ///
+  /// Stored beside the enforced outcome on purpose. The claim "the LLM
+  /// cannot move money" is only checkable if the model's raw output
+  /// survives next to what the system did with it — otherwise a reader
+  /// has to take the clamp on trust. When the two differ, that row IS the
+  /// evidence the guardrail did something.
+  ///
+  /// Shape: `{ discountBps, addSkus, pitch, clampedDiscount, droppedSkus }`.
+  /// Null when no negotiation ran, which is the common case.
+  negotiatorRawProposal Json?
 
   /// Legacy nullable fields retained for historical rows. New step-ups are
   /// approved first and only then create a bounded provider order.
@@ -1605,6 +1693,12 @@ model DecisionRecord {
 
   @@index([merchantId, createdAt])
   @@index([merchantId, outcome])
+  /// The adaptive trust score aggregates an agent's declines and
+  /// attack-shaped decisions on every gateway call. Without this that is a
+  /// scan of the entire decision history per request.
+  @@index([agentIdentityId, reasonCode])
+  /// Merchants reviewing negotiations that are waiting on them.
+  @@index([merchantId, negotiationStatus])
   @@index([agentIdentityId])
   @@index([providerOrderId])
 }

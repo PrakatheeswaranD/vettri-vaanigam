@@ -35,6 +35,11 @@ import { getPaymentGateway } from "../payments/gateway-factory.js";
 import { handleAgentPurchaseIntent } from "./service.js";
 import { buildDecisionMetrics, listDecisionRecords } from "./decision-query.js";
 import { registerAgentKey, revokeAgent } from "./agent-registry.js";
+import { summariseAgentTrust } from "./agent-trust-summary.js";
+import { listPendingNegotiations, decideNegotiation } from "../buyer-policy/negotiation-service.js";
+import { buildPolicyDraft, type AgentGatewayPolicy, type CurrencyCode } from "@razorgrowth/domain";
+import { getAIProvider } from "../agents/provider-factory.js";
+import { logger } from "../../observability/logger.js";
 import { executeExternalAgentPurchase, ExternalPurchaseExecutionError } from "./execution-service.js";
 import { appendLedgerEvent } from "../audit/ledger.js";
 import { verifyGatewayStatusToken } from "./status-token.js";
@@ -181,6 +186,108 @@ export function registerAgentGatewayRoutes(app: FastifyInstance, prefix: string)
   });
 
   /**
+   * Draft a policy change from a sentence — FEATURES_1.md §C.
+   *
+   * This endpoint deliberately DOES NOT SAVE ANYTHING. It returns a diff.
+   *
+   * That is the whole design. A merchant describing policy in English is
+   * a real usability win — no SME owner is hand-editing JSON — but the
+   * model writing the gate is the highest-consequence LLM call in the
+   * product, because a bad value here is not one wrong order, it is every
+   * order afterwards, silently. So the model's output is parsed to known
+   * fields, clamped to hard bounds, diffed with plain-English effects, and
+   * handed back for a human to look at. Applying it is a separate,
+   * authenticated PUT that the merchant makes after reading the diff.
+   *
+   * GET is not used because the instruction is user content and has no
+   * business in a URL or a server access log.
+   */
+  app.post(`${prefix}/agent-gateway/policy/draft`, async (request) => {
+    const merchantId = getAuthenticatedMerchantId(request);
+    requireOwnerRole(request);
+
+    const body = z
+      .object({ instruction: z.string().min(3).max(2000) })
+      .parse(request.body);
+
+    const [existing, categoryRows] = await Promise.all([
+      prisma.agentGatewayPolicy.findUnique({ where: { merchantId } }),
+      prisma.product.findMany({
+        where: { merchantId, status: "ACTIVE" },
+        select: { category: true },
+        distinct: ["category"],
+        take: 100,
+      }),
+    ]);
+
+    const current: AgentGatewayPolicy = {
+      policyVersion: existing?.policyVersion ?? 0,
+      currency: (existing?.currency ?? "INR") as CurrencyCode,
+      unknownAgentCeilingMinor: existing?.unknownAgentCeilingMinor ?? 1_000_000,
+      knownAgentCeilingMinor: existing?.knownAgentCeilingMinor ?? 5_000_000,
+      blockedCategories: existing?.blockedCategories ?? [],
+      maxNegotiationDiscountBps: existing?.maxNegotiationDiscountBps ?? 1000,
+      negotiatorMinBundleItems: existing?.negotiatorMinBundleItems ?? 2,
+      negotiatorFloorMarginBps: existing?.negotiatorFloorMarginBps ?? 2000,
+      velocityMaxIntentsPerHour: existing?.velocityMaxIntentsPerHour ?? 20,
+      allowFirstUseKeyPinning: existing?.allowFirstUseKeyPinning ?? false,
+    };
+
+    const knownCategories = categoryRows.map((row) => row.category);
+    const provider = getAIProvider();
+
+    let raw: Record<string, unknown>;
+    try {
+      raw = await provider.compilePolicyFromInstruction({
+        instruction: body.instruction,
+        knownCategories,
+        current: {
+          unknownAgentCeilingMinor: current.unknownAgentCeilingMinor,
+          knownAgentCeilingMinor: current.knownAgentCeilingMinor,
+          blockedCategories: current.blockedCategories,
+          maxNegotiationDiscountBps: current.maxNegotiationDiscountBps,
+          negotiatorFloorMarginBps: current.negotiatorFloorMarginBps,
+          velocityMaxIntentsPerHour: current.velocityMaxIntentsPerHour,
+        },
+      });
+    } catch (err) {
+      logger.warn(
+        { event: "vaanigam.policy_author_failed", err: err instanceof Error ? err.message : String(err) },
+        "Policy author failed",
+      );
+      // Fails CLOSED: an empty draft changes nothing. A model outage must
+      // never be able to produce a policy edit.
+      raw = {};
+    }
+
+    const draft = buildPolicyDraft(current, raw);
+
+    return {
+      instruction: body.instruction,
+      modelMode: provider.mode,
+      current,
+      // What WOULD apply. The merchant PUTs this back to accept it.
+      proposed: draft.resulting,
+      changes: draft.changes,
+      ignoredFields: draft.ignoredFields,
+      clampNotes: draft.clampNotes,
+      loosensAnyGuardrail: draft.loosensAnyGuardrail,
+      matchedFields: draft.matchedFields,
+      // Stated in the payload, not only in the docs: a client reading this
+      // response should not have to infer that nothing was written.
+      applied: false,
+      note:
+        draft.changes.length > 0
+          ? "Nothing has been saved. Review the changes and confirm to apply them."
+          : draft.matchedFields.length > 0
+            // Understood, and already true. Reporting this as "I did not
+            // understand" would make a working feature look broken.
+            ? "That is already your policy — the settings you described match what is saved, so there is nothing to change."
+            : "Nothing in that sentence mapped to a policy field, so no change is proposed. Say what you want to change in terms of spending limits, blocked categories, discounts or rate limits.",
+    };
+  });
+
+  /**
    * Agent enrolment — how a key becomes trusted.
    *
    * Mandate signatures are verified against the key registered HERE, by an
@@ -216,19 +323,40 @@ export function registerAgentGatewayRoutes(app: FastifyInstance, prefix: string)
       orderBy: { lastSeenAt: "desc" },
       take: 100,
     });
+
+    const trustByAgent = await summariseAgentTrust(
+      prisma,
+      merchantId,
+      rows.map((a) => ({ id: a.id, settledOrderCount: a.settledOrderCount })),
+    );
+
     return {
-      items: rows.map((a) => ({
-        id: a.id,
-        externalAgentId: a.externalAgentId,
-        displayName: a.displayName,
-        // The key itself is never echoed; whether one is trusted, and how,
-        // is the part a merchant needs to see.
-        hasRegisteredKey: Boolean(a.registeredPublicKey),
-        keyTrustSource: a.keyTrustSource,
-        hasActiveCredential: Boolean(a.apiKeyHash) && !a.apiKeyRevokedAt,
-        settledOrderCount: a.settledOrderCount,
-        lastSeenAt: a.lastSeenAt.toISOString(),
-      })),
+      items: rows.map((a) => {
+        const trust = trustByAgent.get(a.id);
+        return {
+          id: a.id,
+          externalAgentId: a.externalAgentId,
+          displayName: a.displayName,
+          // The key itself is never echoed; whether one is trusted, and how,
+          // is the part a merchant needs to see.
+          hasRegisteredKey: Boolean(a.registeredPublicKey),
+          keyTrustSource: a.keyTrustSource,
+          hasActiveCredential: Boolean(a.apiKeyHash) && !a.apiKeyRevokedAt,
+          settledOrderCount: a.settledOrderCount,
+          lastSeenAt: a.lastSeenAt.toISOString(),
+          // Recomputed live rather than read from a stored counter: the
+          // score IS the history, so a cached copy could only ever be a
+          // way for it to be wrong.
+          trustScore: trust?.score ?? null,
+          trustBand: trust?.band ?? null,
+          trustExplanation: trust?.explanation ?? null,
+          effectiveCeilingMinor: trust?.ceilingMinor ?? null,
+          trustCeilingEarned: trust?.earned ?? false,
+          trustCeilingCollapsed: trust?.collapsed ?? false,
+          declineCount: trust?.declines ?? 0,
+          flaggedAttackCount: trust?.flaggedAttacks ?? 0,
+        };
+      }),
     };
   });
 
@@ -497,6 +625,96 @@ export function registerAgentGatewayRoutes(app: FastifyInstance, prefix: string)
         .slice(-4000),
       error: output.code === 0 ? null : output.stderr.slice(-1000),
     };
+  });
+
+  /**
+   * Run the red-team agent against this gateway, live.
+   *
+   * Deliberately the same shape as `run-demo`: a merchant should be able
+   * to watch an adversary attack their own gateway from the same console
+   * they watch honest traffic in, without a terminal.
+   *
+   * The script writes real Decision Records under a throwaway attacker
+   * identity, so the attacks appear in the merchant's own decision feed
+   * afterwards — which is the point. An attack nobody can audit is a
+   * screenshot, not a defence.
+   */
+  app.post(`${prefix}/agent-gateway/run-redteam`, async (request) => {
+    getAuthenticatedMerchantId(request);
+    requireOwnerRole(request);
+
+    const scriptPath = fileURLToPath(new URL("../../../scripts/redteam-buyers.ts", import.meta.url));
+    const started = Date.now();
+
+    const output = await new Promise<{ code: number | null; stdout: string; stderr: string }>((resolve) => {
+      const child = spawn(process.execPath, ["--import", "tsx", scriptPath], {
+        env: { ...process.env, API_BASE: process.env.PUBLIC_API_BASE ?? `http://127.0.0.1:${process.env.PORT ?? 4000}/api/v1` },
+        cwd: fileURLToPath(new URL("../../..", import.meta.url)),
+      });
+      let stdout = "";
+      let stderr = "";
+      child.stdout.on("data", (chunk) => (stdout += String(chunk)));
+      child.stderr.on("data", (chunk) => (stderr += String(chunk)));
+      child.on("close", (code) => resolve({ code, stdout, stderr }));
+      setTimeout(() => child.kill("SIGTERM"), 120_000).unref();
+    });
+
+    const lines = output.stdout.split("\n").filter((line) => !line.trim().startsWith("{"));
+
+    // Parsed from the script's own report so the console can render a
+    // verdict without re-implementing the attack logic. The exit code
+    // remains the authority — a parse miss must never turn a breach green.
+    const defences = lines
+      .filter((line) => /^ {2}(🛡|🚨) /.test(line))
+      .map((line) => ({
+        name: line.replace(/^ {2}(🛡|🚨) /, "").replace(/\s+(held|BREACHED)$/, "").trim(),
+        held: line.includes("held"),
+      }));
+
+    return {
+      // The script exits non-zero the moment any defence fails.
+      allDefencesHeld: output.code === 0,
+      exitCode: output.code,
+      durationMs: Date.now() - started,
+      defences,
+      output: lines.join("\n").slice(-6000),
+      error: output.code === 0 ? null : output.stderr.slice(-1000),
+    };
+  });
+
+  /**
+   * Customer discount requests that came to the merchant.
+   *
+   * These are the ones the automation deliberately did NOT decide: past
+   * the auto-apply percentage, past the rupee cap, or on a basket whose
+   * cost is unknown so no margin could be checked. Everything a customer's
+   * own record already entitled them to has been applied without reaching
+   * this list — a queue full of routine loyalty discounts would be a queue
+   * nobody reads.
+   */
+  app.get(`${prefix}/agent-gateway/negotiations`, async (request) => {
+    const merchantId = getAuthenticatedMerchantId(request);
+    return { items: await listPendingNegotiations(prisma, merchantId) };
+  });
+
+  /**
+   * Approve or reject one.
+   *
+   * The same RBAC as every other approval in the product: giving money
+   * away is an approval, and it is recorded against the person who made it.
+   */
+  app.post(`${prefix}/agent-gateway/negotiations/:id/decide`, async (request) => {
+    const merchantId = getAuthenticatedMerchantId(request);
+    requireApprovalRole(request);
+    const { id } = z.object({ id: z.string().uuid() }).parse(request.params);
+    const body = z.object({ approve: z.boolean() }).parse(request.body);
+
+    return decideNegotiation(prisma, {
+      proposalId: id,
+      merchantId,
+      approve: body.approve,
+      decidedByUserId: request.merchantUserId ?? "unknown",
+    });
   });
 
   app.get(`${prefix}/agent-gateway/metrics`, async (request) => {

@@ -87,6 +87,61 @@ const ACTIVITY_SPEC: Record<string, ActivitySpec> = {
   RECOVERY_BLOCKED: { title: "Recovery blocked by limits", actor: "POLICY", tone: "negative" },
   RECOVERY_AUTHORIZATION_CONSUMED: { title: "Recovery authorization consumed", actor: "SYSTEM", tone: "neutral" },
   RECOVERY_ATTEMPT_CREATED: { title: "Bounded retry attempted", actor: "SYSTEM", tone: "attention" },
+
+  // The agent-gateway and buyer-purchase vocabularies. These were writing
+  // real, frequent ledger rows — an agent request being declined is one of
+  // the most common events this system produces — while this map still
+  // only knew the PART 04-08 names, so the merchant console tagged them
+  // "unmapped event" in its own audit feed. Surfacing an unknown type is
+  // the right fallback; leaving known types to fall through it is not.
+  AGENT_INTENT_APPROVED: { title: "Agent request approved", actor: "POLICY", tone: "positive" },
+  AGENT_INTENT_DECLINED: { title: "Agent request declined", actor: "POLICY", tone: "negative" },
+  AGENT_INTENT_STEPPED_UP: { title: "Agent request escalated for approval", actor: "POLICY", tone: "attention" },
+  AGENT_STEP_UP_APPROVED: { title: "Escalated request approved", actor: "HUMAN", tone: "positive" },
+  AGENT_CHECKOUT_CREATED: { title: "Agent checkout created", actor: "SYSTEM", tone: "neutral" },
+  AGENT_INVENTORY_RESERVATION_RELEASED: { title: "Stock reservation released", actor: "SYSTEM", tone: "neutral" },
+  AGENT_EXECUTION_FAILED_SAFE: { title: "Execution failed safely — nothing charged", actor: "SYSTEM", tone: "negative" },
+
+  BUYER_PURCHASE_PROPOSED: { title: "Buyer purchase proposed", actor: "AI", tone: "neutral" },
+  BUYER_PURCHASE_AUTHORIZED: { title: "Buyer authorized the purchase", actor: "HUMAN", tone: "positive" },
+
+  CUSTOMER_NEGOTIATION_AUTO_APPLIED: { title: "Earned discount applied", actor: "POLICY", tone: "positive" },
+  CUSTOMER_NEGOTIATION_PROPOSED: { title: "Discount request sent for your decision", actor: "POLICY", tone: "attention" },
+  CUSTOMER_NEGOTIATION_DECLINED: { title: "Discount request declined", actor: "POLICY", tone: "negative" },
+
+  CAMPAIGN_CREATED: { title: "Campaign created", actor: "HUMAN", tone: "neutral" },
+  PROPOSE_OFFER: { title: "Offer proposed", actor: "AI", tone: "positive" },
+  EVALUATE_OFFER: { title: "Offer evaluated", actor: "POLICY", tone: "neutral" },
+  CREATE_CHECKOUT: { title: "Checkout created", actor: "SYSTEM", tone: "neutral" },
+  DISCOVER_PRODUCT: { title: "Product discovered", actor: "SYSTEM", tone: "neutral" },
+  PROPOSE_RECOVERY: { title: "Recovery proposed", actor: "AI", tone: "attention" },
+
+  // Catalog, campaign, post-purchase and configuration events. These are
+  // real ledger writes too; the feed named none of them.
+  AGENT_CATALOG_PUBLISHED: { title: "Agent catalogue published", actor: "SYSTEM", tone: "positive" },
+  AGENT_CATALOG_ROLLED_BACK: { title: "Agent catalogue rolled back", actor: "SYSTEM", tone: "attention" },
+  READINESS_CALCULATED: { title: "Agentic readiness recalculated", actor: "SYSTEM", tone: "neutral" },
+  GROWTH_OPPORTUNITY_SCAN: { title: "Growth opportunities scanned", actor: "AI", tone: "neutral" },
+  MERCHANT_POLICY_UPDATED: { title: "Policy updated", actor: "HUMAN", tone: "attention" },
+  CATALOG_PRODUCT_CREATED: { title: "Product added to the catalogue", actor: "HUMAN", tone: "positive" },
+
+  AGENT_STEP_UP_AUTHORIZATION_EXPIRED: { title: "Escalated request expired unanswered", actor: "SYSTEM", tone: "attention" },
+  DECISION_CREATED: { title: "Gateway decision recorded", actor: "POLICY", tone: "neutral" },
+  CUSTOMER_NEGOTIATION_APPROVED: { title: "Discount request approved", actor: "HUMAN", tone: "positive" },
+  CUSTOMER_NEGOTIATION_REJECTED: { title: "Discount request rejected", actor: "HUMAN", tone: "negative" },
+
+  CAMPAIGN_ORDER_ATTRIBUTED: { title: "Order attributed to a campaign", actor: "SYSTEM", tone: "neutral" },
+  CAMPAIGN_CONVERSION_RECORDED: { title: "Campaign conversion recorded", actor: "SYSTEM", tone: "positive" },
+  CAMPAIGN_PAYMENT_CAPTURED_CONVERSION: { title: "Campaign conversion confirmed by capture", actor: "PROVIDER", tone: "positive" },
+
+  CHECKOUT_EXPIRED_INVENTORY_RESTOCKED: { title: "Expired checkout released its stock", actor: "SYSTEM", tone: "neutral" },
+  ORDER_FULFILLED: { title: "Order fulfilled", actor: "SYSTEM", tone: "positive" },
+  RETURN_REQUESTED: { title: "Return requested", actor: "HUMAN", tone: "attention" },
+  PAYMENT_REFUNDED: { title: "Payment refunded", actor: "PROVIDER", tone: "neutral" },
+  DISPUTE_OPENED: { title: "Dispute opened", actor: "PROVIDER", tone: "negative" },
+
+  PLATFORM_MERCHANT_ONBOARDED: { title: "Merchant onboarded", actor: "SYSTEM", tone: "positive" },
+  PLATFORM_MERCHANT_STATUS_CHANGED: { title: "Merchant status changed", actor: "SYSTEM", tone: "attention" },
 };
 
 /** Converts an UNMAPPED action type into something readable rather than

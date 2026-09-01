@@ -38,6 +38,20 @@ export interface AppendLedgerEventParams {
    * chain-of-thought (§64, §102). */
   metadata?: Record<string, unknown> | null;
   agentRunId?: string | null;
+  /**
+   * True ONLY for rows a fixture fabricated. Defaults to false: an event
+   * written by the running application is real application activity.
+   *
+   * This defaulted to `true`, and exactly one of the ~80 call sites passed
+   * it — so the console stamped "Demo data" on live Razorpay Test Mode
+   * orders, real policy decisions and real buyer authorizations. The badge
+   * exists to stop seeded rows being mistaken for real activity; defaulting
+   * it on achieved precisely the confusion it was added to prevent, and in
+   * the audit view, where being wrong about what is real matters most.
+   *
+   * `prisma/seed.ts` already sets this explicitly on every row it writes,
+   * so seeded data stays marked.
+   */
   isSyntheticDemo?: boolean;
   executedAt?: Date | null;
 }
@@ -125,7 +139,7 @@ export async function appendLedgerEvent(tx: PrismaLike, params: AppendLedgerEven
       previousEventHash,
       eventHash,
       ledgerHashVersion: LEDGER_HASH_VERSION,
-      isSyntheticDemo: params.isSyntheticDemo ?? true,
+      isSyntheticDemo: params.isSyntheticDemo ?? false,
       executedAt: params.executedAt ?? null,
     },
   });

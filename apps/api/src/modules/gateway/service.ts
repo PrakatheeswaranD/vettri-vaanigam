@@ -1,5 +1,5 @@
 /**
- * Anumati gateway — the request path an outside AI buyer agent actually
+ * Vaanigam gateway — the request path an outside AI buyer agent actually
  * hits.
  *
  * ORDER OF OPERATIONS IS THE DESIGN
@@ -18,7 +18,7 @@
  *
  * 2. Every path writes a DecisionRecord with a plain-English sentence,
 /**
- * Anumati gateway — the request path an outside AI buyer agent actually
+ * Vaanigam gateway — the request path an outside AI buyer agent actually
  * hits.
  *
  * ORDER OF OPERATIONS IS THE DESIGN
@@ -48,11 +48,17 @@ import {
   verifySpendMandate,
   evaluateAgentGatewayPolicy,
   clampNegotiatedDiscountBps,
+  computeAgentTrust,
+  effectiveCeilingMinor,
+  ATTACK_REASON_CODES,
+  POLICY_DECLINE_REASON_CODES,
+  TRUST_PENALTY_WINDOW_DAYS,
   shouldNegotiate,
   offerBreachesFloorMargin,
   PROTOCOL_FIDELITY,
   type AgentGatewayPolicy as GatewayPolicyConfig,
   type AgentTrustLevel,
+  type TrustBand,
   type AgentProtocol,
   type GatewayEvaluationResult,
   type ParsedIntent,
@@ -112,6 +118,11 @@ export interface GatewayResponse {
   /** Present only when the negotiator offered something inside the
    * merchant's envelope. Null is the normal, unremarkable case. */
   offer: { addSkus: string[]; discountBps: number; pitch: string } | null;
+  /** The adaptive trust score that set this call's ceiling. Null when the
+   * request failed before an agent could be identified. */
+  trustScore: number | null;
+  trustBand: string | null;
+  appliedCeilingMinor: number | null;
 }
 
 interface PricedBasket {
@@ -216,22 +227,69 @@ async function priceBasket(
   return { lines, totalMinor, currency: currency ?? "INR", categories: [...categories] };
 }
 
+export interface ResolvedAgent {
+  id: string;
+  trust: AgentTrustLevel;
+  recentIntentCount: number;
+  trustedPublicKey: string | null;
+  /** The adaptive score derived from this agent's own record with THIS
+   * merchant, and the ceiling it produces. */
+  adaptiveTrust: { score: number; band: TrustBand; ceilingMinor: number; collapsed: boolean };
+  trustExplanation: string;
+  history: { settledOrders: number; declines: number; flaggedAttacks: number };
+}
+
 async function resolveAgent(
   prisma: PrismaClient,
   merchantId: string,
   intent: ParsedIntent,
-  allowFirstUsePinning: boolean,
-): Promise<{ id: string; trust: AgentTrustLevel; recentIntentCount: number; trustedPublicKey: string | null }> {
+  policy: GatewayPolicyConfig,
+): Promise<ResolvedAgent> {
   const agent = await resolveAgentForIntent(prisma, {
     merchantId,
     externalAgentId: intent.agentId,
     firstSeenProtocol: intent.protocol,
     presentedPublicKey: intent.mandate?.publicKey ?? null,
-    allowFirstUsePinning,
+    allowFirstUsePinning: policy.allowFirstUseKeyPinning,
   });
 
-  const recentIntentCount = await prisma.decisionRecord.count({
-    where: { agentIdentityId: agent.id, createdAt: { gte: new Date(Date.now() - VELOCITY_WINDOW_MS) } },
+  // Penalties are counted over a trailing window, never over all time. A
+  // score nothing can fall off is a ban rather than a score, and it would
+  // leave an agent that fixed its integration permanently throttled with
+  // no route back.
+  const penaltyWindowStart = new Date(Date.now() - TRUST_PENALTY_WINDOW_DAYS * 24 * 60 * 60 * 1000);
+
+  const [recentIntentCount, declines, flaggedAttacks] = await Promise.all([
+    prisma.decisionRecord.count({
+      where: { agentIdentityId: agent.id, createdAt: { gte: new Date(Date.now() - VELOCITY_WINDOW_MS) } },
+    }),
+    // Only declines where the agent OVERSTEPPED. An unresolvable SKU or a
+    // malformed mandate is a badly-wired integration, not a risk signal,
+    // and is deliberately not scored — see POLICY_DECLINE_REASON_CODES.
+    prisma.decisionRecord.count({
+      where: {
+        agentIdentityId: agent.id,
+        createdAt: { gte: penaltyWindowStart },
+        reasonCode: { in: [...POLICY_DECLINE_REASON_CODES] },
+      },
+    }),
+    prisma.decisionRecord.count({
+      where: {
+        agentIdentityId: agent.id,
+        createdAt: { gte: penaltyWindowStart },
+        reasonCode: { in: [...ATTACK_REASON_CODES] },
+      },
+    }),
+  ]);
+
+  // A pure derived view over Decision Records already written — no new
+  // write path, exactly as the feature spec describes.
+  const history = { settledOrders: agent.settledOrderCount, declines, flaggedAttacks };
+  const trust = computeAgentTrust(history);
+  const ceiling = effectiveCeilingMinor({
+    trustScore: trust.score,
+    unknownAgentCeilingMinor: policy.unknownAgentCeilingMinor,
+    knownAgentCeilingMinor: policy.knownAgentCeilingMinor,
   });
 
   // Trust is the merchant's own settlement history, never the agent's
@@ -241,6 +299,14 @@ async function resolveAgent(
     trust: agent.settledOrderCount > 0 ? "KNOWN" : "UNKNOWN",
     recentIntentCount,
     trustedPublicKey: agent.trustedPublicKey,
+    adaptiveTrust: {
+      score: trust.score,
+      band: trust.band,
+      ceilingMinor: ceiling.ceilingMinor,
+      collapsed: ceiling.collapsed,
+    },
+    trustExplanation: trust.explanation,
+    history,
   };
 }
 
@@ -280,7 +346,12 @@ interface RecordArgs {
   authorizationCurrency?: CurrencyCode | null;
   authorizationMerchantScope?: string | null;
   offer?: { addSkus: string[]; discountBps: number; pitch: string } | null;
+  negotiatorRawProposal?: NegotiationOutcome["raw"];
   decidedAtMs?: number;
+  /** Snapshot, not a live read: the console must show the score as it was
+   * when this call was decided. */
+  trustScoreAtDecision?: number | null;
+  trustBandAtDecision?: string | null;
 }
 
 async function writeDecision(prisma: PrismaClient, args: RecordArgs): Promise<GatewayResponse> {
@@ -308,11 +379,14 @@ async function writeDecision(prisma: PrismaClient, args: RecordArgs): Promise<Ga
     computedTotalMinor: args.computedTotalMinor ?? null,
     claimedTotalMinor: args.claimedTotalMinor ?? null,
     appliedCeilingMinor: args.appliedCeilingMinor ?? null,
+    trustScoreAtDecision: args.trustScoreAtDecision ?? null,
+    trustBandAtDecision: args.trustBandAtDecision ?? null,
     currency: args.currency ?? null,
     stepUpPaymentLinkId: args.stepUpPaymentLinkId ?? null,
     stepUpPaymentLinkUrl: args.stepUpPaymentLinkUrl ?? null,
     stepUpStatus: args.stepUpStatus ?? (args.outcome === "STEP_UP" ? "PENDING" : null),
     negotiatedDiscountBps: args.negotiatedDiscountBps ?? null,
+    negotiatorRawProposal: (args.negotiatorRawProposal ?? null) as never,
     providerOrderId: args.providerOrderId ?? null,
     internalOrderId: args.internalOrderId ?? null,
     internalPaymentId: args.internalPaymentId ?? null,
@@ -371,13 +445,13 @@ async function writeDecision(prisma: PrismaClient, args: RecordArgs): Promise<Ga
     });
   } catch (err) {
     logger.error(
-      { event: "anumati.ledger_append_failed", decisionId: record.id, err: err instanceof Error ? err.message : String(err) },
+      { event: "vaanigam.ledger_append_failed", decisionId: record.id, err: err instanceof Error ? err.message : String(err) },
       "Decision recorded but could not be appended to the audit ledger",
     );
   }
 
   logger.info(
-    { event: "anumati.decision", decisionId: record.id, outcome: args.outcome, reasonCode: args.reasonCode, decisionLatencyMs },
+    { event: "vaanigam.decision", decisionId: record.id, outcome: args.outcome, reasonCode: args.reasonCode, decisionLatencyMs },
     args.explanation,
   );
 
@@ -397,6 +471,9 @@ async function writeDecision(prisma: PrismaClient, args: RecordArgs): Promise<Ga
     statusToken: issueGatewayStatusToken(record.id),
     decisionLatencyMs,
     offer: args.offer ?? null,
+    trustScore: args.trustScoreAtDecision ?? null,
+    trustBand: args.trustBandAtDecision ?? null,
+    appliedCeilingMinor: args.appliedCeilingMinor ?? null,
   };
 }
 
@@ -410,13 +487,36 @@ async function writeDecision(prisma: PrismaClient, args: RecordArgs): Promise<Ga
  * and any failure (bad JSON, provider down, invented SKU) degrades to "no
  * offer" rather than failing the purchase the merchant already approved.
  */
+export interface NegotiationOutcome {
+  /** What is actually offered. Null when nothing survived the guardrails. */
+  offer: { addSkus: string[]; discountBps: number; pitch: string } | null;
+  /**
+   * What the MODEL asked for, before clamping or grounding — kept so the
+   * claim "the LLM cannot move money" is checkable from the record rather
+   * than taken on trust. Null when no model call was made.
+   */
+  raw: {
+    discountBps: number;
+    addSkus: string[];
+    pitch: string;
+    /** True when the policy cap reduced the model's number. */
+    discountWasClamped: boolean;
+    /** SKUs the model named that are not in this merchant's catalogue. */
+    droppedSkus: string[];
+    /** Set when a proposal was made and then refused outright. */
+    rejectedReason: string | null;
+  } | null;
+}
+
+const NO_NEGOTIATION: NegotiationOutcome = { offer: null, raw: null };
+
 async function negotiate(
   prisma: PrismaClient,
   merchantId: string,
   basket: PricedBasket,
   policy: GatewayPolicyConfig,
-): Promise<{ addSkus: string[]; discountBps: number; pitch: string } | null> {
-  if (!shouldNegotiate(basket.lines.length, policy)) return null;
+): Promise<NegotiationOutcome> {
+  if (!shouldNegotiate(basket.lines.length, policy)) return NO_NEGOTIATION;
 
   try {
     const basketProductIds = basket.lines.map((l) => l.productId);
@@ -428,7 +528,7 @@ async function negotiate(
       include: { product: { select: { name: true, category: true } } },
       take: 12,
     });
-    if (candidates.length === 0) return null;
+    if (candidates.length === 0) return NO_NEGOTIATION;
 
     const basketRows = await prisma.productVariant.findMany({
       where: { id: { in: basket.lines.map((l) => l.variantId) } },
@@ -449,11 +549,32 @@ async function negotiate(
 
     // Grounding: a SKU the model invented is dropped, never offered.
     const allowed = new Set(candidates.map((c) => c.sku));
-    const addSkus = (Array.isArray(raw.addSkus) ? raw.addSkus : []).filter((sku) => allowed.has(sku));
+    const proposedSkus = (Array.isArray(raw.addSkus) ? raw.addSkus : []).filter((sku) => typeof sku === "string");
+    const addSkus = proposedSkus.filter((sku) => allowed.has(sku));
     const discountBps = clampNegotiatedDiscountBps(raw.discountBps, policy);
 
+    const rawProposal = {
+      discountBps: Number.isFinite(raw.discountBps) ? Math.round(raw.discountBps) : 0,
+      addSkus: proposedSkus,
+      pitch: typeof raw.pitch === "string" ? raw.pitch : "",
+      discountWasClamped: Number.isFinite(raw.discountBps) && Math.floor(raw.discountBps) > discountBps,
+      droppedSkus: proposedSkus.filter((sku) => !allowed.has(sku)),
+      rejectedReason: null as string | null,
+    };
+
     // A discount with nothing added is margin loss, not an upsell.
-    if (addSkus.length === 0 || discountBps <= 0) return null;
+    if (addSkus.length === 0 || discountBps <= 0) {
+      return {
+        offer: null,
+        raw: {
+          ...rawProposal,
+          rejectedReason:
+            addSkus.length === 0
+              ? "Every SKU the model named is absent from this merchant's catalogue."
+              : "The model proposed no usable discount.",
+        },
+      };
+    }
 
     const selected = candidates.filter((candidate) => addSkus.includes(candidate.sku));
     const revenueMinor = basket.totalMinor + selected.reduce((sum, candidate) => sum + candidate.priceMinor, 0);
@@ -469,16 +590,33 @@ async function negotiate(
     // smaller discount. Missing cost fails closed.
     if (offerBreachesFloorMargin({ revenueMinor, costMinor, discountBps }, policy)) {
       logger.info(
-        { event: "anumati.offer_rejected_floor_margin", discountBps, floorMarginBps: policy.negotiatorFloorMarginBps, costKnown: costMinor !== null },
+        { event: "vaanigam.offer_rejected_floor_margin", discountBps, floorMarginBps: policy.negotiatorFloorMarginBps, costKnown: costMinor !== null },
         "Negotiator offer rejected: would breach the merchant's floor margin",
       );
-      return null;
+      return {
+        offer: null,
+        raw: { ...rawProposal, rejectedReason: "The offer would take the basket below the merchant's floor margin." },
+      };
     }
 
-    return { addSkus, discountBps, pitch: typeof raw.pitch === "string" ? raw.pitch : "" };
+    // The receipt: what was asked for, and what was allowed.
+    if (rawProposal.discountWasClamped || rawProposal.droppedSkus.length > 0) {
+      logger.info(
+        {
+          event: "vaanigam.negotiator_clamped",
+          modelProposedBps: rawProposal.discountBps,
+          enforcedBps: discountBps,
+          modelProposedSkus: rawProposal.addSkus,
+          droppedSkus: rawProposal.droppedSkus,
+        },
+        "Negotiator proposal was reduced by code before it could reach a buyer",
+      );
+    }
+
+    return { offer: { addSkus, discountBps, pitch: rawProposal.pitch }, raw: rawProposal };
   } catch (err) {
-    logger.warn({ event: "anumati.negotiator_failed", err: err instanceof Error ? err.message : String(err) }, "Negotiator failed; proceeding with no offer");
-    return null;
+    logger.warn({ event: "vaanigam.negotiator_failed", err: err instanceof Error ? err.message : String(err) }, "Negotiator failed; proceeding with no offer");
+    return NO_NEGOTIATION;
   }
 }
 
@@ -541,7 +679,7 @@ export async function handleAgentPurchaseIntent(
     unverifiedSettlement: request.settlementAttestation === "UNVERIFIED_X402",
   };
   const policy = await loadGatewayPolicy(prisma, request.merchantId);
-  const agent = await resolveAgent(prisma, request.merchantId, intent, policy.allowFirstUseKeyPinning);
+  const agent = await resolveAgent(prisma, request.merchantId, intent, policy);
   const agentContext = {
     protocol: detection.protocol,
     protocolVersion: detection.version,
@@ -594,7 +732,7 @@ export async function handleAgentPurchaseIntent(
     : false;
 
   // ACP carries its OWN spend authorisation (an `Allowance`), so an agent
-  // on that protocol is not asked to also mint an Anumati mandate. The
+  // on that protocol is not asked to also mint an Vaanigam mandate. The
   // allowance is checked on the same terms — amount, currency, expiry,
   // merchant scope — but it is NOT signed, so it is never reported as a
   // verified mandate and the Decision Record says which one applied.
@@ -686,6 +824,7 @@ export async function handleAgentPurchaseIntent(
     lineCount: basket.lines.length,
     recentIntentCount: agent.recentIntentCount,
     protocolSupported: true,
+    adaptiveTrust: agent.adaptiveTrust,
   });
 
   // A platform's own fraud system flagging this purchase is evidence the
@@ -731,6 +870,8 @@ export async function handleAgentPurchaseIntent(
     computedTotalMinor: basket.totalMinor,
     currency: basket.currency,
     appliedCeilingMinor: evaluation.appliedCeilingMinor,
+    trustScoreAtDecision: evaluation.trustScore,
+    trustBandAtDecision: evaluation.trustBand,
   };
 
   if (effectiveDecision === "DECLINE") {
@@ -781,7 +922,8 @@ export async function handleAgentPurchaseIntent(
   const decidedAtMs = performance.now();
   const decisionId = randomUUID();
   const workflowId = `agent-decision-${decisionId}`;
-  const offer = await negotiate(prisma, request.merchantId, basket, policy);
+  const negotiation = await negotiate(prisma, request.merchantId, basket, policy);
+  const offer = negotiation.offer;
 
   // Persist the policy decision BEFORE executing it. Payment/order ledger
   // entries can therefore never appear earlier than the authorization that
@@ -794,6 +936,7 @@ export async function handleAgentPurchaseIntent(
     outcome: "AUTO_APPROVE",
     decidedAtMs,
     negotiatedDiscountBps: offer?.discountBps ?? null,
+    negotiatorRawProposal: negotiation.raw,
     normalizedBasket: basket.lines,
     offer,
     explanation: [
@@ -876,7 +1019,7 @@ export async function handleAgentPurchaseIntent(
   } catch (error) {
     executionError = error;
     logger.warn(
-      { event: "anumati.approved_execution_failed", err: error instanceof Error ? error.message : String(error) },
+      { event: "vaanigam.approved_execution_failed", err: error instanceof Error ? error.message : String(error) },
       "Approved intent could not be turned into an internal checkout and provider order",
     );
   }

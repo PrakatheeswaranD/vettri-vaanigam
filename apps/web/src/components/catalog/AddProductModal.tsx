@@ -67,29 +67,42 @@ export function AddProductModal() {
       </button>
 
       {open && (
-        <div className="fixed inset-0 z-50 flex items-center justify-center bg-black/50 p-4 backdrop-blur-sm">
-          <div className="w-full max-w-lg rounded-xl border border-border bg-surface p-6 shadow-2xl animate-in fade-in zoom-in-95 duration-150">
+        <div
+          className="fixed inset-0 z-50 flex items-center justify-center bg-black/50 p-4 backdrop-blur-sm"
+          // Escape closes it, and a click on the backdrop (but not inside
+          // the panel) closes it. Both are what people already expect of a
+          // dialog; without them the only way out was finding the ✕.
+          onKeyDown={(event) => { if (event.key === "Escape") setOpen(false); }}
+          onMouseDown={(event) => { if (event.target === event.currentTarget) setOpen(false); }}
+        >
+          <div
+            role="dialog"
+            aria-modal="true"
+            aria-labelledby="add-product-title"
+            className="w-full max-w-lg rounded-xl border border-border bg-surface p-6 shadow-2xl animate-in fade-in zoom-in-95 duration-150"
+          >
             <div className="flex items-center justify-between border-b border-border pb-4">
               <div className="flex items-center gap-2">
                 <div className="flex h-9 w-9 items-center justify-center rounded-lg bg-brand-50 text-brand-600 dark:bg-brand-950 dark:text-brand-400">
                   <PackagePlus size={20} />
                 </div>
                 <div>
-                  <h3 className="text-base font-semibold text-ink">Add New Product</h3>
+                  <h3 id="add-product-title" className="text-base font-semibold text-ink">Add New Product</h3>
                   <p className="text-xs text-ink-muted">Create a catalog item ready for agent-commerce</p>
                 </div>
               </div>
               <button
                 type="button"
                 onClick={() => setOpen(false)}
-                className="rounded-lg p-1.5 text-ink-faint hover:bg-surface-subtle hover:text-ink"
+                aria-label="Close"
+                className="rounded-lg p-1.5 text-ink-faint transition hover:bg-surface-subtle hover:text-ink focus-visible:outline focus-visible:outline-2 focus-visible:outline-offset-2 focus-visible:outline-brand-600"
               >
-                <X size={18} />
+                <X size={18} aria-hidden />
               </button>
             </div>
 
             {errorMsg && (
-              <div className="mt-4 rounded-lg bg-red-50 p-3 text-xs text-red-700 dark:bg-red-950/50 dark:text-red-300">
+              <div role="alert" className="mt-4 rounded-lg border border-danger-border bg-danger-subtle p-3 text-xs text-danger-text">
                 {errorMsg}
               </div>
             )}

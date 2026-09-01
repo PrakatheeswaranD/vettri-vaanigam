@@ -3,7 +3,7 @@
   "version": "0.1.0",
   "private": true,
   "type": "module",
-  "description": "Anumati backend \u2014 Fastify API, agent gateway, Prisma/PostgreSQL.",
+  "description": "Vaanigam backend \u2014 Fastify API, agent gateway, Prisma/PostgreSQL.",
   "scripts": {
     "dev": "tsx watch src/server.ts",
     "build": "tsc -p tsconfig.json",
@@ -24,7 +24,8 @@
     "eval:recommendation": "node --env-file=../../.env --import tsx scripts/eval-recommendation.ts",
     "demo:simulate": "node --env-file=../../.env --import tsx scripts/demo-simulate.ts",
     "demo:golden-path": "node --env-file=../../.env --import tsx scripts/demo-golden-path.ts",
-    "demo:agent-swarm": "node --env-file=../../.env --import tsx scripts/demo-agent-swarm.ts"
+    "demo:agent-swarm": "node --env-file=../../.env --import tsx scripts/demo-agent-swarm.ts",
+    "redteam": "node --env-file=../../.env --import tsx scripts/redteam-buyers.ts"
   },
   "prisma": {
     "seed": "node --env-file=../../.env --import tsx prisma/seed.ts"

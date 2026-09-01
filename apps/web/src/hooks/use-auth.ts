@@ -17,7 +17,9 @@ export function useLogin() {
     mutationFn: (params: { email: string; password: string; experience?: ExperienceRole }) => apiPost<LoginResponseDTO>("/auth/login", params),
     onSuccess: (data) => {
       queryClient.clear();
-      setExperienceRole(data.user.role === "CUSTOMER" ? "customer" : data.user.role === "PLATFORM_ADMIN" ? "admin" : "merchant");
+      // Any non-customer account lands in the merchant experience. The
+      // server still enforces what that account may actually do.
+      setExperienceRole(data.user.role === "CUSTOMER" ? "customer" : "merchant");
       setToken(data.token);
     },
   });

@@ -42,14 +42,18 @@ import {
   type NormalizeCatalogRowParams,
   type RawNormalizedProduct,
   type ProposeAgentUpsellParams,
+  type CompilePolicyParams,
+  type RawPolicyDraftResponse,
   type RawAgentUpsell,
 } from "../ai-provider.js";
 import {
   CATALOG_COMPILER_SYSTEM_PROMPT,
   NEGOTIATOR_SYSTEM_PROMPT,
+  POLICY_AUTHOR_SYSTEM_PROMPT,
+  buildPolicyAuthorUserMessage,
   buildCatalogCompilerUserMessage,
   buildNegotiatorUserMessage,
-} from "../prompts/anumati-prompts.js";
+} from "../prompts/vaanigam-prompts.js";
 import {
   INTENT_EXTRACTION_SYSTEM_PROMPT,
   RECOMMENDATION_SYSTEM_PROMPT,
@@ -214,6 +218,18 @@ export function createGeminiProvider(config: GeminiProviderConfig): AIProvider {
         throw new AIProviderError("AI_OUTPUT_INVALID", "Gemini negotiator did not return a JSON object.");
       }
       return parsed as RawAgentUpsell;
+    },
+
+    async compilePolicyFromInstruction(params: CompilePolicyParams): Promise<RawPolicyDraftResponse> {
+      const userMessage = buildPolicyAuthorUserMessage(params);
+      // Low temperature: this is a translation task with one right answer,
+      // not a writing task.
+      const text = await callGemini(config, POLICY_AUTHOR_SYSTEM_PROMPT, userMessage, 0.1);
+      const parsed = extractJson(text);
+      if (typeof parsed !== "object" || parsed === null || Array.isArray(parsed)) {
+        throw new AIProviderError("AI_OUTPUT_INVALID", "Gemini policy author did not return a JSON object.");
+      }
+      return parsed as RawPolicyDraftResponse;
     },
   };
 }

@@ -2,7 +2,7 @@
   "name": "@razorgrowth/config",
   "version": "0.1.0",
   "private": true,
-  "description": "Shared TypeScript configuration for Anumati workspace packages.",
+  "description": "Shared TypeScript configuration for Vaanigam workspace packages.",
   "files": [
     "tsconfig.base.json"
   ]

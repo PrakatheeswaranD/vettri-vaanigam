@@ -1,0 +1,11 @@
+-- Record what the negotiator MODEL proposed, beside what the system
+-- enforced.
+--
+-- "The LLM never moves money directly" is the core claim of this project,
+-- and until now it was only checkable by reading the code. Keeping the raw
+-- proposal next to the clamped outcome makes it checkable from the data:
+-- when a model asks for 50% off and the record shows 10% applied, that row
+-- is the guardrail's receipt.
+--
+-- Nullable, because most decisions never invoke the negotiator at all.
+ALTER TABLE "DecisionRecord" ADD COLUMN IF NOT EXISTS "negotiatorRawProposal" JSONB;

@@ -18,6 +18,17 @@ const __dirname = path.dirname(fileURLToPath(import.meta.url));
  * side effects at import time are not enough. */
 export function setup(): void {
   loadDotenv({ path: path.resolve(__dirname, "../../../../.env") });
+  // `.env` is shared between running the app and running the tests, so
+  // pointing the app at a hosted database also re-points the tests — and
+  // the local-database guard below then (correctly) refuses to run the
+  // whole suite. That silently reduces `pnpm test` to "no tests" for the
+  // API package, which reads like a pass. `TEST_DATABASE_URL` breaks the
+  // coupling: set it once and the suite always runs against the local
+  // database no matter where the app is currently pointed.
+  if (process.env.TEST_DATABASE_URL) {
+    process.env.DATABASE_URL = process.env.TEST_DATABASE_URL;
+    process.env.DIRECT_URL = process.env.TEST_DIRECT_URL ?? process.env.TEST_DATABASE_URL;
+  }
   // The bundled local PGlite socket reuses one backend connection and can
   // otherwise collide on Prisma prepared-statement names between Vitest
   // worker processes. These are client transport settings only; the

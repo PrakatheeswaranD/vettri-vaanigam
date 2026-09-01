@@ -12,7 +12,7 @@ export interface ProductListFilters {
   limit: number;
 }
 
-const productWithVariants = {
+export const productWithVariants = {
   include: { variants: { include: { inventory: true } } },
 } satisfies Prisma.ProductDefaultArgs;
 

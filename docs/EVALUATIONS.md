@@ -1,8 +1,7 @@
 # AI Evaluations
 
-Exactly two formal AI evaluation suites exist, per
-[`PART_00_MASTER_ENGINEERING_CONTRACT.md`](../PART_00_MASTER_ENGINEERING_CONTRACT.md)
-§27: Intent Extraction and Recommendation Quality. No third suite exists —
+Exactly two formal AI evaluation suites exist: Intent Extraction and
+Recommendation Quality. No third suite exists —
 adversarial/security scenarios (hallucination rejection, prompt-injection
 resistance, policy-bypass immunity) are instead proven by dedicated
 integration tests (`buyer-agent.test.ts`, `merchant-agent.test.ts`,

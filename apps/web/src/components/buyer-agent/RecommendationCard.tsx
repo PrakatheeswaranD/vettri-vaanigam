@@ -13,8 +13,17 @@ import { ProductReadinessBadge } from "../readiness/ProductReadinessBadge";
 import { formatMoney } from "../../lib/format";
 import { REASON_CODE_TEXT } from "./reason-code-text";
 import { PaymentProposalModal } from "./PaymentProposalModal";
+import { useExperienceRole } from "../../lib/experience-role";
 
 export function RecommendationCard({ recommendation }: { recommendation: RecommendedProductDTO }) {
+  // `/catalog/:id` is a merchant path. RequireAuth rejects a first path
+  // segment that is not the signed-in role, so a shopper clicking "View
+  // details" was silently returned to the Buyer Agent home and lost the
+  // conversation they were reading. Same product page, role-correct path.
+  const role = useExperienceRole();
+  const detailHref = role === "customer"
+    ? `/customer/product/${recommendation.productId}`
+    : `/catalog/${recommendation.productId}`;
   const [showProposalModal, setShowProposalModal] = useState(false);
   const variant = recommendation.product.variants.find((v) => v.variantId === recommendation.variantId);
   const isNearMatch = recommendation.matchType === "NEAR_MATCH";
@@ -84,7 +93,7 @@ export function RecommendationCard({ recommendation }: { recommendation: Recomme
             </button>
             <div className="flex items-center justify-between">
               <ProductReadinessBadge state={recommendation.product.readiness.state} />
-              <Link to={`/catalog/${recommendation.productId}`} className="text-xs font-medium text-brand-600 hover:underline">
+              <Link to={detailHref} className="rounded text-xs font-medium text-brand-600 transition hover:underline focus-visible:outline focus-visible:outline-2 focus-visible:outline-offset-2 focus-visible:outline-brand-600">
                 View details
               </Link>
             </div>

@@ -1,13 +1,12 @@
 import { useState } from "react";
 import { Link } from "react-router-dom";
-import { FlaskConical, TrendingUp } from "lucide-react";
+import { FlaskConical, Loader2, ScanLine, TrendingUp } from "lucide-react";
 import { useCatalog, useGrowthOpportunities } from "../hooks/use-api";
 import { useProposeGrowthAction } from "../hooks/use-merchant-agent";
 import { PageHeader } from "../components/layout/PageHeader";
 import { Card, CardBody, CardHeader, CardTitle } from "../components/ui/Card";
 import { EmptyState, ErrorState, Skeleton } from "../components/ui/States";
 import { ValueTag } from "../components/ui/ValueTag";
-import { ScanLine } from "lucide-react";
 import { DemoDataBadge } from "../components/ui/DemoDataBadge";
 import { GrowthProposalPanel } from "../components/merchant-agent/GrowthProposalPanel";
 import { GrowthSummaryPanel } from "../components/growth/GrowthSummaryPanel";
@@ -100,9 +99,30 @@ function GrowthPreviewSection() {
             onClick={() => proposeGrowthAction.mutate(selectedProductId)}
             className="inline-flex items-center gap-1.5 rounded-md bg-brand-600 px-3 py-2 text-sm font-medium text-white hover:bg-brand-700 disabled:cursor-not-allowed disabled:opacity-50"
           >
-            {proposeGrowthAction.isPending ? "Proposing…" : "Propose Growth Action"}
+            {proposeGrowthAction.isPending ? (
+              <>
+                <Loader2 size={14} className="animate-spin" aria-hidden />
+                Proposing…
+              </>
+            ) : (
+              "Propose Growth Action"
+            )}
           </button>
         </div>
+
+        {/* This call runs a live model and routinely takes ten seconds or
+            more. With only a word changing inside the button, the wait read
+            as a dead click — the result appears far below the control, and
+            nothing between them moved. A placeholder where the answer will
+            arrive is the part that makes the wait legible. */}
+        {proposeGrowthAction.isPending ? (
+          <div className="space-y-3" role="status" aria-live="polite">
+            <p className="text-sm text-ink-muted">
+              Asking the Merchant Agent for a proposal, then validating it against your envelope. This usually takes a few seconds.
+            </p>
+            <Skeleton className="h-48" />
+          </div>
+        ) : null}
 
         {proposeGrowthAction.isError ? (
           <ErrorState
@@ -110,31 +130,59 @@ function GrowthPreviewSection() {
           />
         ) : null}
 
-        {proposeGrowthAction.data ? <GrowthProposalPanel proposal={proposeGrowthAction.data} /> : null}
+        {!proposeGrowthAction.isPending && proposeGrowthAction.data ? <GrowthProposalPanel proposal={proposeGrowthAction.data} /> : null}
       </CardBody>
     </Card>
   );
 }
 
+/**
+ * Two nav items, two pages.
+ *
+ * "Growth" and "Opportunities & Offers" both rendered this one component,
+ * so the sidebar offered a destination it did not have. They are also
+ * genuinely different questions — "what did the negotiator do on real
+ * agent baskets" is a report, and "what could we be doing" is a worklist —
+ * and stacking both made a single page long enough that the opportunity
+ * list sat below four other sections.
+ *
+ *   Growth   — what already happened: the summary, real agent baskets,
+ *              and the campaigns running against them.
+ *   Offers   — what could happen next: the identified opportunities, and
+ *              the dry-run preview for trying the envelope against one.
+ */
 export default function GrowthPage() {
+  return (
+    <div className="space-y-6">
+      <PageHeader
+        title="Basket Growth"
+        lead="What AI agents bought, and what the negotiator offered to make those baskets bigger — always inside the limits you set."
+      />
+      <GrowthSummaryPanel />
+      <AgentDrivenGrowth />
+      <CampaignManager />
+    </div>
+  );
+}
+
+export function OffersPage() {
   const { data, isLoading, isError, error, refetch } = useGrowthOpportunities();
 
   return (
     <div className="space-y-6">
-      <div>
-        <PageHeader
-          title={"Basket Growth"}
-          lead={"What AI agents bought, and what the negotiator offered to make those baskets bigger — always inside the limits you set."}
-        />
-      </div>
-
-      <GrowthSummaryPanel />
-
-      <AgentDrivenGrowth />
-
-      <CampaignManager />
+      <PageHeader
+        title="Opportunities & Offers"
+        lead="Basket expansion the Merchant Agent has found but nobody has acted on yet, and a dry run for trying your envelope against any product."
+      />
 
       <GrowthPreviewSection />
+
+      <div>
+        <h2 className="text-sm font-semibold uppercase tracking-wide text-ink-faint">Identified opportunities</h2>
+        <p className="mt-1 text-sm text-ink-muted">
+          Derived from catalogue, order and payment signals. Nothing here has been offered to a buyer.
+        </p>
+      </div>
 
       {isLoading ? (
         <div className="space-y-3">

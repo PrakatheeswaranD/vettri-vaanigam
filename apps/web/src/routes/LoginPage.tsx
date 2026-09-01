@@ -1,83 +1,171 @@
-import { useState } from "react";
-import { Link, Navigate, useNavigate, useParams } from "react-router-dom";
-import { ArrowLeft, Bot, ShieldCheck, Store } from "lucide-react";
+/**
+ * The way in. Two doors, one click each.
+ *
+ * WHAT THIS REPLACED, AND WHY
+ *
+ * There used to be three roles, a per-role sub-page, and an email/password
+ * form under a divider. That was four screens and a credential field
+ * standing between someone and a product they are here to look at — and
+ * the credentials were the same seeded demo accounts the buttons already
+ * used, so the form added a step without adding a capability.
+ *
+ * The platform-admin role went with it. It was a third door onto a console
+ * nobody demoing this product needs, and every extra door dilutes the two
+ * that carry the actual story: an agent buying, and a merchant governing.
+ *
+ * WHAT DID NOT CHANGE
+ *
+ * These are still real authenticated sessions against real distinct
+ * accounts, and the SERVER decides what each may do. Choosing a door here
+ * does not grant anything — it picks which account to sign in as. That
+ * line is worth keeping visible, because a one-click entry screen is
+ * exactly the kind of thing people assume is faked.
+ */
+import { Navigate, useNavigate } from "react-router-dom";
+import { ArrowRight, Bot, ShieldCheck, Store } from "lucide-react";
 import { useLogin } from "../hooks/use-auth";
 import { ApiError } from "../lib/api-client";
 import { ROLE_HOME, setExperienceRole, type ExperienceRole } from "../lib/experience-role";
 
-const DEMO_ACCOUNTS = {
+const DEMO_ACCOUNTS: Record<ExperienceRole, { email: string; password: string }> = {
+  customer: { email: "customer@vaanigam.demo", password: "CustomerDemo!2026" },
   merchant: { email: "owner@meridianathletics.demo", password: "MeridianDemo!2026" },
-  customer: { email: "customer@anumati.demo", password: "CustomerDemo!2026" },
-  admin: { email: "admin@anumati.demo", password: "AdminDemo!2026" },
 };
-const ROLE_COPY: Record<ExperienceRole, { title: string; purpose: string; icon: typeof Bot; accent: string }> = {
-  customer: { title: "Customer", purpose: "Buy with AI", icon: Bot, accent: "bg-brand-50 border-brand-200 text-brand-700" },
-  merchant: { title: "Merchant", purpose: "Grow with AI", icon: Store, accent: "bg-success-subtle border-success/30 text-success-text" },
-  admin: { title: "Razorpay Admin", purpose: "Enable and govern AI commerce", icon: ShieldCheck, accent: "bg-warning-subtle border-warning/30 text-warning-text" },
-};
+
+const DOORS: {
+  role: ExperienceRole;
+  emoji: string;
+  icon: typeof Bot;
+  title: string;
+  lead: string;
+  points: string[];
+  accent: string;
+  iconClass: string;
+}[] = [
+  {
+    role: "customer",
+    emoji: "🛒",
+    icon: Bot,
+    title: "Continue as AI Buyer",
+    lead: "Shop by talking to an agent, and watch it negotiate on your behalf.",
+    points: [
+      "Discovery grounded in the merchant's real catalogue",
+      "A discount your own order history earns, applied automatically",
+      "Every step of the reasoning open, not a black box",
+    ],
+    accent: "hover:border-brand-300",
+    iconClass: "bg-brand-50 text-brand-700 ring-brand-200/60 group-hover:bg-brand-600 group-hover:text-white",
+  },
+  {
+    role: "merchant",
+    emoji: "🏪",
+    icon: Store,
+    title: "Continue as Merchant",
+    lead: "Set what AI agents and shoppers may do with your money, and approve the rest.",
+    points: [
+      "Enforced spending ceilings and an adaptive agent trust score",
+      "Only the discounts past your line come to you",
+      "A full audit trail behind every rupee",
+    ],
+    accent: "hover:border-success/40",
+    iconClass: "bg-success-subtle text-success-text ring-success/20 group-hover:bg-success group-hover:text-white",
+  },
+];
 
 export default function LoginPage() {
-  const { role: rawRole } = useParams();
-  const role = rawRole as ExperienceRole | undefined;
   const login = useLogin();
   const navigate = useNavigate();
-  const [email, setEmail] = useState("");
-  const [password, setPassword] = useState("");
 
-  if (role && !(role in ROLE_COPY)) return <Navigate to="/login" replace />;
-
-  async function signIn(targetRole: ExperienceRole, credentials = DEMO_ACCOUNTS[targetRole]) {
+  async function enter(role: ExperienceRole) {
     try {
-      await login.mutateAsync({ ...credentials, experience: targetRole });
-      setExperienceRole(targetRole);
-      navigate(ROLE_HOME[targetRole], { replace: true });
-    } catch { /* error is rendered below */ }
+      await login.mutateAsync({ ...DEMO_ACCOUNTS[role], experience: role });
+      setExperienceRole(role);
+      navigate(ROLE_HOME[role], { replace: true });
+    } catch {
+      /* rendered below */
+    }
   }
 
-  if (!role) {
-    return (
-      <div className="flex min-h-screen items-center justify-center bg-surface-subtle px-4 py-10">
-        <div className="w-full max-w-4xl">
-          <div className="mb-8 text-center">
-            <p className="text-xs font-semibold uppercase tracking-widest text-brand-600">Anumati · Razorpay Track 01</p>
-            <h1 className="mt-2 text-3xl font-bold tracking-tight text-ink">Choose your agentic-commerce experience</h1>
-            <p className="mt-2 text-sm text-ink-muted">Three roles. Three distinct jobs. One governed commerce layer.</p>
-          </div>
-          <div className="grid gap-4 md:grid-cols-3">
-            {(Object.entries(ROLE_COPY) as [ExperienceRole, (typeof ROLE_COPY)[ExperienceRole]][]).map(([key, item]) => (
-              <Link key={key} to={`/login/${key}`} className={`rounded-card border p-6 shadow-card transition hover:-translate-y-0.5 hover:shadow-popover ${item.accent}`}>
-                <item.icon size={28} />
-                <h2 className="mt-5 text-xl font-bold">{item.title}</h2>
-                <p className="mt-1 text-sm font-semibold">{item.purpose}</p>
-                <p className="mt-5 text-xs opacity-75">Open dedicated login →</p>
-              </Link>
-            ))}
-          </div>
-        </div>
-      </div>
-    );
-  }
-
-  const copy = ROLE_COPY[role];
   return (
-    <div className="flex min-h-screen items-center justify-center bg-surface-subtle px-4 py-10">
-      <div className="w-full max-w-md rounded-card border border-border bg-surface p-7 shadow-popover">
-        <Link to="/login" className="mb-6 inline-flex items-center gap-1 text-xs text-ink-muted hover:text-ink"><ArrowLeft size={13} /> All roles</Link>
-        <div className={`inline-flex rounded-lg border p-3 ${copy.accent}`}><copy.icon size={24} /></div>
-        <h1 className="mt-4 text-2xl font-bold text-ink">{copy.title} login</h1>
-        <p className="mt-1 text-sm font-medium text-ink-muted">{copy.purpose}</p>
-        <button type="button" disabled={login.isPending} onClick={() => void signIn(role)} className="mt-6 w-full rounded-md bg-brand-600 px-4 py-3 text-sm font-semibold text-white hover:bg-brand-700 disabled:opacity-50">
-          {login.isPending ? "Entering demo…" : `Enter ${copy.title} demo`}
-        </button>
-        <div className="my-5 flex items-center gap-3 text-[11px] uppercase tracking-wider text-ink-faint"><span className="h-px flex-1 bg-border" />or use credentials<span className="h-px flex-1 bg-border" /></div>
-        <form onSubmit={(event) => { event.preventDefault(); void signIn(role, { email, password }); }} className="space-y-3">
-          <input aria-label="Email" type="email" required value={email} onChange={(event) => setEmail(event.target.value)} className="w-full rounded-md border border-border px-3 py-2 text-sm" />
-          <input aria-label="Password" type="password" required value={password} onChange={(event) => setPassword(event.target.value)} className="w-full rounded-md border border-border px-3 py-2 text-sm" />
-          <button disabled={login.isPending} className="w-full rounded-md border border-border px-4 py-2.5 text-sm font-medium hover:bg-surface-subtle">Sign in</button>
-        </form>
-        {login.isError ? <p className="mt-4 rounded-md bg-danger-subtle p-3 text-sm text-danger-text">{login.error instanceof ApiError ? login.error.message : "Could not sign in."}</p> : null}
-        <p className="mt-5 text-[11px] leading-relaxed text-ink-faint">Each demo uses a distinct authenticated account. The server enforces its role; selecting a login screen does not grant access.</p>
+    <main className="relative flex min-h-screen items-center justify-center overflow-hidden bg-surface px-4 py-12">
+      <div aria-hidden className="pointer-events-none absolute inset-0 bg-hero-mesh" />
+      <div
+        aria-hidden
+        className="pointer-events-none absolute inset-0 bg-dot-grid bg-dot-grid [mask-image:radial-gradient(40rem_28rem_at_50%_20%,black,transparent)]"
+      />
+
+      <div className="relative w-full max-w-3xl">
+        <div className="text-center">
+          <span className="inline-flex items-center gap-2 rounded-pill border border-border bg-surface/80 px-3.5 py-1.5 text-micro font-semibold uppercase tracking-[0.09em] text-ink-muted shadow-card backdrop-blur">
+            <ShieldCheck className="h-3.5 w-3.5 text-brand-600" aria-hidden />
+            Vaanigam · Razorpay Track 01
+          </span>
+          <h1 className="mt-6 text-balance text-3xl font-semibold tracking-[-0.025em] text-ink sm:text-4xl">
+            Choose how you want to experience agentic commerce.
+          </h1>
+          <p className="mx-auto mt-3 max-w-lg text-pretty text-[15px] leading-relaxed text-ink-muted">
+            Two sides of the same transaction. Both are real, signed-in sessions over the same data.
+          </p>
+        </div>
+
+        <div className="mt-10 grid gap-4 sm:grid-cols-2">
+          {DOORS.map((door) => (
+            <button
+              key={door.role}
+              type="button"
+              disabled={login.isPending}
+              // The card's own text is a heading, a paragraph and a list;
+              // assistive tech announcing the control needs one short name
+              // for it, not the whole card read out as the label.
+              aria-label={door.title}
+              onClick={() => void enter(door.role)}
+              className={`group flex flex-col rounded-card border border-border bg-surface p-7 text-left shadow-card transition hover:-translate-y-0.5 hover:shadow-lifted disabled:pointer-events-none disabled:opacity-60 ${door.accent}`}
+            >
+              <span
+                className={`grid h-12 w-12 place-items-center rounded-xl text-xl ring-1 ring-inset transition ${door.iconClass}`}
+                aria-hidden
+              >
+                {door.emoji}
+              </span>
+
+              <h2 className="mt-5 text-lg font-semibold tracking-tight text-ink">{door.title}</h2>
+              <p className="mt-2 text-[13px] leading-relaxed text-ink-muted">{door.lead}</p>
+
+              <ul className="mt-5 flex-1 space-y-2 border-t border-border-hair pt-4">
+                {door.points.map((point) => (
+                  <li key={point} className="flex gap-2 text-micro leading-relaxed text-ink-muted">
+                    <span aria-hidden className="mt-1.5 h-1 w-1 shrink-0 rounded-full bg-ink-faint" />
+                    {point}
+                  </li>
+                ))}
+              </ul>
+
+              <span className="mt-6 inline-flex items-center gap-1.5 text-[13px] font-semibold text-brand-700">
+                {login.isPending ? "Signing in…" : "Enter"}
+                <ArrowRight className="h-3.5 w-3.5 transition-transform group-hover:translate-x-1" aria-hidden />
+              </span>
+            </button>
+          ))}
+        </div>
+
+        {login.isError ? (
+          <p className="mt-6 rounded-card border border-danger-border bg-danger-subtle px-4 py-3 text-center text-[13px] text-danger-text">
+            {login.error instanceof ApiError ? login.error.message : "Could not sign in."}
+          </p>
+        ) : null}
+
+        {/* Worth saying out loud: a one-click entry screen is exactly the
+            kind of thing people assume is faked. */}
+        <p className="mt-8 text-center text-micro leading-relaxed text-ink-faint">
+          Each door signs in to a distinct authenticated account. The server enforces what that account may do —
+          picking a door here does not grant anything.
+        </p>
       </div>
-    </div>
+    </main>
   );
+}
+
+/** `/login/:role` used to exist. Anything still linking to it lands here. */
+export function LegacyRoleLoginRedirect() {
+  return <Navigate to="/login" replace />;
 }

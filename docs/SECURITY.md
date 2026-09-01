@@ -1,8 +1,7 @@
 # Security Model
 
-This document describes the security posture of Anumati, scoped
-honestly per [`PART_00_MASTER_ENGINEERING_CONTRACT.md`](../PART_00_MASTER_ENGINEERING_CONTRACT.md)
-§23: the strongest rigor is concentrated on the demonstrated financial
+This document describes the security posture of Vaanigam, scoped
+honestly: the strongest rigor is concentrated on the demonstrated financial
 flow (AI proposal → policy → approval → checkout → Razorpay payment →
 webhook → failure → recovery → ledger). Peripheral prototype surfaces
 (campaign copy, catalog browsing UI, readiness explanations) use lighter,

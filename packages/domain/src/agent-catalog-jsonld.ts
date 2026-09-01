@@ -139,7 +139,7 @@ export function buildMcpToolManifest(merchantName: string, baseUrl: string, merc
         method: "POST",
         inputSchema: {
           type: "object",
-          required: ["items", "anumati_mandate"],
+          required: ["items", "vaanigam_mandate"],
           properties: {
             items: {
               type: "array",
@@ -149,7 +149,7 @@ export function buildMcpToolManifest(merchantName: string, baseUrl: string, merc
                 properties: { id: { type: "string", description: "SKU from this catalogue" }, quantity: { type: "integer", minimum: 1 } },
               },
             },
-            anumati_mandate: {
+            vaanigam_mandate: {
               type: "object",
               description: "Ed25519-signed spend mandate authorising this purchase.",
               required: ["mandateId", "buyerAgentId", "merchantScope", "maxAmountMinor", "currency", "notBefore", "expiresAt", "nonce", "publicKey", "signature"],

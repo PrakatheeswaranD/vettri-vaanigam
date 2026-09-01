@@ -312,8 +312,8 @@ async function main() {
 
   console.log("[seed] creating merchant owner account...");
   for (const identity of [
-    { slug: "demo-customer-context", name: "Demo Customer", email: "customer@anumati.demo", role: "CUSTOMER" as const, password: "CustomerDemo!2026" },
-    { slug: "demo-platform-context", name: "Platform Administration", email: "admin@anumati.demo", role: "PLATFORM_ADMIN" as const, password: "AdminDemo!2026" },
+    { slug: "demo-customer-context", name: "Demo Customer", email: "customer@vaanigam.demo", role: "CUSTOMER" as const, password: "CustomerDemo!2026" },
+    { slug: "demo-platform-context", name: "Platform Administration", email: "admin@vaanigam.demo", role: "PLATFORM_ADMIN" as const, password: "AdminDemo!2026" },
   ]) {
     const context = await prisma.merchant.upsert({ where: { slug: identity.slug }, update: {}, create: { slug: identity.slug, name: identity.name, defaultCurrency: "INR", businessCategory: "Identity context", status: "ACTIVE" } });
     await prisma.merchantUser.upsert({ where: { email: identity.email }, update: { role: identity.role, merchantId: context.id, passwordHash: await hashPassword(identity.password) }, create: { merchantId: context.id, email: identity.email, role: identity.role, passwordHash: await hashPassword(identity.password) } });
@@ -985,7 +985,14 @@ async function main() {
       currency: "INR",
       autonomousPurchaseLimitMinor: 200_000,
       dailyLimitMinor: 1_000_000,
-      allowedCategories: ["Electronics/Laptop", "Books", "Accessories", "Running Shoes"],
+      // Derived from the catalogue this seed just created, not a fixed
+      // list. The old literal named three categories no merchant here
+      // stocks, so it only ever worked because "Running Shoes" had been
+      // bolted onto it — and it would silently start declining purchases
+      // again the moment the demo catalogue changed.
+      allowedCategories: (
+        await prisma.product.findMany({ where: { merchantId: merchant.id, status: "ACTIVE" }, select: { category: true }, distinct: ["category"] })
+      ).map((row) => row.category),
       approvalRequiredAboveLimit: true,
     },
   });

@@ -110,7 +110,7 @@ export async function runOpportunityScan(
   });
 
   logger.info(
-    { event: "anumati.opportunity_scan", merchantId, productsScanned: scanInput.length, opportunitiesFound: found.length },
+    { event: "vaanigam.opportunity_scan", merchantId, productsScanned: scanInput.length, opportunitiesFound: found.length },
     "Catalogue opportunity scan completed",
   );
 

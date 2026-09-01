@@ -1,5 +1,5 @@
 /**
- * Anumati Console — the merchant's view of agent commerce.
+ * Vaanigam Console — the merchant's view of agent commerce.
  *
  * Three things, in the order a merchant cares about them: what the gateway
  * has decided (the log is the artifact of trust, not a demo prop), how it
@@ -22,6 +22,10 @@ import {
   type DecisionLogEntry,
 } from "../hooks/use-agent-gateway";
 import { formatMoney } from "../lib/format";
+import { AgentTrustPanel } from "../components/gateway/AgentTrustPanel";
+import { RedTeamPanel } from "../components/gateway/RedTeamPanel";
+import { PolicyComposer } from "../components/gateway/PolicyComposer";
+import { NegotiationQueue } from "../components/gateway/NegotiationQueue";
 
 const OUTCOME_STYLE: Record<DecisionLogEntry["outcome"], { icon: typeof CheckCircle2; cls: string; label: string }> = {
   AUTO_APPROVE: { icon: CheckCircle2, cls: "bg-success-subtle text-success-text", label: "Auto-approved" },
@@ -138,6 +142,8 @@ export default function AgentGatewayPage() {
         </div>
         {m?.basis ? <p className="mt-2 text-xs text-ink-faint">{m.basis}</p> : null}
       </section>
+
+      <NegotiationQueue />
 
       <Card>
         <CardHeader className="flex flex-wrap items-center gap-2">
@@ -275,6 +281,36 @@ export default function AgentGatewayPage() {
         </CardBody>
       </Card>
 
+      <PolicyComposer
+        policy={policy.data}
+        applying={savePolicy.isPending}
+        onApply={(proposed) => {
+          // Applied through the SAME authenticated save the manual form
+          // uses — same validation, same version bump, same audit. The
+          // draft endpoint never had the authority to write this.
+          savePolicy.mutate({
+            unknownAgentCeilingMinor: proposed.unknownAgentCeilingMinor,
+            knownAgentCeilingMinor: proposed.knownAgentCeilingMinor,
+            blockedCategories: proposed.blockedCategories,
+            maxNegotiationDiscountBps: proposed.maxNegotiationDiscountBps,
+            negotiatorMinBundleItems: proposed.negotiatorMinBundleItems,
+            negotiatorFloorMarginBps: proposed.negotiatorFloorMarginBps,
+            velocityMaxIntentsPerHour: proposed.velocityMaxIntentsPerHour,
+          });
+          // Re-seed the manual form from what was just applied, so the two
+          // editors cannot disagree about what is currently saved.
+          setForm({
+            unknownAgentCeilingMajor: String(proposed.unknownAgentCeilingMinor / 100),
+            knownAgentCeilingMajor: String(proposed.knownAgentCeilingMinor / 100),
+            blockedCategories: proposed.blockedCategories.join(", "),
+            maxNegotiationDiscountPct: String(proposed.maxNegotiationDiscountBps / 100),
+            negotiatorMinBundleItems: String(proposed.negotiatorMinBundleItems),
+            negotiatorFloorMarginPct: String(proposed.negotiatorFloorMarginBps / 100),
+            velocityMaxIntentsPerHour: String(proposed.velocityMaxIntentsPerHour),
+          });
+        }}
+      />
+
       <Card>
         <CardHeader>
           <CardTitle>Agent purchasing policy</CardTitle>
@@ -342,6 +378,10 @@ export default function AgentGatewayPage() {
           </div>
         </CardBody>
       </Card>
+
+      <AgentTrustPanel policy={policy.data} />
+
+      <RedTeamPanel />
     </div>
   );
 }

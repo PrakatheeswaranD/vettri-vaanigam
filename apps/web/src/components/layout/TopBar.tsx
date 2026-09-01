@@ -23,18 +23,18 @@ export function TopBar() {
         <MobileNav />
         <div className="flex flex-col leading-tight">
           <span className="text-sm font-semibold text-ink">
-            {experienceRole === "customer" ? "Customer Workspace" : experienceRole === "admin" ? "Razorpay Admin Console" : merchant?.name ?? "Loading merchant…"}
+            {experienceRole === "customer" ? "Customer Workspace" : merchant?.name ?? "Loading merchant…"}
           </span>
           <span className="text-xs text-ink-faint">{ROLE_LABELS[experienceRole]}</span>
         </div>
       </div>
       <div className="flex items-center gap-3">
         <Link
-          to={experienceRole === "customer" ? "/customer/buyer-agent" : experienceRole === "admin" ? "/admin/risk" : "/merchant/overview"}
+          to={experienceRole === "customer" ? "/customer/buyer-agent" : "/merchant/overview"}
           className="inline-flex items-center gap-1.5 rounded-full border border-brand-300 bg-brand-50 px-3 py-1 text-xs font-semibold text-brand-700 shadow-sm hover:bg-brand-100 transition"
         >
           <Sparkles size={13} className="text-brand-600" />
-          <span>{experienceRole === "customer" ? "Buy with AI" : experienceRole === "admin" ? "Risk Console" : "Merchant Console"}</span>
+          <span>{experienceRole === "customer" ? "Buy with AI" : "Merchant Console"}</span>
         </Link>
         <span
           title="No real money moves in this environment — all payments are Razorpay Test Mode or seeded demo data."

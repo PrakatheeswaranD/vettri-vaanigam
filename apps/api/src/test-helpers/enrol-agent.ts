@@ -8,6 +8,20 @@
  * and the tests passed BECAUSE of it. Now a key is only trusted once a
  * merchant has registered it, so a test has to enrol first — which is also
  * a more honest rehearsal of what an integration really involves.
+ *
+ * WHY ENROLMENT CLEARS PRIOR DECISION HISTORY
+ *
+ * The adaptive trust score reads an agent's own record, so a test agent
+ * enrolled under a stable id inherits every decline and attack from every
+ * previous run of the suite. That silently turned "an honest first-contact
+ * intent auto-approves" into "an agent with fifty prior test declines
+ * auto-approves", which is a different — and false — claim.
+ *
+ * Wiping on enrolment restores the property each test file actually means
+ * to assert, and matches what enrolment is: a merchant registering a
+ * counterparty it is starting a relationship with. History accumulated
+ * WITHIN a run is untouched, so tests that deliberately build up state
+ * (velocity, repeat offenders) still work.
  */
 import { generateKeyPairSync, sign as edSign, randomUUID } from "node:crypto";
 import type { PrismaClient } from "@prisma/client";
@@ -36,6 +50,16 @@ export async function enrolAgent(
   const rawPublicKey = publicKey.export({ format: "der", type: "spki" }).subarray(-32).toString("base64");
 
   const { apiKey } = await registerAgentKey(prisma, merchantId, { externalAgentId, publicKey: rawPublicKey });
+
+  // Start this agent's trust record from nothing — see the note above.
+  const existing = await prisma.agentIdentity.findUnique({
+    where: { merchantId_externalAgentId: { merchantId, externalAgentId } },
+    select: { id: true },
+  });
+  if (existing) {
+    await prisma.decisionRecord.deleteMany({ where: { agentIdentityId: existing.id } });
+    await prisma.agentIdentity.update({ where: { id: existing.id }, data: { settledOrderCount: 0 } });
+  }
 
   return {
     externalAgentId,

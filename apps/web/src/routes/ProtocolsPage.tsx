@@ -21,10 +21,11 @@
  * "three protocols" without it would be told something misleading.
  */
 import { useState } from "react";
-import { CheckCircle2, FlaskConical, Copy, Check, ExternalLink, FileJson } from "lucide-react";
+import { CheckCircle2, FlaskConical, Copy, Check, ExternalLink, FileJson, ShieldCheck } from "lucide-react";
 import { PageHeader } from "../components/layout/PageHeader";
 import { Card, CardBody, CardHeader, CardTitle } from "../components/ui/Card";
 import { useMerchant } from "../hooks/use-api";
+import { LiveConformance } from "../components/protocols/LiveConformance";
 
 const API_BASE = import.meta.env.VITE_API_BASE_URL ?? "http://localhost:4000/api/v1";
 
@@ -171,6 +172,16 @@ export default function ProtocolsPage() {
             These are public on purpose. An agent has to read your catalogue before it can have an account with you,
             and they expose only what you already show human shoppers.
           </p>
+        </CardBody>
+      </Card>
+
+      <Card>
+        <CardHeader className="flex items-center gap-2">
+          <ShieldCheck size={16} className="text-brand-600" />
+          <CardTitle>Prove it — run the protocols now</CardTitle>
+        </CardHeader>
+        <CardBody>
+          <LiveConformance slug={slug} />
         </CardBody>
       </Card>
 

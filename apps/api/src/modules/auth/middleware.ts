@@ -21,7 +21,7 @@ import { resolveSession } from "./session.js";
 /**
  * Routes reachable without a merchant session.
  *
- * The Anumati gateway intake is here for a structural reason, not
+ * The Vaanigam gateway intake is here for a structural reason, not
  * convenience: a buyer agent that has never met this merchant cannot hold
  * a merchant session, and requiring one would defeat the premise of being
  * payable by any agent. Its gate is the signed spend mandate plus merchant

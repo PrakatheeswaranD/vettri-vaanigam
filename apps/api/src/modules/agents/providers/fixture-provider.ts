@@ -19,6 +19,8 @@ import type {
   NormalizeCatalogRowParams,
   RawNormalizedProduct,
   ProposeAgentUpsellParams,
+  CompilePolicyParams,
+  RawPolicyDraftResponse,
   RawAgentUpsell,
 } from "../ai-provider.js";
 
@@ -29,6 +31,9 @@ export interface FixtureProviderScript {
   proposeRecoveryAction?: (params: ProposeRecoveryActionParams) => Promise<RawRecoveryProposal> | RawRecoveryProposal;
   normalizeCatalogRow?: (params: NormalizeCatalogRowParams) => Promise<RawNormalizedProduct> | RawNormalizedProduct;
   proposeAgentUpsell?: (params: ProposeAgentUpsellParams) => Promise<RawAgentUpsell> | RawAgentUpsell;
+  compilePolicyFromInstruction?: (
+    params: CompilePolicyParams,
+  ) => Promise<RawPolicyDraftResponse> | RawPolicyDraftResponse;
 }
 
 export function createFixtureProvider(script: FixtureProviderScript, mode: AIProvider["mode"] = "LIVE_ANTHROPIC"): AIProvider {
@@ -69,6 +74,12 @@ export function createFixtureProvider(script: FixtureProviderScript, mode: AIPro
         throw new Error("Fixture provider: proposeAgentUpsell was not scripted for this test.");
       }
       return script.proposeAgentUpsell(params);
+    },
+    async compilePolicyFromInstruction(params) {
+      if (!script.compilePolicyFromInstruction) {
+        throw new Error("Fixture provider: compilePolicyFromInstruction was not scripted for this test.");
+      }
+      return script.compilePolicyFromInstruction(params);
     },
   };
 }

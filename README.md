@@ -1,10 +1,10 @@
-# Anumati
+# Vaanigam
 ## AI Growth & Agentic Commerce
 
 > Make merchant commerce AI-readable, AI-buyable and growth-enabled while
 > deterministic systems retain financial authority.
 
-Anumati is a specialist merchant capability for Track 01 —
+Vaanigam is a specialist merchant capability for Track 01 —
 **AI Growth & Agentic Commerce**. It gives a merchant an intelligent
 commerce worker that can understand buyer demand, discover grounded growth
 opportunities, and move commerce workflows forward — while deterministic
@@ -21,7 +21,7 @@ software keeps every financial decision.
 | **Humans** (merchant OWNER / APPROVER) | Approve or reject any proposal policy routes to them; configure the guardrails the Policy Engine reads | Approval is recorded against a real authenticated identity, never a placeholder |
 | **Razorpay / provider** | Executes payment; supplies the only evidence that can move a payment to CAPTURED | Never trusted from a browser callback alone — signature-verified webhook or server-side fetch only |
 
-> **Product-thinking note.** Anumati is *Agent-Studio-shaped* — one
+> **Product-thinking note.** Vaanigam is *Agent-Studio-shaped* — one
 > merchant-facing specialist capability with declared triggers,
 > capabilities, and prohibited capabilities (see
 > `packages/domain/src/specialist-manifest.ts`). It is **not** integrated
@@ -33,7 +33,7 @@ software keeps every financial decision.
 > `LLM → proposal → schema validation → deterministic policy → authorization
 > → deterministic execution → Razorpay → verified result → audit event`.
 > This is the non-negotiable architectural spine of the whole project — see
-> [`PART_00_MASTER_ENGINEERING_CONTRACT.md`](PART_00_MASTER_ENGINEERING_CONTRACT.md).
+> [`docs/SECURITY.md`](docs/SECURITY.md).
 >
 > **The browser never defines the amount that reaches the payment layer**
 > (PART 06 corollary). Every price, discount, and total in a checkout is
@@ -74,8 +74,7 @@ flowchart LR
 
 ## Current implementation status: PART 09 complete — all nine parts implemented
 
-This repository implements the complete fixed 00→09 part sequence locked in
-[`PROJECT_IMPLEMENTATION_PLAN.md`](PROJECT_IMPLEMENTATION_PLAN.md): PART 01
+This repository implements the complete fixed 00→09 build sequence: PART 01
 (Foundation, Architecture, Database & Application Shell), PART 02
 (Agent-Readable Catalog & Deterministic Agentic Readiness Score), PART 03
 (Buyer Agent, Intent Extraction, Product Discovery & Recommendation),
@@ -86,8 +85,7 @@ Cart, Order, Checkout & CommerceGateway), PART 07 (Razorpay Test Mode,
 PaymentGateway, Deterministic Payment State Machine & Secure Webhooks),
 PART 08 (Failure-First Recovery, AI Evaluations, Security Testing &
 Financial-Flow Observability), and **PART 09 — Final Integration, E2E
-Hardening, Jury Demo, UX Polish & Documentation**. There is no PART 10+
-per the master contract. See [`PROGRESS.md`](PROGRESS.md) for the exact
+Hardening, Jury Demo, UX Polish & Documentation**. There is no PART 10+. See [`PROGRESS.md`](PROGRESS.md) for the exact
 current state, and [`docs/DEMO.md`](docs/DEMO.md) for how to run it.
 
 PART 09 did not add new architecture — per its own explicit mandate, it
@@ -559,7 +557,7 @@ Two supporting pillars back it up:
 
 ## Agent-Readable Commerce
 
-Beyond the human-facing catalog, Anumati exposes a dedicated
+Beyond the human-facing catalog, Vaanigam exposes a dedicated
 structured representation designed for AI-buyer consumption —
 `GET /api/v1/agent-commerce/catalog` and `/agent-commerce/catalog/:id`.
 This is not a re-serialization of the human DTO: it adds freshness
@@ -1049,5 +1047,4 @@ proposal quality is covered by integration/adversarial tests, not a new
   eval dataset); certified AP2 SD-JWT and UCP integrations; a full tax/
 shipping/warehouse-reservation platform; an enterprise
 promotion-stacking engine (exactly one offer line per checkout, by
-  design). See `PROGRESS.md` for current status and
-`PROJECT_IMPLEMENTATION_PLAN.md` for the locked part sequence.
+  design). See `PROGRESS.md` for current status.

@@ -3,6 +3,8 @@ import type { PaymentDTO, RecommendedProductDTO } from "@razorgrowth/contracts";
 import { formatMoney } from "../../lib/format";
 import { apiGet, apiPost } from "../../lib/api-client";
 import { completeBuyerCheckout } from "../../lib/buyer-checkout";
+import { NegotiationPanel } from "./NegotiationPanel";
+import { useBuyerStanding } from "../../hooks/use-negotiation";
 
 interface Proposal {
   id: string;
@@ -20,6 +22,9 @@ export function PaymentProposalModal({ recommendation, buyerBudgetMinor, onClose
   onClose: () => void;
 }) {
   const [proposal, setProposal] = useState<Proposal | null>(null);
+  // Only fetched once there is a proposal to negotiate against — a shopper
+  // browsing has no use for it and it would be a request per card.
+  const standing = useBuyerStanding(Boolean(proposal));
   const [payment, setPayment] = useState<PaymentDTO | null>(null);
   const [busy, setBusy] = useState(false);
   const [attempted, setAttempted] = useState(false);
@@ -49,6 +54,22 @@ export function PaymentProposalModal({ recommendation, buyerBudgetMinor, onClose
         <p className="text-sm">Policy: {proposal.outcome}</p>
         <p className="text-sm">{proposal.explanation}</p>
         <p className="text-xs text-ink-muted">Authorization expires {new Date(proposal.expiresAt).toLocaleString()}.</p>
+
+        {/* Only before authorization. Once the buyer has authorized a
+            price, renegotiating it would mean charging something they
+            never agreed to. */}
+        {proposal.outcome !== "DECLINE" && !attempted ? (
+          <NegotiationPanel
+            proposalId={proposal.id}
+            standing={standing.data}
+            currency={proposal.currency}
+            onApplied={(result) => {
+              // The authorize step charges the SERVER's price; this keeps
+              // what the shopper is looking at in step with it.
+              setProposal({ ...proposal, amountMinor: result.finalTotalMinor });
+            }}
+          />
+        ) : null}
         {proposal.outcome !== "DECLINE" && !attempted && <button disabled={busy} onClick={() => void perform(async () => {
           setAttempted(true);
           setPayment(await apiPost<PaymentDTO>(`/buyer/purchase-proposals/${proposal.id}/authorize`, {}));

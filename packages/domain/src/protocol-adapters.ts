@@ -32,7 +32,7 @@ export interface ParsedIntent {
    * checkout_session_id, an x402 nonce) so a decision traces back into the
    * counterparty's system. */
   protocolActorRef: string | null;
-  /** An ACP `Allowance` presented instead of a signed Anumati mandate.
+  /** An ACP `Allowance` presented instead of a signed Vaanigam mandate.
    * Carried separately BECAUSE it is unsigned — collapsing it into
    * `mandate` would let an unverified authorisation be reported as a
    * cryptographically verified one. */
@@ -75,7 +75,15 @@ function asPositiveInt(value: unknown): number | null {
 }
 
 function parseMandate(source: Json): SpendMandate | null {
-  const raw = asRecord(source.anumati_mandate ?? source.anumatiMandate ?? source.mandate);
+  // `anumati_mandate` is the name this field shipped under before the
+  // product was renamed. Still accepted, because a rename on our side is
+  // not a reason for an integration that was working yesterday to start
+  // silently arriving with no mandate — which is what dropping the alias
+  // would look like from the caller's end: a MANDATE_MISSING decline they
+  // cannot explain.
+  const raw = asRecord(
+    source.vaanigam_mandate ?? source.vaanigamMandate ?? source.anumati_mandate ?? source.anumatiMandate ?? source.mandate,
+  );
   if (!raw) return null;
 
   const notBefore = typeof raw.notBefore === "string" ? new Date(raw.notBefore) : null;

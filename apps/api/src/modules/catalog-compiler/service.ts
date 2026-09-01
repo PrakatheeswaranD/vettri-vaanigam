@@ -171,7 +171,7 @@ export async function compileCatalogCsv(
   }
 
   logger.info(
-    { event: "anumati.catalog_compiled", merchantId, rowsRead: rows.length, rowsCompiled: products.length, issues: issues.length },
+    { event: "vaanigam.catalog_compiled", merchantId, rowsRead: rows.length, rowsCompiled: products.length, issues: issues.length },
     "Catalogue compiled",
   );
 
@@ -310,7 +310,7 @@ export async function publishCatalogCompilation(
   // as a failed publish.
   void runOpportunityScan(prisma, merchantId).catch((err) => {
     logger.warn(
-      { event: "anumati.opportunity_scan_failed", merchantId, err: err instanceof Error ? err.message : String(err) },
+      { event: "vaanigam.opportunity_scan_failed", merchantId, err: err instanceof Error ? err.message : String(err) },
       "Catalogue published, but the follow-up opportunity scan failed",
     );
   });
@@ -355,7 +355,7 @@ export async function rollbackCatalogCompilation(prisma: PrismaClient, merchantI
   // reason: the rollback has already committed.
   void runOpportunityScan(prisma, merchantId).catch((err) => {
     logger.warn(
-      { event: "anumati.opportunity_scan_failed", merchantId, err: err instanceof Error ? err.message : String(err) },
+      { event: "vaanigam.opportunity_scan_failed", merchantId, err: err instanceof Error ? err.message : String(err) },
       "Catalogue rolled back, but the follow-up opportunity scan failed",
     );
   });

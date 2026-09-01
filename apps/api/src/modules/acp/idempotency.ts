@@ -25,7 +25,7 @@ import { AppError } from "../../http/errors.js";
 
 /** Marker stored while a request is still running, so a concurrent retry
  * can be told "in flight" rather than being allowed to run twice. */
-const IN_FLIGHT = "__anumati_in_flight__";
+const IN_FLIGHT = "__vaanigam_in_flight__";
 
 /**
  * Canonical, so key ORDER cannot change the fingerprint.

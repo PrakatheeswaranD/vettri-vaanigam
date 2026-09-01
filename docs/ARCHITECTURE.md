@@ -1,9 +1,8 @@
 # Architecture
 
-Concise reference for how Anumati is actually built. Product intent
-and the full financial-safety rationale live in
-[`PART_00_MASTER_ENGINEERING_CONTRACT.md`](../PART_00_MASTER_ENGINEERING_CONTRACT.md);
-this document is the "how", not the "why".
+Concise reference for how Vaanigam is actually built. This document is
+the "how"; the financial-safety rationale behind these choices is in
+[`SECURITY.md`](SECURITY.md).
 
 ## Modular monolith, not microservices
 
@@ -1064,7 +1063,7 @@ apps/api/src/modules/commerce/ apps/api/src/modules/payments/` returns
 nothing), and no full tax/shipping/warehouse-reservation platform.
 
 Authentication and protocol integration DO now exist, and the sentence
-that used to deny both was left behind by the Anumati work rather than
+that used to deny both was left behind by the Vaanigam work rather than
 being true:
 
 - Merchant users authenticate with opaque server-side sessions and are

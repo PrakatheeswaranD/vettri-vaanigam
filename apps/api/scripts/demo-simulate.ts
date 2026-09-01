@@ -1,5 +1,5 @@
 /**
- * Anumati Interactive Multi-Agent Demo Runner
+ * Vaanigam Interactive Multi-Agent Demo Runner
  *
  * Demonstrates live, end-to-end Track 01 capabilities against the running API:
  * - Scenario 1: OpenAI ChatGPT Agent via ACP 2026-04-17 (Ed25519 signatures & delegated tokens)
@@ -36,7 +36,7 @@ const C = {
 function banner() {
   console.clear();
   console.log(`${C.cyan}${C.bold}╔══════════════════════════════════════════════════════════════════════════════╗${C.reset}`);
-  console.log(`${C.cyan}${C.bold}║       ANUMATI — AI GROWTH & AGENTIC COMMERCE GATEWAY (TRACK 01)              ║${C.reset}`);
+  console.log(`${C.cyan}${C.bold}║       VAANIGAM — AI GROWTH & AGENTIC COMMERCE GATEWAY (TRACK 01)              ║${C.reset}`);
   console.log(`${C.cyan}${C.bold}║       Autonomous Revenue Growth & Multi-Protocol AI Transactability          ║${C.reset}`);
   console.log(`${C.cyan}${C.bold}╚══════════════════════════════════════════════════════════════════════════════╝${C.reset}\n`);
 }
@@ -417,7 +417,7 @@ async function runScenarioLedger() {
 }
 
 async function runAll() {
-  console.log(`${C.bold}Initializing Anumati Gateway Demo Session...${C.reset}`);
+  console.log(`${C.bold}Initializing Vaanigam Gateway Demo Session...${C.reset}`);
   await initContext();
   printSuccess("Authenticated", `Session established as ${EMAIL}`);
   printSuccess("Authoritative Catalog", `Loaded ${demoVariant!.sku} (Authoritative Price: ₹${(demoVariant!.priceMinor / 100).toFixed(2)})`);

@@ -71,7 +71,11 @@ export function GatewayDecisionFeed({ limit = 12 }: { limit?: number }) {
               </p>
               <p className="mt-0.5 text-xs text-ink-muted">{d.explanation}</p>
               <p className="mt-0.5 text-[11px] text-ink-faint">
-                {when(d.createdAt)} · {d.decisionLatencyMs}ms
+                {/* A decision that took literally zero milliseconds did not
+                    happen; these are rows written before the gate started
+                    timing itself, and printing "0ms" states a measurement
+                    that was never taken. Say it was not recorded instead. */}
+                {when(d.createdAt)} · {d.decisionLatencyMs > 0 ? `${d.decisionLatencyMs}ms` : "timing not recorded"}
                 {d.providerOrderId ? ` · ${d.providerOrderId}` : ""}
               </p>
             </div>

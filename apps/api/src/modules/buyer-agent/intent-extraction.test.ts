@@ -21,6 +21,9 @@ function providerReturning(extractIntent: AIProvider["extractIntent"]): AIProvid
     proposeAgentUpsell: async () => {
       throw new Error("not used in these tests");
     },
+    compilePolicyFromInstruction: async () => {
+      throw new Error("not used in these tests");
+    },
   };
 }
 

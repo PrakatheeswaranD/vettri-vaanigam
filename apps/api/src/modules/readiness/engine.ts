@@ -339,6 +339,13 @@ export async function runReadinessAssessment(
       paymentFailed: payment.failed,
     },
     calculationVersion: READINESS_MODEL_VERSION,
-    isSyntheticDemo: true,
+    // A live recalculation is a REAL computation over the merchant's real
+    // catalogue rows, so it is not demo data. This was hardcoded true, so
+    // the console stamped "Demo data" on a score the merchant had just
+    // pressed a button to compute — and would have done so forever, for
+    // every real merchant in production, since nothing could ever set it
+    // false. `prisma/seed.ts` marks the two snapshots it fabricates
+    // explicitly, exactly as it does for ledger events.
+    isSyntheticDemo: false,
   };
 }

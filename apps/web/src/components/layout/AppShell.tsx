@@ -20,10 +20,19 @@ import { Skeleton } from "../ui/States";
  * `min-h-0` on the scrolling column is what actually allows it to shrink
  * inside a flex parent; without it the column reports its content height
  * and nothing ever scrolls internally.
+ *
+ * THE GROUND IS WHITE, NOT GREY
+ *
+ * The usual console pattern is white cards on a grey page, because grey
+ * does the work of separating them for free. White on white has to earn
+ * that separation instead — a hairline border plus the low card shadow —
+ * and the result reads as a product rather than a form. It also means the
+ * console and the marketing page are made of the same material, which is
+ * the whole point of shipping one design system rather than two.
  */
 export function AppShell() {
   return (
-    <div className="flex h-screen overflow-hidden bg-surface-subtle">
+    <div className="flex h-screen overflow-hidden bg-surface">
       <Sidebar />
       <div className="flex min-w-0 min-h-0 flex-1 flex-col">
         <TopBar />

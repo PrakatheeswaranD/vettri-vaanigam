@@ -101,6 +101,27 @@ export function buildApp(): FastifyInstance {
       return;
     }
 
+    // Fastify raises its own protocol-level errors before any handler runs —
+    // an empty body under `content-type: application/json`, a body over the
+    // size limit, an unsupported media type. Each already carries the right
+    // 4xx `statusCode`; falling through to the branch below reported them as
+    // INTERNAL_ERROR 500, which tells an integrating agent "the gateway is
+    // broken" when the truth is "your request was malformed" — and 500 is
+    // the one class of response a well-behaved client will retry. Their
+    // messages are protocol facts, not internal state, so they are safe to
+    // return and are what makes the response actionable.
+    const fastifyStatus = (error as { statusCode?: unknown }).statusCode;
+    if (typeof fastifyStatus === "number" && fastifyStatus >= 400 && fastifyStatus < 500) {
+      const detail = error instanceof Error ? error.message : "Request could not be processed.";
+      request.log.warn({ err: error, requestId: request.id }, "client request error");
+      // Reuses the documented VALIDATION_ERROR code rather than inventing a
+      // new one: an integrating agent switching on `code` must not meet a
+      // value absent from the published error vocabulary. The specific
+      // protocol detail travels in the message.
+      reply.status(fastifyStatus).send(toErrorResponseBody("VALIDATION_ERROR", detail, request.id));
+      return;
+    }
+
     request.log.error({ err: error, requestId: request.id }, "unhandled error");
     reply.status(500).send(toErrorResponseBody("INTERNAL_ERROR", "An unexpected error occurred.", request.id));
   });

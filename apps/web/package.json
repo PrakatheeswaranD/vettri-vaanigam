@@ -3,7 +3,7 @@
   "version": "0.1.0",
   "private": true,
   "type": "module",
-  "description": "Anumati merchant console — React/Vite frontend.",
+  "description": "Vaanigam merchant console — React/Vite frontend.",
   "scripts": {
     "dev": "vite",
     "build": "vite build",

@@ -1,7 +1,7 @@
 /**
  * The five-intent live demo from BRIEF.md §5.
  *
- * Drives FIVE simulated buyer agents against a running Anumati gateway
+ * Drives FIVE simulated buyer agents against a running Vaanigam gateway
  * over real HTTP — three clean auto-approvals across three different
  * protocols, one negotiated upsell, and one engineered to be refused on
  * stage.
@@ -124,7 +124,7 @@ function report(label: string, status: number, result: GatewayResult) {
 }
 
 async function main() {
-  console.log("Anumati — five simulated buyer agents against a live gateway");
+  console.log("Vaanigam — five simulated buyer agents against a live gateway");
   console.log(`API: ${API}`);
 
   heading("0. Setup");
@@ -173,7 +173,7 @@ async function main() {
     items: [{ id: cheapSku, quantity: 1 }],
     buyer: { email: "buyer@agent.test" },
     totals: { total: cheapPrice },
-    anumati_mandate: mandate(merchant.id, "agent-chatgpt-acp", 2_000_000),
+    vaanigam_mandate: mandate(merchant.id, "agent-chatgpt-acp", 2_000_000),
   });
   report("ACP agent — everyday basket", acp.status, acp.result);
 
@@ -190,7 +190,7 @@ async function main() {
         },
       },
     },
-    anumati_mandate: mandate(merchant.id, "agent-gemini-ap2", 2_000_000),
+    vaanigam_mandate: mandate(merchant.id, "agent-gemini-ap2", 2_000_000),
   });
   report("AP2 agent — same basket, different dialect", ap2.status, ap2.result);
 
@@ -199,7 +199,7 @@ async function main() {
     currency: "INR",
     items: [{ sku: cheapSku, quantity: 1 }],
     payload: { authorization: { value: String(cheapPrice) } },
-    anumati_mandate: mandate(merchant.id, "agent-x402-wallet", 2_000_000),
+    vaanigam_mandate: mandate(merchant.id, "agent-x402-wallet", 2_000_000),
   });
   report("x402 agent — autonomous wallet", x402.status, x402.result);
 
@@ -208,7 +208,7 @@ async function main() {
     items: [{ id: cheapSku, quantity: 2 }],
     buyer: {},
     totals: { total: cheapPrice * 2 },
-    anumati_mandate: mandate(merchant.id, "agent-negotiation-test", 3_000_000),
+    vaanigam_mandate: mandate(merchant.id, "agent-negotiation-test", 3_000_000),
   });
   report("ACP agent — negotiator offers an add-on", upsell.status, upsell.result);
   if (!upsell.result.offer) {
@@ -226,7 +226,7 @@ async function main() {
     items: [{ id: cheapSku, quantity: bigQuantity }],
     buyer: {},
     totals: { total: bigTotal },
-    anumati_mandate: mandate(merchant.id, unknownAgentId, bigTotal + 1),
+    vaanigam_mandate: mandate(merchant.id, unknownAgentId, bigTotal + 1),
   });
   report("Unregistered ACP agent — far over the ceiling", declined.status, declined.result);
 

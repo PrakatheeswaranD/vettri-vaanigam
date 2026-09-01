@@ -2,6 +2,7 @@ import { useState } from "react";
 import { Link, useParams } from "react-router-dom";
 import { ArrowLeft, Bot, Truck, Undo2, User } from "lucide-react";
 import { useAgentProduct, useProduct } from "../hooks/use-api";
+import { useExperienceRole } from "../lib/experience-role";
 import { Card, CardBody, CardHeader, CardTitle } from "../components/ui/Card";
 import { ErrorState, Skeleton } from "../components/ui/States";
 import { ProductReadinessBadge } from "../components/readiness/ProductReadinessBadge";
@@ -13,6 +14,12 @@ type ViewMode = "human" | "agent";
 
 export default function ProductDetailPage() {
   const { productId } = useParams();
+  // The way back has to belong to the role that got here. A shopper sent
+  // to `/catalog` is a shopper bounced out of their own session by the
+  // route guard.
+  const role = useExperienceRole();
+  const backTo = role === "customer" ? "/customer/discover" : "/catalog";
+  const backLabel = role === "customer" ? "Back to discovery" : "Back to catalog";
   const { data: product, isLoading, isError, error, refetch } = useProduct(productId);
   const [selectedVariantId, setSelectedVariantId] = useState<string | null>(null);
   const [mode, setMode] = useState<ViewMode>("human");
@@ -37,8 +44,8 @@ export default function ProductDetailPage() {
   return (
     <div className="space-y-6">
       <div className="flex flex-wrap items-center justify-between gap-3">
-        <Link to="/catalog" className="inline-flex items-center gap-1.5 text-sm text-ink-muted hover:text-ink">
-          <ArrowLeft size={14} /> Back to catalog
+        <Link to={backTo} className="inline-flex items-center gap-1.5 rounded-md text-sm text-ink-muted transition hover:text-ink focus-visible:outline focus-visible:outline-2 focus-visible:outline-offset-2 focus-visible:outline-brand-600">
+          <ArrowLeft size={14} aria-hidden /> {backLabel}
         </Link>
 
         {/* PART 02 §61, §121 — the demo moment: same product, two lenses. */}

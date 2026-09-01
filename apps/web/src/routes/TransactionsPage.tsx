@@ -1,5 +1,5 @@
-import { useState } from "react";
-import { Receipt } from "lucide-react";
+import { Fragment, useState } from "react";
+import { Receipt, LifeBuoy } from "lucide-react";
 import { useTransactions } from "../hooks/use-api";
 import { Card } from "../components/ui/Card";
 import { EmptyState, ErrorState, Skeleton } from "../components/ui/States";
@@ -7,6 +7,7 @@ import { PaymentStateBadge } from "../components/ui/StatusBadge";
 import { formatDateTime, formatMoney } from "../lib/format";
 import { ApiError } from "../lib/api-client";
 import { PageHeader } from "../components/layout/PageHeader";
+import { RecoveryPanel } from "../components/commerce/RecoveryPanel";
 
 const SOURCE_LABEL: Record<string, string> = {
   DIRECT_BUYER: "Direct",
@@ -20,6 +21,17 @@ const SOURCE_LABEL: Record<string, string> = {
 
 export default function TransactionsPage() {
   const [page, setPage] = useState(1);
+  /**
+   * Which failed payment has its recovery pipeline open.
+   *
+   * The recovery pipeline — evaluate, merchant policy, approval, bounded
+   * retry — was fully built and reachable ONLY from the merchant-agent
+   * growth checkout. Failures do not happen there; they happen here, on
+   * the payments list, where the merchant was shown "FAILED · Retry
+   * blocked" and given nothing to do about it. The capability existed and
+   * the affordance did not, which is indistinguishable from not having it.
+   */
+  const [recovering, setRecovering] = useState<string | null>(null);
   const { data, isLoading, isError, error, refetch } = useTransactions({ page, limit: 15 });
 
   return (
@@ -59,11 +71,13 @@ export default function TransactionsPage() {
                   <th className="px-4 py-3 font-medium">Provider</th>
                   <th className="px-4 py-3 font-medium">Captured</th>
                   <th className="px-4 py-3 font-medium">Date</th>
+                  <th className="px-4 py-3 font-medium sr-only">Recovery</th>
                 </tr>
               </thead>
               <tbody>
                 {data.items.map((tx) => (
-                  <tr key={tx.orderId} className="border-b border-border last:border-0">
+                  <Fragment key={tx.orderId}>
+                  <tr className="border-b border-border last:border-0">
                     <td className="px-4 py-3 font-mono text-xs text-ink-muted">{tx.orderId.slice(0, 8)}</td>
                     <td className="px-4 py-3 text-ink">{tx.customerName}</td>
                     <td className="px-4 py-3 font-medium text-ink">{formatMoney(tx.amount)}</td>
@@ -78,7 +92,31 @@ export default function TransactionsPage() {
                     </td>
                     <td className="px-4 py-3 text-xs text-ink-faint">{tx.capturedAt ? formatDateTime(tx.capturedAt) : "—"}</td>
                     <td className="px-4 py-3 text-xs text-ink-faint">{formatDateTime(tx.createdAt)}</td>
+                    <td className="px-4 py-3 text-right">
+                      {tx.state === "FAILED" && tx.paymentId ? (
+                        <button
+                          type="button"
+                          onClick={() => setRecovering((current) => (current === tx.paymentId ? null : tx.paymentId))}
+                          className="inline-flex items-center gap-1 rounded-md border border-border px-2.5 py-1 text-xs font-semibold hover:bg-surface-subtle"
+                        >
+                          <LifeBuoy size={12} />
+                          {recovering === tx.paymentId ? "Close" : "Recover"}
+                        </button>
+                      ) : null}
+                    </td>
                   </tr>
+                  {recovering === tx.paymentId && tx.paymentId ? (
+                    <tr className="border-b border-border bg-surface-subtle last:border-0">
+                      <td colSpan={10} className="px-4 py-4">
+                        {/* Recovery is never automatic. This runs the same
+                            evaluate -> policy -> approval -> bounded retry
+                            pipeline the API enforces; the button only opens
+                            it. */}
+                        <RecoveryPanel paymentId={tx.paymentId} />
+                      </td>
+                    </tr>
+                  ) : null}
+                  </Fragment>
                 ))}
               </tbody>
             </table>

@@ -15,7 +15,7 @@ import { useCallback, useEffect, useState } from "react";
  */
 export type BuyerViewMode = "buyer" | "trace";
 
-const STORAGE_KEY = "anumati.buyerViewMode";
+const STORAGE_KEY = "vaanigam.buyerViewMode";
 
 function readStored(): BuyerViewMode {
   try {

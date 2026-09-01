@@ -1,0 +1,11 @@
+-- ACP `CheckoutSessionBase.messages`.
+--
+-- Until now a decline's reason reached only the merchant's dashboard. ACP
+-- has a purpose-built array for sending it back to the CALLING AGENT, and
+-- `MessageError.code` already carries `approval_required` — which is
+-- exactly the step-up gate this system is built around. Using the field
+-- the protocol already defines beats inventing a parallel one.
+--
+-- Persisted, not recomputed on read, so an agent polling the session sees
+-- a stable reason rather than one that shifts under it.
+ALTER TABLE "AcpCheckoutSession" ADD COLUMN IF NOT EXISTS "messages" JSONB;

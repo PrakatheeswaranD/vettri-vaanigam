@@ -3,7 +3,7 @@
  *
  * Reads the single shared `SPECIALIST_TRIGGERS` declaration from the
  * domain package, so this panel, the Agent Authority table, and the docs
- * can never drift apart. Anumati is not a chat-only system — these
+ * can never drift apart. Vaanigam is not a chat-only system — these
  * are the real commerce events that cause it to do work.
  */
 import { ArrowRight, MessageSquare, MousePointerClick, XCircle } from "lucide-react";

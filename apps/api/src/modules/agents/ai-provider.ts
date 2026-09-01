@@ -203,16 +203,44 @@ export interface RawAgentUpsell {
   pitch: string;
 }
 
+export interface CompilePolicyParams {
+  /** The merchant's own sentence. Untrusted text. */
+  instruction: string;
+  knownCategories: string[];
+  current: {
+    unknownAgentCeilingMinor: number;
+    knownAgentCeilingMinor: number;
+    blockedCategories: string[];
+    maxNegotiationDiscountBps: number;
+    negotiatorFloorMarginBps: number;
+    velocityMaxIntentsPerHour: number;
+  };
+}
+
+/**
+ * Deliberately `Record<string, unknown>` and not a typed policy.
+ *
+ * Typing this as a policy shape would imply the model returns one. It
+ * returns whatever it returns; `buildPolicyDraft` is what turns that into
+ * bounded, known fields, and letting the type system pretend otherwise is
+ * how an unvalidated model output ends up assigned to a config.
+ */
+export type RawPolicyDraftResponse = Record<string, unknown>;
+
 export interface AIProvider {
   readonly mode: "LIVE_ANTHROPIC" | "LIVE_GEMINI" | "DEMO_RULE_BASED";
   extractIntent(params: ExtractIntentParams): Promise<RawIntentExtraction>;
   rankCandidates(params: RankCandidatesParams): Promise<RawRankedItem[]>;
   proposeGrowthAction(params: ProposeGrowthActionParams): Promise<RawGrowthProposal>;
   proposeRecoveryAction(params: ProposeRecoveryActionParams): Promise<RawRecoveryProposal>;
-  /** Anumati Catalog Compiler — turns one free-text catalogue row into
+  /** Vaanigam Catalog Compiler — turns one free-text catalogue row into
    * structured fields an AI buyer can filter on. */
   normalizeCatalogRow(params: NormalizeCatalogRowParams): Promise<RawNormalizedProduct>;
-  /** Anumati Negotiator — proposes a bounded add-on offer. Its discount is
+  /** Vaanigam Negotiator — proposes a bounded add-on offer. Its discount is
    * clamped by the merchant's policy before it reaches anyone. */
   proposeAgentUpsell(params: ProposeAgentUpsellParams): Promise<RawAgentUpsell>;
+  /** Vaanigam Policy Author — drafts policy changes from a merchant's own
+   * sentence. The result is ALWAYS clamped by `buildPolicyDraft` and
+   * approved by a human before anything is saved. */
+  compilePolicyFromInstruction(params: CompilePolicyParams): Promise<RawPolicyDraftResponse>;
 }

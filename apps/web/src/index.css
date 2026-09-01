@@ -7,11 +7,15 @@
     -webkit-font-smoothing: antialiased;
   }
   body {
-    @apply bg-surface-subtle text-ink font-sans;
+    /* White throughout. Sections that need to read as separate use the
+       barely-there `surface-tint` wash and a hairline, not a grey ground —
+       a page made of grey panels on grey looks like a form, and this one
+       has to look like a product. */
+    @apply bg-surface text-ink font-sans;
   }
   /* PART 01 §35 — visible focus states everywhere, not just default UA styling. */
   :focus-visible {
-    @apply outline-none ring-2 ring-brand-500 ring-offset-2 ring-offset-surface-subtle;
+    @apply outline-none ring-2 ring-brand-500 ring-offset-2 ring-offset-surface;
   }
   @media (prefers-reduced-motion: reduce) {
     *,
@@ -28,5 +32,15 @@
 @layer utilities {
   .no-scrollbar::-webkit-scrollbar {
     display: none;
+  }
+}
+
+@layer utilities {
+  /* Long-form copy reads better broken on sense rather than on width. */
+  .text-balance {
+    text-wrap: balance;
+  }
+  .text-pretty {
+    text-wrap: pretty;
   }
 }

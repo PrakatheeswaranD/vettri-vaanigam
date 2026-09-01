@@ -1,5 +1,5 @@
 /**
- * Anumati — Full Interactive End-to-End Demo Walkthrough
+ * Vaanigam — Full Interactive End-to-End Demo Walkthrough
  *
  * Demonstrates step-by-step how the platform operates in real life:
  * 1. Product Ingestion & Catalog Readiness
@@ -32,6 +32,43 @@ import {
 } from "lucide-react";
 import { Card } from "../components/ui/Card";
 import { apiGet, apiPost } from "../lib/api-client";
+import { getToken } from "../lib/auth-storage";
+
+const API_BASE = import.meta.env.VITE_API_BASE_URL ?? "http://localhost:4000/api/v1";
+
+/**
+ * A raw fetch that returns the STATUS as evidence instead of throwing.
+ *
+ * Several tour steps prove a surface by the refusal it issues — an
+ * unsigned ACP session must come back 4xx, and `apiPost` turns that into
+ * a thrown error, which reads as "the step broke" rather than "the
+ * defence held". These calls need the status code itself.
+ */
+async function rawCall(path: string, init: RequestInit): Promise<{ status: number; body: unknown }> {
+  const token = getToken();
+  const response = await fetch(`${API_BASE}${path}`, {
+    ...init,
+    headers: { ...(init.headers ?? {}), ...(token ? { authorization: `Bearer ${token}` } : {}) },
+  });
+  const text = await response.text();
+  let body: unknown = null;
+  try {
+    body = JSON.parse(text) as unknown;
+  } catch {
+    body = null;
+  }
+  return { status: response.status, body };
+}
+
+async function merchantSlug(): Promise<string> {
+  const merchant = await apiGet<{ slug?: string }>("/merchant");
+  return merchant.slug ?? "meridian-athletics";
+}
+
+async function firstCatalogSku(slug: string): Promise<string | null> {
+  const { body } = await rawCall(`/agent-catalog/${slug}/.well-known/agent-catalog.json`, { method: "GET" });
+  return JSON.stringify(body).match(/"sku"\s*:\s*"([^"]+)"/)?.[1] ?? null;
+}
 
 interface DemoPhase {
   id: number;
@@ -61,7 +98,7 @@ export default function DemoTourPage() {
       icon: Package,
       category: "Catalog & Readability",
       description:
-        "Human e-commerce stores use visual banners and promotional imagery. AI buyer agents cannot interpret ambiguous HTML. Anumati analyzes the merchant's catalog for stock levels, size matrices, and structured return policies to generate a verified Readiness Score.",
+        "Human e-commerce stores use visual banners and promotional imagery. AI buyer agents cannot interpret ambiguous HTML. Vaanigam analyzes the merchant's catalog for stock levels, size matrices, and structured return policies to generate a verified Readiness Score.",
       problemSolved: "Prevents AI buyer agents from failing purchases due to unreadable sizes, missing variants, or ambiguous shipping terms.",
       consoleLink: "/catalog",
       consoleLinkLabel: "Open Catalog in Console",
@@ -83,17 +120,39 @@ export default function DemoTourPage() {
       icon: Radio,
       category: "Protocol Gateway",
       description:
-        "OpenAI uses ACP (2026-04-17), Coinbase uses x402 v2, and NPCI is rolling out UAP/UCP in India. Anumati's unified gateway (/api/v1/agent-gateway) auto-detects incoming headers and payloads, verifying cryptographic Ed25519 signatures and normalizing them into a single internal representation.",
+        "OpenAI uses ACP (2026-04-17), Coinbase uses x402 v2, and NPCI is rolling out UAP/UCP in India. Vaanigam's unified gateway (/api/v1/agent-gateway) auto-detects incoming headers and payloads, verifying cryptographic Ed25519 signatures and normalizing them into a single internal representation.",
       problemSolved: "Merchants don't have to build 4 incompatible integration stacks; one gateway speaks every global agentic protocol.",
       consoleLink: "/protocols",
       consoleLinkLabel: "View Active Protocols",
       actionLabel: "Simulate Inbound ACP & x402 Handshakes",
       runAction: async () => {
-        const capabilities = await apiGet<Record<string, unknown>>("/system/capabilities");
+        // Real handshakes. This used to fetch /system/capabilities and
+        // report "protocols active" — a claim of verification that never
+        // touched ACP or x402.
+        const slug = await merchantSlug();
+        const sku = await firstCatalogSku(slug);
+        const x402 = await rawCall(`/x402/${slug}/purchase`, {
+          method: "POST",
+          headers: { "content-type": "application/json" },
+          body: JSON.stringify({ items: [{ sku: sku ?? "UNKNOWN", quantity: 1 }] }),
+        });
+        const acp = await rawCall(`/acp/${slug}/checkout_sessions`, {
+          method: "POST",
+          headers: { "content-type": "application/json" },
+          body: JSON.stringify({ items: [{ id: sku ?? "UNKNOWN", quantity: 1 }] }),
+        });
+        const offer = (x402.body as { accepts?: { amount?: string; network?: string }[] } | null)?.accepts?.[0];
+        const challenged = x402.status === 402 && Boolean(offer?.amount);
+        const acpRefused = acp.status >= 400;
         return {
-          success: true,
-          data: { gatewayProtocols: ["ACP (2026-04-17)", "x402 Protocol v2", "UAP / UCP (NPCI)", "AP2 Cart Mandate"], capabilities },
-          summary: "Gateway verified: Inbound ACP, x402, and UAP protocols are active and listening for AI agents.",
+          success: challenged && acpRefused,
+          data: {
+            x402: { status: x402.status, quotedMinor: offer?.amount ?? null, network: offer?.network ?? null },
+            acpUnsigned: { status: acp.status, refused: acpRefused },
+          },
+          summary: challenged && acpRefused
+            ? `x402 answered ${x402.status} quoting ${offer?.amount} minor units; an unsigned ACP session was refused with ${acp.status}.`
+            : `Handshake did not behave as specified - x402 ${x402.status}, ACP ${acp.status}.`,
         };
       },
     },
@@ -104,17 +163,23 @@ export default function DemoTourPage() {
       icon: SlidersHorizontal,
       category: "Policy & Financial Safety",
       description:
-        "When an AI agent submits a cart claiming an item costs ₹1,000, Anumati immediately discards the claimed amount. The server reprices the basket using the merchant's authoritative database snapshot, computing taxes and checking the merchant's discount ceiling (bps) and floor margins.",
+        "When an AI agent submits a cart claiming an item costs ₹1,000, Vaanigam immediately discards the claimed amount. The server reprices the basket using the merchant's authoritative database snapshot, computing taxes and checking the merchant's discount ceiling (bps) and floor margins.",
       problemSolved: "Stops prompt injections, price spoofing, and malicious agents from forcing unprofitable sales on the merchant.",
       consoleLink: "/settings",
       consoleLinkLabel: "Inspect Policy Rules",
       actionLabel: "Evaluate Basket Repricing Policy",
       runAction: async () => {
-        const rules = await apiGet<Record<string, unknown>>("/system/capabilities");
+        // Runs the real PRICE_TAMPERING attack against the live gateway.
+        // The previous version invented `discountCeilingBps: 1500` and a
+        // "repricing passed" summary without repricing anything.
+        const result = await apiPost<Record<string, unknown>>("/sandbox/break-the-agent/run", { presetId: "PRICE_TAMPERING" });
+        const held = result.held === true || result.outcome === "DECLINE";
         return {
-          success: true,
-          data: { repricingRule: "AUTHORITATIVE_CATALOG_SNAPSHOT", floorMarginEnforced: true, discountCeilingBps: 1500, rules },
-          summary: "Deterministic repricing passed: All agent basket lines repriced directly from merchant database snapshot.",
+          success: held,
+          data: result,
+          summary: held
+            ? "Price forgery refused: the basket was priced from the merchant's own catalogue, and the agent's claim was only ever compared to it."
+            : "The gateway did NOT refuse a forged price - investigate before demoing.",
         };
       },
     },
@@ -131,16 +196,20 @@ export default function DemoTourPage() {
       consoleLinkLabel: "Open Human Approvals Queue",
       actionLabel: "Trigger Step-Up on Bulk Basket",
       runAction: async () => {
-        // Evaluate high-value policy trigger
+        // Reads REAL decisions. This step previously returned a hardcoded
+        // STEP_UP object without calling anything at all - a demo that
+        // reports a governance outcome the server never made.
+        const decisions = await apiGet<{ items: { outcome: string; reasonCode: string | null; explanation: string | null; computedTotalMinor: number | null }[] }>(
+          "/agent-gateway/decisions?limit=50",
+        );
+        const stepUps = decisions.items.filter((d) => d.outcome === "STEP_UP");
+        const pending = await apiGet<{ items: unknown[] }>("/approvals/pending");
         return {
-          success: true,
-          data: {
-            policyOutcome: "STEP_UP",
-            reasonCode: "UNKNOWN_AGENT_CEILING_EXCEEDED",
-            explanation: "Order exceeds ₹10,000.00 unknown-agent limit. Human approval ticket created.",
-            actionRequired: "OWNER_APPROVAL",
-          },
-          summary: "Step-Up Firewall triggered: High-value transaction safely halted and held for human approval.",
+          success: stepUps.length > 0,
+          data: { stepUpDecisions: stepUps.slice(0, 3), stepUpCount: stepUps.length, pendingApprovals: pending.items.length },
+          summary: stepUps.length > 0
+            ? `${stepUps.length} real STEP_UP decision(s) on this merchant - each an order the gateway refused to auto-approve and handed to a human. Most recent reason: ${stepUps[0]?.reasonCode ?? "-"}.`
+            : "No STEP_UP decisions recorded yet. Place an order above the autonomous limit, then run this step.",
         };
       },
     },
@@ -151,17 +220,27 @@ export default function DemoTourPage() {
       icon: Receipt,
       category: "Payments & Settlement",
       description:
-        "Once authorized, Anumati initiates the order against Razorpay Test Mode (or Mock Gateway). Webhooks carrying captured payment evidence are cryptographically verified using HMAC-SHA256. Strict idempotency locks ensure duplicate webhook deliveries never double-capture money.",
+        "Once authorized, Vaanigam initiates the order against Razorpay Test Mode (or Mock Gateway). Webhooks carrying captured payment evidence are cryptographically verified using HMAC-SHA256. Strict idempotency locks ensure duplicate webhook deliveries never double-capture money.",
       problemSolved: "Guarantees 100% financial state-machine correctness and prevents race-condition double-charges.",
       consoleLink: "/transactions",
       consoleLinkLabel: "View Transactions",
       actionLabel: "Verify Payment Capture & Idempotency",
       runAction: async () => {
-        const txs = await apiGet<{ items: unknown[] }>("/transactions?limit=3");
+        // Reports what the ledger actually recorded rather than asserting
+        // that signatures were verified. The previous version listed three
+        // transactions and claimed "HMAC-SHA256 signature verified", which
+        // nothing in the call had checked.
+        const txs = await apiGet<{ items: { status?: string; customerDebitStatus?: string; merchantCreditStatus?: string }[] }>("/transactions?limit=25");
+        const ledger = await apiGet<{ items: { actionType: string; status: string }[] }>("/ledger?limit=100");
+        const verified = ledger.items.filter((e) => e.actionType === "WEBHOOK_SIGNATURE_VERIFIED").length;
+        const captured = ledger.items.filter((e) => e.actionType === "PAYMENT_CAPTURED").length;
+        const debited = txs.items.filter((t) => t.customerDebitStatus === "DEBITED").length;
         return {
-          success: true,
-          data: { recentTransactions: txs.items, webhookSignatureScheme: "HMAC-SHA256", idempotencyDefense: "ACTIVE" },
-          summary: "Payment lifecycle verified: HMAC-SHA256 signature verified and payment state machine locked.",
+          success: verified > 0 || captured > 0,
+          data: { webhookSignaturesVerified: verified, paymentsCaptured: captured, customerDebited: debited, sample: txs.items.slice(0, 3) },
+          summary: verified > 0
+            ? `${verified} webhook signature verification(s) and ${captured} capture(s) are recorded in the tamper-evident ledger - each capture traceable to a signed provider event.`
+            : "No signature-verified webhook recorded yet on this merchant. Complete a payment, then run this step.",
         };
       },
     },
@@ -172,7 +251,7 @@ export default function DemoTourPage() {
       icon: TrendingUp,
       category: "AI Growth Engine",
       description:
-        "Anumati's Merchant Agent actively analyzes purchasing context and proposes high-margin upsells and bundle recommendations (+30% average order value). Mathematical policy guards verify that every incentive stays within the campaign budget and above minimum profit margins.",
+        "Vaanigam's Merchant Agent actively analyzes purchasing context and proposes high-margin upsells and bundle recommendations (+30% average order value). Mathematical policy guards verify that every incentive stays within the campaign budget and above minimum profit margins.",
       problemSolved: "Merchants passively waiting for sales now have an autonomous 24/7 negotiator growing cart values safely.",
       consoleLink: "/growth",
       consoleLinkLabel: "Open Basket Growth & Campaigns",
@@ -267,10 +346,10 @@ export default function DemoTourPage() {
               <span>Track 01: AI Growth & Agentic Commerce</span>
             </div>
             <h1 className="text-2xl font-bold tracking-tight text-white md:text-3xl">
-              Anumati End-to-End Guided Demo Tour
+              Vaanigam End-to-End Guided Demo Tour
             </h1>
             <p className="max-w-3xl text-sm text-brand-200/90 leading-relaxed">
-              Step through the complete journey of how Anumati makes any Razorpay merchant safely sellable to AI buyer agents (ChatGPT, Coinbase, NPCI) while autonomously growing revenue inside governed bounds.
+              Step through the complete journey of how Vaanigam makes any Razorpay merchant safely sellable to AI buyer agents (ChatGPT, Coinbase, NPCI) while autonomously growing revenue inside governed bounds.
             </p>
           </div>
           <div className="flex flex-wrap items-center gap-2.5 shrink-0">
@@ -484,7 +563,7 @@ export default function DemoTourPage() {
         {/* Right Column: High-Level Architecture & Jump Links */}
         <div className="space-y-6 lg:col-span-4">
           <Card className="border border-border p-5 shadow-sm space-y-4">
-            <h3 className="text-sm font-bold text-ink">How Anumati Protects the Merchant</h3>
+            <h3 className="text-sm font-bold text-ink">How Vaanigam Protects the Merchant</h3>
             <div className="space-y-3 text-xs text-ink-muted">
               <div className="flex items-start gap-2.5">
                 <div className="flex h-5 w-5 shrink-0 items-center justify-center rounded-full bg-brand-100 text-brand-700 font-bold text-[10px]">

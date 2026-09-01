@@ -7,6 +7,7 @@ import {
   type AgentGatewayPolicy,
   type GatewayEvaluationContext,
 } from "./agent-gateway-policy.js";
+import { computeAgentTrust, effectiveCeilingMinor } from "./agent-trust-score.js";
 
 const POLICY: AgentGatewayPolicy = {
   policyVersion: 3,
@@ -177,5 +178,107 @@ describe("negotiator envelope (TECH_SPEC §4)", () => {
 
   it("fails closed when cost is unknown", () => {
     expect(offerBreachesFloorMargin({ revenueMinor: 10_000, costMinor: null, discountBps: 500 }, POLICY)).toBe(true);
+  });
+});
+
+/**
+ * The adaptive ceiling is the merchant's binary replaced by a number the
+ * agent's own record produced. These pin the two properties that make that
+ * safe: it can never exceed what the merchant configured, and it must
+ * actually collapse when an agent is caught.
+ */
+describe("adaptive trust ceiling", () => {
+  function adaptiveFor(history: { settledOrders: number; declines: number; flaggedAttacks: number }) {
+    const trust = computeAgentTrust(history);
+    const ceiling = effectiveCeilingMinor({
+      trustScore: trust.score,
+      unknownAgentCeilingMinor: POLICY.unknownAgentCeilingMinor,
+      knownAgentCeilingMinor: POLICY.knownAgentCeilingMinor,
+    });
+    return { score: trust.score, band: trust.band, ceilingMinor: ceiling.ceilingMinor, collapsed: ceiling.collapsed };
+  }
+
+  it("behaves exactly like the flat binary when no score is supplied", () => {
+    const withoutTrust = evaluateAgentGatewayPolicy(POLICY, context({ adaptiveTrust: null }));
+    expect(withoutTrust.appliedCeilingMinor).toBe(POLICY.unknownAgentCeilingMinor);
+    expect(withoutTrust.trustScore).toBeNull();
+    expect(withoutTrust.trustBand).toBeNull();
+  });
+
+  it("lets a proven agent auto-approve an order the flat ceiling would have stepped up", () => {
+    const proven = adaptiveFor({ settledOrders: 6, declines: 0, flaggedAttacks: 0 });
+    expect(proven.score).toBe(100);
+
+    const order = 4_000_000; // ₹40,000 — over the unknown ceiling
+    const result = evaluateAgentGatewayPolicy(
+      POLICY,
+      context({ agentTrust: "KNOWN", orderTotalMinor: order, claimedTotalMinor: order, adaptiveTrust: proven }),
+    );
+
+    expect(result.decision).toBe("AUTO_APPROVE");
+    expect(result.trustScore).toBe(100);
+    expect(result.explanation).toContain("earned");
+  });
+
+  /** The hard limit: a derived score must never mint authority. */
+  it("still steps up past the merchant's configured maximum at a perfect score", () => {
+    const perfect = adaptiveFor({ settledOrders: 99, declines: 0, flaggedAttacks: 0 });
+    const order = POLICY.knownAgentCeilingMinor + 1;
+    const result = evaluateAgentGatewayPolicy(
+      POLICY,
+      context({ agentTrust: "KNOWN", orderTotalMinor: order, claimedTotalMinor: order, adaptiveTrust: perfect }),
+    );
+    expect(result.decision).toBe("STEP_UP");
+    expect(result.appliedCeilingMinor).toBe(POLICY.knownAgentCeilingMinor);
+  });
+
+  it("steps up an order a caught agent could have auto-approved yesterday", () => {
+    // ₹20,000: inside the headroom three clean orders earn (₹34,000),
+    // outside the ₹8,000 a flagged attack leaves behind.
+    const order = 2_000_000;
+    const clean = evaluateAgentGatewayPolicy(
+      POLICY,
+      context({
+        orderTotalMinor: order,
+        claimedTotalMinor: order,
+        adaptiveTrust: adaptiveFor({ settledOrders: 3, declines: 0, flaggedAttacks: 0 }),
+      }),
+    );
+    expect(clean.decision).toBe("AUTO_APPROVE");
+
+    const caught = evaluateAgentGatewayPolicy(
+      POLICY,
+      context({
+        orderTotalMinor: order,
+        claimedTotalMinor: order,
+        adaptiveTrust: adaptiveFor({ settledOrders: 3, declines: 0, flaggedAttacks: 1 }),
+      }),
+    );
+    expect(caught.decision).toBe("STEP_UP");
+    expect(caught.explanation).toContain("trust score");
+    // The same agent, the same basket, and now below what a stranger gets.
+    expect(caught.appliedCeilingMinor).toBeLessThan(POLICY.unknownAgentCeilingMinor);
+  });
+
+  /** Division by a zero ceiling produced "Infinityx your limit". */
+  it("explains a zero ceiling in words rather than dividing by it", () => {
+    const wiped = adaptiveFor({ settledOrders: 0, declines: 0, flaggedAttacks: 3 });
+    expect(wiped.ceilingMinor).toBe(0);
+
+    const result = evaluateAgentGatewayPolicy(POLICY, context({ adaptiveTrust: wiped }));
+    expect(result.decision).toBe("STEP_UP");
+    expect(result.explanation).not.toContain("Infinity");
+    expect(result.explanation).not.toContain("NaN");
+    expect(result.explanation).toContain("nothing at all");
+  });
+
+  it("never declines outright on trust alone — a low score steps up, it does not lose the sale", () => {
+    for (const attacks of [1, 2, 3, 10]) {
+      const result = evaluateAgentGatewayPolicy(
+        POLICY,
+        context({ adaptiveTrust: adaptiveFor({ settledOrders: 0, declines: 0, flaggedAttacks: attacks }) }),
+      );
+      expect(result.decision).toBe("STEP_UP");
+    }
   });
 });

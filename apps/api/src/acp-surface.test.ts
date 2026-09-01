@@ -267,7 +267,7 @@ describe("ACP — idempotency (the spec names these by code)", () => {
   });
 });
 
-describe("ACP — completion runs the full Anumati gate", () => {
+describe("ACP — completion runs the full Vaanigam gate", () => {
   it("approves inside the envelope using the ACP Allowance as the mandate", async () => {
     const created = (
       await createSession({
@@ -280,7 +280,7 @@ describe("ACP — completion runs the full Anumati gate", () => {
     const res = await completeSession(created.id, completionPayload(delegated.json().id));
 
     expect(res.statusCode).toBe(202);
-    expect(res.json().anumati.reason_code).toBe("ALLOWANCE_INVALID");
+    expect(res.json().vaanigam.reason_code).toBe("ALLOWANCE_INVALID");
   });
 
   it("records the buyer and the raw payload on the decision", async () => {
@@ -324,8 +324,8 @@ describe("ACP — delegate_payment", () => {
     expect(res.statusCode).toBe(201);
     const body = res.json();
     expect(body.id).toMatch(/^dpt_acpdp_/);
-    expect(body.anumati.payment_instrument_vaulted).toBe(false);
-    expect(body.anumati.risk_signals_forwarded).toBe(0);
+    expect(body.vaanigam.payment_instrument_vaulted).toBe(false);
+    expect(body.vaanigam.risk_signals_forwarded).toBe(0);
   });
 
   it("forwards blocking risk signals rather than discarding them", async () => {
@@ -338,8 +338,8 @@ describe("ACP — delegate_payment", () => {
         ],
     });
 
-    expect(res.json().anumati.risk_signals_forwarded).toBe(2);
-    expect(res.json().anumati.note).toMatch(/human approval/i);
+    expect(res.json().vaanigam.risk_signals_forwarded).toBe(2);
+    expect(res.json().vaanigam.note).toMatch(/human approval/i);
   });
 });
 
@@ -358,7 +358,77 @@ describe("ACP — risk signals reach the decision", () => {
     const res = await completeSession(created.id, completionPayload(delegated.json().id));
 
     expect(res.statusCode).toBe(202);
-    expect(res.json().anumati.decision).toBe("STEP_UP");
-    expect(res.json().anumati.reason).toMatch(/flagged this purchase for review/i);
+    expect(res.json().vaanigam.decision).toBe("STEP_UP");
+    expect(res.json().vaanigam.reason).toMatch(/flagged this purchase for review/i);
+  });
+});
+
+/**
+ * FEATURES_1.md §D — the decline reaches the CALLING AGENT, in ACP's own
+ * vocabulary, not just the merchant's dashboard.
+ *
+ * The point of these is protocol fidelity, not coverage: an agent that
+ * speaks only ACP must be able to act on what comes back without knowing
+ * anything about Vaanigam.
+ */
+describe("ACP — structured messages back to the calling agent", () => {
+  it("returns approval_required on a step-up, using the protocol's own enum", async () => {
+    const created = (await createSession({ line_items: [{ id: sku, quantity: 1 }], currency: "INR" })).json();
+    const delegated = await delegatePayment(created.id, priceMinor * 5, [
+      { type: "device_reputation", action: "manual_review" },
+    ]);
+
+    const res = await completeSession(created.id, completionPayload(delegated.json().id));
+    const messages = res.json().messages as { type: string; code?: string; content: string; content_type: string }[];
+
+    expect(Array.isArray(messages)).toBe(true);
+    const error = messages.find((m) => m.type === "error");
+    expect(error).toBeTruthy();
+    expect(error!.code).toBe("approval_required");
+    expect(error!.content_type).toBe("plain");
+    // The merchant's own sentence travels to the agent, not just a code.
+    expect(error!.content.length).toBeGreaterThan(40);
+  });
+
+  it("tells the agent a step-up is not a refusal", async () => {
+    const created = (await createSession({ line_items: [{ id: sku, quantity: 1 }], currency: "INR" })).json();
+    const delegated = await delegatePayment(created.id, priceMinor * 5, [
+      { type: "device_reputation", action: "manual_review" },
+    ]);
+
+    const res = await completeSession(created.id, completionPayload(delegated.json().id));
+    const messages = res.json().messages as { content: string }[];
+    expect(messages.some((m) => m.content.includes("not a refusal"))).toBe(true);
+  });
+
+  /** An agent that polls the session must see the same reason it was given
+   * at completion, not a different one. */
+  it("persists the messages so a later GET returns the same reason", async () => {
+    const created = (await createSession({ line_items: [{ id: sku, quantity: 1 }], currency: "INR" })).json();
+    const delegated = await delegatePayment(created.id, priceMinor * 5, [
+      { type: "device_reputation", action: "manual_review" },
+    ]);
+    const completed = await completeSession(created.id, completionPayload(delegated.json().id));
+
+    const url = `/api/v1/acp/${slug}/checkout_sessions/${created.id}`;
+    const fetched = await app.inject({ method: "GET", url, headers: keyed("GET", url) });
+
+    expect(fetched.json().messages).toEqual(completed.json().messages);
+  });
+
+  it("says nothing on a clean approval rather than filling the array with noise", async () => {
+    const created = (await createSession({ line_items: [{ id: sku, quantity: 1 }], currency: "INR" })).json();
+    const delegated = await delegatePayment(created.id, priceMinor * 5);
+
+    const res = await completeSession(created.id, completionPayload(delegated.json().id));
+    expect(res.json().vaanigam.decision).toBe("AUTO_APPROVE");
+    expect(res.json().messages).toEqual([]);
+  });
+
+  /** A session nothing has happened to yet still exposes the field, so a
+   * client reading `messages.length` never meets undefined. */
+  it("always exposes messages as an array, even on a fresh session", async () => {
+    const created = await createSession({ line_items: [{ id: sku, quantity: 1 }], currency: "INR" });
+    expect(created.json().messages).toEqual([]);
   });
 });

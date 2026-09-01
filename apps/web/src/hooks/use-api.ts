@@ -74,10 +74,17 @@ export function useCatalogCategories() {
   });
 }
 
+/**
+ * `limitPerMerchant` defaults to 10 server-side. The discovery screen was
+ * taking that default and labelling the result "Products normalized",
+ * which described a 25-product catalogue as a 10-product one. It asks for
+ * the server's maximum, and the response now also carries the real total
+ * so the screen can say when it is showing a subset.
+ */
 export function useMarketplaceDiscovery(category?: string) {
   return useQuery({
     queryKey: ["marketplace", "discovery", category],
-    queryFn: () => apiGet<MarketplaceDiscoveryResponseDTO>("/marketplace/discovery", category ? { category } : undefined),
+    queryFn: () => apiGet<MarketplaceDiscoveryResponseDTO>("/marketplace/discovery", { limitPerMerchant: "20", ...(category ? { category } : {}) }),
   });
 }
 

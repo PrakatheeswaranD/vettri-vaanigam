@@ -19,7 +19,7 @@ import { getAIProvider } from "../agents/provider-factory.js";
 import { appendLedgerEvent } from "../audit/ledger.js";
 import { discoverMarketplace } from "../marketplace/service.js";
 import { extractAndNormalizeIntent } from "./intent-extraction.js";
-import { getKnownCategories, getKnownAttributes, searchCandidateProducts } from "./catalog-gateway.js";
+import { getKnownCategories, getMarketplaceCategories, getKnownAttributes, searchCandidateProducts } from "./catalog-gateway.js";
 import { evaluateCandidates } from "./candidate-evaluation.js";
 import { buildRecommendations, type RecommendationOutcome } from "./recommendation-service.js";
 import { toDomainIntent, toIntentDTO } from "./intent-mapper.js";
@@ -116,25 +116,27 @@ export async function handleBuyerMessage(
   const userMessage = await appendMessage(prisma, conversationId, "BUYER", params.message);
   logger.info({ event: "buyer_agent.request_received", conversationId, traceId }, "Buyer Agent request received");
 
-  const marketplaceVocabulary = params.marketplace ? await discoverMarketplace(prisma, { limitPerMerchant: 20 }) : null;
-  const marketplaceVocabularyProducts = marketplaceVocabulary?.merchants.flatMap((merchant) => merchant.products);
-  const marketplaceAttributes: Record<string, string[]> = {};
-  for (const product of marketplaceVocabularyProducts ?? []) {
-    for (const variant of product.variants) {
-      for (const [key, value] of Object.entries(variant.attributes)) {
-        const values = marketplaceAttributes[key] ?? [];
-        if (!values.includes(value) && values.length < 20) values.push(value);
-        marketplaceAttributes[key] = values;
-      }
-    }
-  }
-  const [knownCategories, knownAttributes] = marketplaceVocabularyProducts ? [
-    [...new Set(marketplaceVocabularyProducts.map((product) => product.identity.category))],
-    marketplaceAttributes,
-  ] : await Promise.all([
-    getKnownCategories(prisma, params.merchantId),
-    getKnownAttributes(prisma, params.merchantId),
-  ]);
+  // VOCABULARY IS NOT THE COMPARISON WINDOW.
+  //
+  // This used to build the marketplace vocabulary from `discoverMarketplace`,
+  // which deliberately keeps at most FIVE merchants — a sensible bound on
+  // what a shopper compares, and the wrong basis for "which category names
+  // are legal". Merchants come back ordered by name, so the fixture sellers
+  // ("00 Buyer Agent Seller A/B", "Apex Athletics", "ByteStore",
+  // "ElectroHub") filled the window and pushed Meridian Athletics — the
+  // demo catalogue — out of it. The vocabulary then offered `Shoes` but
+  // never `Running Shoes`, so "running shoes for daily road running"
+  // normalized to NO category, `needsClarification` fired, and the agent
+  // asked what the shopper was looking for however plainly they answered.
+  // The customer journey could not reach a product at all.
+  //
+  // A category the shopper can buy must be nameable even when its seller
+  // sorts sixth, so the vocabulary spans every active merchant. Narrowing
+  // to five still happens where it belongs — on the search below, after a
+  // category is known.
+  const [knownCategories, knownAttributes] = params.marketplace
+    ? await Promise.all([getMarketplaceCategories(prisma), getKnownAttributes(prisma, null)])
+    : await Promise.all([getKnownCategories(prisma, params.merchantId), getKnownAttributes(prisma, params.merchantId)]);
   const priorIntent = toDomainIntent((conversationRow.currentIntent as unknown as BuyerIntentDTO | null) ?? null);
 
   const extraction = await extractAndNormalizeIntent(provider, params.message, knownCategories, knownAttributes);

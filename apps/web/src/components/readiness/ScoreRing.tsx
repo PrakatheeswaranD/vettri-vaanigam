@@ -1,5 +1,5 @@
 /**
- * The signature visual for Anumati's headline differentiator
+ * The signature visual for Vaanigam's headline differentiator
  * (PART 00 §18) — a circular progress ring around the Agentic Readiness
  * score, replacing a plain number-in-a-box. Purely presentational: the
  * score, tone, and label all come from the real deterministic readiness
