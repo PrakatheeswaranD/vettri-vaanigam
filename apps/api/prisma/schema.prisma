@@ -1146,6 +1146,17 @@ model BuyerConversation {
   customerAccountId String
   customerAccount   CustomerAccount         @relation(fields: [customerAccountId], references: [id], onDelete: Cascade)
   status            BuyerConversationStatus @default(ACTIVE)
+  /// The proposal THIS conversation last priced and is waiting on.
+  ///
+  /// PART 10: without it, "yes" resolved against the most recent pending
+  /// proposal for the BUYER rather than for this conversation — so an
+  /// affirmation in a fresh conversation could authorize a purchase that
+  /// had been quoted somewhere else entirely. A buyer saying yes means
+  /// the thing the agent just showed *them*, and this is the only column
+  /// that can say which thing that was.
+  ///
+  /// Cleared the moment it is authorized, so one yes buys one thing.
+  pendingProposalId String?
   /// Normalized `BuyerIntent` snapshot (validated + normalized shape,
   /// PART 03 §11, §25-§26) — never raw, unvalidated model output.
   currentIntent     Json?

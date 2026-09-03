@@ -268,9 +268,18 @@ export async function resolveBuyTarget(
   return { resolved: true, productId: chosen.productId, variantId: variant.id };
 }
 
-/** Shapes the proposal the purchase service returned for the conversation.
- * Every value is carried verbatim — the policy's own outcome and its own
- * explanation, never a restatement that could soften a decline. */
+/**
+ * Shapes the proposal the purchase service returned for the conversation.
+ *
+ * Every value is carried verbatim — the policy's own outcome, its own
+ * explanation, and the service's own arithmetic. Nothing is recomputed
+ * here: a second calculation of the same total is a second chance to
+ * disagree with the figure the provider will actually be asked for.
+ *
+ * The breakdown exists because a lone total is not something a shopper can
+ * check. `listTotalMinor - discountMinor === amountMinor` holds exactly,
+ * in integer minor units, and a test asserts it end to end.
+ */
 export function toPurchaseOutcome(
   proposal: {
     id: string;
@@ -278,6 +287,13 @@ export function toPurchaseOutcome(
     explanation: string;
     amountMinor: number;
     currency: string;
+    productName: string;
+    variantTitle: string;
+    quantity: number;
+    unitPriceMinor: number;
+    listTotalMinor: number;
+    discountMinor: number;
+    appliedOffer: { proposalId: string; percentageBps: number | null; provenance: string } | null;
   },
   productId: string,
   variantId: string,
@@ -287,9 +303,15 @@ export function toPurchaseOutcome(
     proposalId: proposal.id,
     productId,
     variantId,
+    productName: proposal.productName,
+    variantTitle: proposal.variantTitle,
     quantity,
+    unitPriceMinor: proposal.unitPriceMinor,
+    listTotalMinor: proposal.listTotalMinor,
+    discountMinor: proposal.discountMinor,
     amountMinor: proposal.amountMinor,
     currency: proposal.currency,
+    appliedOffer: proposal.appliedOffer,
     outcome: proposal.outcome,
     explanation: proposal.explanation,
     // STEP_UP means the buyer's own policy wants them to say yes

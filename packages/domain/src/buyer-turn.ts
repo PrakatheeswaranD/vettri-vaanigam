@@ -28,8 +28,30 @@
  * conversation — never from a name the model produced.
  */
 
-export const BUYER_TURN_ACTIONS = ["SEARCH", "REFINE", "COMPARE", "BUY"] as const;
+export const BUYER_TURN_ACTIONS = ["SEARCH", "REFINE", "COMPARE", "BUY", "AUTHORIZE"] as const;
 export type BuyerTurnAction = (typeof BUYER_TURN_ACTIONS)[number];
+
+/**
+ * What the conversation currently has on the table.
+ *
+ * Two separate facts, because they gate two different actions and
+ * collapsing them would let one imply the other. A conversation can have
+ * products to compare and no proposal to authorize, or a proposal awaiting
+ * authorization after the products have scrolled away.
+ */
+export interface BuyerTurnContext {
+  /** Recommendations exist, so COMPARE and BUY mean something. */
+  hasCandidates: boolean;
+  /**
+   * A purchase proposal is priced and waiting for the buyer to say yes.
+   *
+   * Without this, "yes" is just a word. With it, "yes" is an instruction
+   * to create a payment order — which is why AUTHORIZE is the only action
+   * that requires its own dedicated piece of context rather than sharing
+   * `hasCandidates`.
+   */
+  hasPendingProposal: boolean;
+}
 
 export interface BuyerTurnClassification {
   action: BuyerTurnAction;
@@ -50,6 +72,34 @@ const BUY_PATTERNS = [
   /\b(?:buy|purchase|order|get) (?:the |that |this )?(?:first|second|third|fourth|fifth|1st|2nd|3rd|4th|5th)\b/i,
   /\b(?:i(?:'| a)?ll take|let'?s go with|go with|i want to buy|place the order|check ?out)\b/i,
   /\b(?:buy|purchase|order) (?:it|one|now)\b/i,
+];
+
+/**
+ * THE MOST DANGEROUS CLASSIFICATION IN THE PRODUCT.
+ *
+ * Matching this creates a real payment order against a real provider. So
+ * it is gated twice over, and both gates matter:
+ *
+ *   1. It is only ever consulted when a proposal is actually pending. A
+ *      buyer with nothing priced cannot authorize anything, whatever they
+ *      type, and "yes" falls through to SEARCH — which spends nothing.
+ *   2. The phrases are affirmations of a QUESTION THE AGENT JUST ASKED,
+ *      not general enthusiasm. "yes" and "go ahead" qualify because the
+ *      preceding agent turn was "authorize it and I will complete the
+ *      checkout". "sounds good" and "nice" deliberately do not — they are
+ *      things a shopper says while still browsing.
+ *
+ * What this does NOT do is take money. `POST /authorize` creates the
+ * order and a payment in CREATED state; the charge itself requires the
+ * buyer to complete the provider's own checkout, which returns a signature
+ * the server verifies. Authorizing is consent to be asked for payment, not
+ * payment.
+ */
+const AUTHORIZE_PATTERNS = [
+  /^\s*(?:yes|yep|yeah|yup|ok|okay|sure)\b[\s.!,]*$/i,
+  /\b(?:authori[sz]e|authori[sz]e it|confirm it|confirm the purchase)\b/i,
+  /\b(?:go ahead|do it|proceed|place it|complete the (?:purchase|checkout|order))\b/i,
+  /\byes,? (?:please|do it|go ahead|buy it|authori[sz]e)\b/i,
 ];
 
 const COMPARE_PATTERNS = [
@@ -113,28 +163,42 @@ function readOrdinal(message: string): number | null {
 /**
  * Classify one buyer message.
  *
- * Precedence is BUY, then COMPARE, then REFINE, then SEARCH — most
- * consequential first, so "compare these and buy the cheaper one" is read
- * as a purchase and gets a purchase's guardrails rather than sliding
- * through as a comparison.
+ * Precedence is AUTHORIZE, then BUY, then COMPARE, then REFINE, then
+ * SEARCH — most consequential first, so "compare these and buy the cheaper
+ * one" is read as a purchase and gets a purchase's guardrails rather than
+ * sliding through as a comparison.
  *
- * `hasContext` is whether there is anything on the table to act on. A BUY
- * or COMPARE with no prior recommendations is not an action, because there
- * is nothing to act on — it falls back to SEARCH rather than erroring, so
- * a buyer who opens with "buy me running shoes" gets a search instead of a
- * complaint.
+ * AUTHORIZE sits at the top because it is the only action that creates a
+ * payment order, and it is also the only one gated on its own piece of
+ * context: it is not even considered unless a proposal is actually
+ * pending. That ordering means a buyer answering "yes" to "authorize it?"
+ * is never re-read as the start of a new search.
+ *
+ * Everything else is gated on `hasCandidates` — there being something on
+ * the table to act on. A BUY or COMPARE with no prior recommendations is
+ * not an action, because there is nothing to act on; it falls back to
+ * SEARCH rather than erroring, so a buyer who opens with "buy me running
+ * shoes" gets a search instead of a complaint.
  */
-export function classifyBuyerTurn(message: string, hasContext: boolean): BuyerTurnClassification {
+export function classifyBuyerTurn(message: string, context: BuyerTurnContext): BuyerTurnClassification {
   const trimmed = message.trim();
 
+  // AUTHORIZE first, and only against a pending proposal. A bare "yes"
+  // with nothing priced is not an authorization of anything — it falls
+  // through to SEARCH below, which is the outcome that spends nothing.
+  if (context.hasPendingProposal) {
+    const authorize = firstMatch(trimmed, AUTHORIZE_PATTERNS);
+    if (authorize) return { action: "AUTHORIZE", ordinal: null, matched: authorize };
+  }
+
   const buy = firstMatch(trimmed, BUY_PATTERNS);
-  if (buy && hasContext) return { action: "BUY", ordinal: readOrdinal(trimmed), matched: buy };
+  if (buy && context.hasCandidates) return { action: "BUY", ordinal: readOrdinal(trimmed), matched: buy };
 
   const compare = firstMatch(trimmed, COMPARE_PATTERNS);
-  if (compare && hasContext) return { action: "COMPARE", ordinal: null, matched: compare };
+  if (compare && context.hasCandidates) return { action: "COMPARE", ordinal: null, matched: compare };
 
   const refine = firstMatch(trimmed, REFINE_PATTERNS);
-  if (refine && hasContext) return { action: "REFINE", ordinal: readOrdinal(trimmed), matched: refine };
+  if (refine && context.hasCandidates) return { action: "REFINE", ordinal: readOrdinal(trimmed), matched: refine };
 
   return { action: "SEARCH", ordinal: null, matched: null };
 }

@@ -28,7 +28,15 @@ import { AgentBubble } from "./ChatTurn";
 
 const BASE: Omit<
   BuyerAgentResponseDTO,
-  "status" | "recommendations" | "turnAction" | "offers" | "comparison" | "purchase" | "unresolvedReason" | "clarification"
+  | "status"
+  | "recommendations"
+  | "turnAction"
+  | "offers"
+  | "comparison"
+  | "purchase"
+  | "unresolvedReason"
+  | "clarification"
+  | "checkout"
 > = {
   conversationId: "11111111-1111-4111-8111-111111111111",
   messageId: "22222222-2222-4222-8222-222222222222",
@@ -62,6 +70,7 @@ describe("AgentBubble — the default view a buyer actually sees", () => {
       purchase: null,
       unresolvedReason: null,
       clarification: null,
+      checkout: null,
       comparison: {
         productIds: ["aaaaaaaa-aaaa-4aaa-8aaa-aaaaaaaaaaaa", "bbbbbbbb-bbbb-4bbb-8bbb-bbbbbbbbbbbb"],
         rows: [
@@ -95,13 +104,20 @@ describe("AgentBubble — the default view a buyer actually sees", () => {
       comparison: null,
       unresolvedReason: null,
       clarification: null,
+      checkout: null,
       purchase: {
         proposalId: "cccccccc-cccc-4ccc-8ccc-cccccccccccc",
         productId: "aaaaaaaa-aaaa-4aaa-8aaa-aaaaaaaaaaaa",
         variantId: "dddddddd-dddd-4ddd-8ddd-dddddddddddd",
+        productName: "Meridian Summit Trail",
+        variantTitle: "UK9 (Black)",
         quantity: 1,
+        unitPriceMinor: 580_200,
+        listTotalMinor: 580_200,
+        discountMinor: 0,
         amountMinor: 580_200,
         currency: "INR",
+        appliedOffer: null,
         outcome: "AUTO_APPROVE",
         explanation: "Within the saved buyer policy; ready for authorization.",
         requiresAuthorization: false,
@@ -113,8 +129,10 @@ describe("AgentBubble — the default view a buyer actually sees", () => {
     expect(screen.getByText("Priced and proposed")).toBeInTheDocument();
     expect(screen.getByText("Within the saved buyer policy; ready for authorization.")).toBeInTheDocument();
     expect(screen.getByText(/nothing has been charged/i)).toBeInTheDocument();
-    // The price itself is on screen, not just a generic confirmation.
-    expect(screen.getByText(/5,802/)).toBeInTheDocument();
+    // The price is on screen. It appears more than once by design — at
+    // quantity 1 the unit-price row and the total row are the same figure
+    // — so this asserts presence, not uniqueness.
+    expect(screen.getAllByText(/5,802/).length).toBeGreaterThan(0);
   });
 
   it("renders the decline, with the policy's own words, never softened", () => {
@@ -127,13 +145,20 @@ describe("AgentBubble — the default view a buyer actually sees", () => {
       comparison: null,
       unresolvedReason: null,
       clarification: null,
+      checkout: null,
       purchase: {
         proposalId: "cccccccc-cccc-4ccc-8ccc-cccccccccccc",
         productId: "aaaaaaaa-aaaa-4aaa-8aaa-aaaaaaaaaaaa",
         variantId: "dddddddd-dddd-4ddd-8ddd-dddddddddddd",
+        productName: "Meridian Summit Trail",
+        variantTitle: "UK9 (Black)",
         quantity: 1,
+        unitPriceMinor: 1_200_000,
+        listTotalMinor: 1_200_000,
+        discountMinor: 0,
         amountMinor: 1_200_000,
         currency: "INR",
+        appliedOffer: null,
         outcome: "DECLINE",
         explanation: "DAILY_LIMIT_EXCEEDED",
         requiresAuthorization: true,
@@ -159,6 +184,7 @@ describe("AgentBubble — the default view a buyer actually sees", () => {
       comparison: null,
       purchase: null,
       clarification: null,
+      checkout: null,
       unresolvedReason: "I only have 2 options in front of me, so there is no number 3. Say which of them you meant.",
     };
 
@@ -182,6 +208,7 @@ describe("AgentBubble — the default view a buyer actually sees", () => {
       purchase: null,
       unresolvedReason: null,
       clarification: null,
+      checkout: null,
     };
 
     renderBubble(response);
@@ -198,6 +225,7 @@ describe("AgentBubble — the default view a buyer actually sees", () => {
       comparison: null,
       unresolvedReason: null,
       clarification: null,
+      checkout: null,
       offers: [
         {
           proposalId: "eeeeeeee-eeee-4eee-8eee-eeeeeeeeeeee",
@@ -216,9 +244,19 @@ describe("AgentBubble — the default view a buyer actually sees", () => {
         proposalId: "cccccccc-cccc-4ccc-8ccc-cccccccccccc",
         productId: "aaaaaaaa-aaaa-4aaa-8aaa-aaaaaaaaaaaa",
         variantId: "dddddddd-dddd-4ddd-8ddd-dddddddddddd",
+        productName: "Meridian Pulse Runner",
+        variantTitle: "UK7 (Blue)",
         quantity: 1,
+        unitPriceMinor: 449_900,
+        listTotalMinor: 449_900,
+        discountMinor: 22_495,
         amountMinor: 427_405,
         currency: "INR",
+        appliedOffer: {
+          proposalId: "eeeeeeee-eeee-4eee-8eee-eeeeeeeeeeee",
+          percentageBps: 500,
+          provenance: "Authorized by the merchant's policy engine on 2026-09-01.",
+        },
         outcome: "AUTO_APPROVE",
         explanation: "Within the saved buyer policy; ready for authorization.",
         requiresAuthorization: false,
@@ -229,6 +267,199 @@ describe("AgentBubble — the default view a buyer actually sees", () => {
 
     expect(screen.getByText("Offers the merchant has authorized")).toBeInTheDocument();
     expect(screen.getByText("5% off")).toBeInTheDocument();
-    expect(screen.getByText("Authorized by the merchant's policy engine on 2026-09-01.")).toBeInTheDocument();
+    // Shown on the purchase card AND in the offers list. Both are the
+    // right place for it, so presence is what matters.
+    expect(screen.getAllByText("Authorized by the merchant's policy engine on 2026-09-01.").length).toBeGreaterThan(0);
+  });
+});
+
+/* ═══════════════════════════════════════════════════════════════════════
+ * PART 10 — the itemised breakdown, and a checkout state that never
+ * claims a purchase completed.
+ * ══════════════════════════════════════════════════════════════════════ */
+
+describe("AgentBubble — the money a buyer is being asked for", () => {
+  it("shows the arithmetic, not just a total", () => {
+    const response: BuyerAgentResponseDTO = {
+      ...BASE,
+      status: "PURCHASE_PROPOSED",
+      recommendations: [],
+      turnAction: "BUY",
+      offers: [],
+      comparison: null,
+      unresolvedReason: null,
+      clarification: null,
+      checkout: null,
+      purchase: {
+        proposalId: "cccccccc-cccc-4ccc-8ccc-cccccccccccc",
+        productId: "aaaaaaaa-aaaa-4aaa-8aaa-aaaaaaaaaaaa",
+        variantId: "dddddddd-dddd-4ddd-8ddd-dddddddddddd",
+        productName: "Meridian Pulse Runner",
+        variantTitle: "UK7 (Blue)",
+        quantity: 1,
+        unitPriceMinor: 450_000,
+        listTotalMinor: 450_000,
+        discountMinor: 22_500,
+        amountMinor: 427_500,
+        currency: "INR",
+        appliedOffer: {
+          proposalId: "eeeeeeee-eeee-4eee-8eee-eeeeeeeeeeee",
+          percentageBps: 500,
+          provenance: "Authorized by the merchant's policy engine on 2026-09-03.",
+        },
+        outcome: "AUTO_APPROVE",
+        explanation: "Within the saved buyer policy; ready for authorization.",
+        requiresAuthorization: false,
+      },
+    };
+
+    renderBubble(response);
+
+    // WHAT is being bought, not just how much.
+    expect(screen.getByText("Meridian Pulse Runner")).toBeInTheDocument();
+    expect(screen.getByText(/UK7 \(Blue\)/)).toBeInTheDocument();
+
+    // The three figures a buyer can check against each other:
+    // ₹4,500 list − ₹225 offer = ₹4,275 total.
+    // 4,500 appears twice by design: the unit price at quantity 1, and
+    // the list subtotal. The claim being tested is that all three figures
+    // are on screen and agree — not that each appears exactly once.
+    expect(screen.getAllByText(/4,500/).length).toBeGreaterThan(0);
+    expect(screen.getAllByText(/225/).length).toBeGreaterThan(0);
+    expect(screen.getAllByText(/4,275/).length).toBeGreaterThan(0);
+
+    // The discount is attributed, not presented as a deal we found.
+    expect(screen.getByText(/Merchant offer, 5% off/)).toBeInTheDocument();
+    expect(screen.getByText(/Authorized by the merchant's policy engine/)).toBeInTheDocument();
+  });
+
+  it("omits the discount row entirely when the buyer pays list price", () => {
+    const response: BuyerAgentResponseDTO = {
+      ...BASE,
+      status: "PURCHASE_PROPOSED",
+      recommendations: [],
+      turnAction: "BUY",
+      offers: [],
+      comparison: null,
+      unresolvedReason: null,
+      clarification: null,
+      checkout: null,
+      purchase: {
+        proposalId: "cccccccc-cccc-4ccc-8ccc-cccccccccccc",
+        productId: "aaaaaaaa-aaaa-4aaa-8aaa-aaaaaaaaaaaa",
+        variantId: "dddddddd-dddd-4ddd-8ddd-dddddddddddd",
+        productName: "Meridian Summit Trail",
+        variantTitle: "UK9 (Black)",
+        quantity: 1,
+        unitPriceMinor: 580_200,
+        listTotalMinor: 580_200,
+        discountMinor: 0,
+        amountMinor: 580_200,
+        currency: "INR",
+        appliedOffer: null,
+        outcome: "AUTO_APPROVE",
+        explanation: "Within the saved buyer policy; ready for authorization.",
+        requiresAuthorization: false,
+      },
+    };
+
+    renderBubble(response);
+
+    // A "−₹0" row would imply an offer that does not exist.
+    expect(screen.queryByText(/Merchant offer/)).not.toBeInTheDocument();
+  });
+});
+
+describe("AgentBubble — checkout never claims money moved", () => {
+  it("says the payment order is ready and explicitly not charged", () => {
+    const response: BuyerAgentResponseDTO = {
+      ...BASE,
+      status: "CHECKOUT_READY",
+      recommendations: [],
+      turnAction: "AUTHORIZE",
+      offers: [],
+      comparison: null,
+      purchase: null,
+      unresolvedReason: null,
+      clarification: null,
+      checkout: {
+        paymentId: "99999999-9999-4999-8999-999999999999",
+        state: "CREATED",
+        amountMinor: 427_500,
+        currency: "INR",
+        providerOrderId: "order_TestABC123",
+        orderId: "88888888-8888-4888-8888-888888888888",
+        paid: false,
+      },
+    };
+
+    renderBubble(response);
+
+    expect(screen.getByText("Ready for payment")).toBeInTheDocument();
+    expect(screen.getByText("CREATED")).toBeInTheDocument();
+    expect(screen.getByText("order_TestABC123")).toBeInTheDocument();
+
+    // THE ASSERTION THAT MATTERS MOST ON THIS SCREEN. A payment order is
+    // not a payment, and the UI must not let a buyer read it as one.
+    expect(screen.getByText(/still not charged/i)).toBeInTheDocument();
+    expect(screen.queryByText("Payment confirmed")).not.toBeInTheDocument();
+    expect(screen.queryByText(/provider confirmed this capture/i)).not.toBeInTheDocument();
+  });
+
+  it("only says confirmed when the server reports a verified capture", () => {
+    const response: BuyerAgentResponseDTO = {
+      ...BASE,
+      status: "CHECKOUT_READY",
+      recommendations: [],
+      turnAction: "AUTHORIZE",
+      offers: [],
+      comparison: null,
+      purchase: null,
+      unresolvedReason: null,
+      clarification: null,
+      checkout: {
+        paymentId: "99999999-9999-4999-8999-999999999999",
+        state: "CAPTURED",
+        amountMinor: 427_500,
+        currency: "INR",
+        providerOrderId: "order_TestABC123",
+        orderId: "88888888-8888-4888-8888-888888888888",
+        paid: true,
+      },
+    };
+
+    renderBubble(response);
+
+    expect(screen.getByText("Payment confirmed")).toBeInTheDocument();
+    expect(screen.getByText(/provider confirmed this capture/i)).toBeInTheDocument();
+    expect(screen.queryByText(/still not charged/i)).not.toBeInTheDocument();
+  });
+
+  it("narrates an authorized turn without ever saying purchased", () => {
+    const response: BuyerAgentResponseDTO = {
+      ...BASE,
+      status: "CHECKOUT_READY",
+      recommendations: [],
+      turnAction: "AUTHORIZE",
+      offers: [],
+      comparison: null,
+      purchase: null,
+      unresolvedReason: null,
+      clarification: null,
+      checkout: {
+        paymentId: "99999999-9999-4999-8999-999999999999",
+        state: "CREATED",
+        amountMinor: 427_500,
+        currency: "INR",
+        providerOrderId: "order_TestABC123",
+        orderId: null,
+        paid: false,
+      },
+    };
+
+    renderBubble(response);
+
+    expect(screen.getByText(/nothing has been charged yet/i)).toBeInTheDocument();
+    expect(screen.queryByText(/purchased|order placed|payment complete/i)).not.toBeInTheDocument();
   });
 });

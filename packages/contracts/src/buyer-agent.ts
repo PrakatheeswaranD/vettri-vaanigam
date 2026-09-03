@@ -131,6 +131,19 @@ export const buyerAgentStatusSchema = z.enum([
   /** The buyer asked to act on something the conversation does not hold —
    * "buy the third" with two recommendations. Never resolved by guessing. */
   "ACTION_UNRESOLVED",
+
+  // ── PART 10 ────────────────────────────────────────────────────────
+  /**
+   * The buyer authorized, and a real payment order now exists with the
+   * provider. Money has still NOT moved: the charge requires completing
+   * the provider's own checkout, which returns a signature the server
+   * verifies. This status means "ready to be asked for payment".
+   */
+  "CHECKOUT_READY",
+  /** Authorization was attempted and refused — expired proposal, policy
+   * changed underneath it, daily allowance exhausted. Stated with the
+   * server's own reason, never softened. */
+  "AUTHORIZATION_REFUSED",
 ]);
 
 export const aiProviderModeSchema = z.enum(["LIVE_ANTHROPIC", "LIVE_GEMINI", "DEMO_RULE_BASED", "DISABLED"]);
@@ -156,7 +169,7 @@ export type BuyerMessageRequestDTO = z.infer<typeof buyerMessageRequestSchema>;
  * is not an understanding, and a model that can be talked into it would be
  * a prompt-injection surface attached to a payment path.
  */
-export const buyerTurnActionSchema = z.enum(["SEARCH", "REFINE", "COMPARE", "BUY"]);
+export const buyerTurnActionSchema = z.enum(["SEARCH", "REFINE", "COMPARE", "BUY", "AUTHORIZE"]);
 export type BuyerTurnActionDTO = z.infer<typeof buyerTurnActionSchema>;
 
 /**
@@ -214,13 +227,41 @@ export type BuyerComparisonDTO = z.infer<typeof buyerComparisonSchema>;
  * through the same service and the same spending-policy evaluation — the
  * conversation is a way to reach it, never a second path around it.
  */
+/**
+ * What the buyer is being asked to pay for, itemised.
+ *
+ * A single total is not something a shopper can check. Every field here is
+ * an integer in MINOR UNITS — the arithmetic shown is the arithmetic that
+ * was performed, and `listTotalMinor - discountMinor === amountMinor`
+ * holds exactly, with a test that asserts it. No floats anywhere on this
+ * path: a rupee is 100 paise and stays an integer from the catalogue row
+ * to the provider's charge.
+ */
 export const buyerPurchaseOutcomeSchema = z.object({
   proposalId: z.string().uuid(),
   productId: z.string().uuid(),
   variantId: z.string().uuid(),
+  /** Named, so the buyer can see WHAT they are buying, not just an id. */
+  productName: z.string(),
+  variantTitle: z.string(),
   quantity: z.number().int().min(1),
+  unitPriceMinor: z.number().int().min(0),
+  /** Before any offer. */
+  listTotalMinor: z.number().int().min(0),
+  discountMinor: z.number().int().min(0),
+  /** The final total, and the figure the provider is asked to charge. */
   amountMinor: z.number().int(),
   currency: z.string(),
+  /** The merchant-authorized offer that produced `discountMinor`, or null
+   * when the buyer pays list price. Carries its provenance rather than a
+   * marketing line — this is a governance row, not a promotion. */
+  appliedOffer: z
+    .object({
+      proposalId: z.string().uuid(),
+      percentageBps: z.number().int().nullable(),
+      provenance: z.string(),
+    })
+    .nullable(),
   /** AUTO_APPROVE / STEP_UP / DECLINE, from the buyer's own policy. */
   outcome: z.string(),
   /** The policy's own words. Never a restatement. */
@@ -230,6 +271,36 @@ export const buyerPurchaseOutcomeSchema = z.object({
   requiresAuthorization: z.boolean(),
 });
 export type BuyerPurchaseOutcomeDTO = z.infer<typeof buyerPurchaseOutcomeSchema>;
+
+/**
+ * Where the payment actually is, read back from the server.
+ *
+ * WHY EVERY FIELD HERE IS SERVER-READ
+ *
+ * The frontend must never conclude that a purchase completed. It cannot
+ * observe a charge; only the provider and the server can, and the server
+ * only believes the provider after verifying a signature. So this carries
+ * the payment's real state and nothing the client could have inferred —
+ * a client that simulated completion would be showing a buyer an order
+ * that may not exist.
+ */
+export const buyerCheckoutStateSchema = z.object({
+  paymentId: z.string().uuid(),
+  /** The payment state machine's own value: CREATED, AUTHORIZED,
+   * CAPTURED, FAILED, UNKNOWN. */
+  state: z.string(),
+  amountMinor: z.number().int(),
+  currency: z.string(),
+  /** The provider's order reference, needed to open their checkout. Null
+   * until one exists. */
+  providerOrderId: z.string().nullable(),
+  /** The order this payment belongs to, once execution created one. */
+  orderId: z.string().uuid().nullable(),
+  /** True only when the server has verified a provider-confirmed capture.
+   * Never set from a client callback alone. */
+  paid: z.boolean(),
+});
+export type BuyerCheckoutStateDTO = z.infer<typeof buyerCheckoutStateSchema>;
 
 export const buyerAgentResponseSchema = z.object({
   conversationId: z.string().uuid(),
@@ -277,6 +348,11 @@ export const buyerAgentResponseSchema = z.object({
    * hear three different things from.
    */
   unresolvedReason: z.string().nullable(),
+  /**
+   * Present once the buyer has authorized and a payment order exists.
+   * Read from the payment row, never inferred by the client.
+   */
+  checkout: buyerCheckoutStateSchema.nullable(),
 });
 export type BuyerAgentResponseDTO = z.infer<typeof buyerAgentResponseSchema>;
 

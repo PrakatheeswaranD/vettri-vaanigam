@@ -17,7 +17,8 @@ import { logger } from "../../observability/logger.js";
 import { classifyBuyerTurn } from "@razorgrowth/domain";
 import { findBuyerVisibleOffers } from "./offers-service.js";
 import { buildComparison, loadConversationCandidates, resolveBuyTarget, toPurchaseOutcome } from "./turn-actions.js";
-import { createPurchaseProposal } from "../buyer-policy/purchase-proposal-service.js";
+import { authorizePurchaseProposal, createPurchaseProposal } from "../buyer-policy/purchase-proposal-service.js";
+import { findPendingProposal, setPendingProposal, toCheckoutState } from "./checkout-state.js";
 import { CUSTOMER_AGENT_ID } from "../buyer-policy/negotiation-service.js";
 import type { AIProvider } from "../agents/ai-provider.js";
 import { getAIProvider } from "../agents/provider-factory.js";
@@ -174,9 +175,109 @@ export async function handleBuyerMessage(
    * with nothing recommended is a search, not an error.
    */
   const candidates = await loadConversationCandidates(prisma, conversationId);
-  const turn = classifyBuyerTurn(params.message, candidates.productIds.length > 0);
+  /**
+   * A proposal this buyer priced and has not yet authorized.
+   *
+   * This is what makes "yes" mean something. Without a pending proposal
+   * the AUTHORIZE vocabulary is not even consulted, so an ordinary "ok"
+   * cannot create a payment order — see `classifyBuyerTurn`.
+   */
+  const pendingProposal = await findPendingProposal(prisma, params.customerAccountId, conversationId);
+  const turn = classifyBuyerTurn(params.message, {
+    hasCandidates: candidates.productIds.length > 0,
+    hasPendingProposal: pendingProposal !== null,
+  });
   if (turn.matched) {
     trace.push({ stage: "TURN_CLASSIFIED", detail: `Read as ${turn.action} from the phrase "${turn.matched}".` });
+  }
+
+  // ── AUTHORIZE ───────────────────────────────────────────────────────
+  //
+  // The buyer said yes to a proposal the agent priced. This calls the SAME
+  // `authorizePurchaseProposal` the REST route calls — the daily-allowance
+  // reservation, the re-checked spending policy, and the ambiguous-failure
+  // handling are not reimplemented here, because a second implementation
+  // of money-moving authorization is the one that eventually double-charges.
+  //
+  // What this creates is a payment ORDER, not a charge. The buyer still has
+  // to complete the provider's own checkout, which returns a signature the
+  // server verifies. Nothing here concludes that a purchase completed.
+  if (turn.action === "AUTHORIZE" && pendingProposal) {
+    try {
+      const payment = await authorizePurchaseProposal(prisma, {
+        buyerContext: params.customerAccountId,
+        proposalId: pendingProposal.id,
+        agentId: CUSTOMER_AGENT_ID,
+      });
+      // One yes buys one thing. Clearing this before returning means a
+      // second "yes" has nothing to refer to, rather than reaching for
+      // whatever else happens to be pending.
+      await setPendingProposal(prisma, conversationId, null);
+      const checkout = toCheckoutState(payment);
+      const message =
+        "Authorized. I've created the payment order — nothing is charged until you complete the payment step, and the result comes back from the provider, not from me.";
+      await appendMessage(prisma, conversationId, "AGENT", message);
+      trace.push({
+        stage: "CHECKOUT_INITIATED",
+        detail: `Payment ${checkout.paymentId} created in state ${checkout.state}. No charge has been made.`,
+      });
+
+      return {
+        conversationId,
+        messageId: userMessage.id,
+        status: "CHECKOUT_READY" as const,
+        intent: (conversationRow.currentIntent as unknown as BuyerIntentDTO | null) ?? null,
+        recommendations: [],
+        recommendationMode: null,
+        recommendationId: candidates.recommendationId,
+        clarification: null,
+        appliedConstraints: [],
+        candidateCount: candidates.productIds.length,
+        aiProviderMode: provider.mode,
+        dataFreshness: new Date().toISOString(),
+        traceId,
+        trace,
+        turnAction: turn.action,
+        offers: [],
+        comparison: null,
+        purchase: null,
+        unresolvedReason: null,
+        checkout,
+      };
+    } catch (error) {
+      // The server's own refusal, carried verbatim. An expired proposal, a
+      // policy that changed underneath it, or an exhausted daily allowance
+      // are all things the buyer needs to read exactly as stated.
+      const reason =
+        error instanceof AppError
+          ? error.message
+          : "That authorization could not be completed. Nothing has been charged.";
+      await appendMessage(prisma, conversationId, "AGENT", reason);
+      trace.push({ stage: "AUTHORIZATION_REFUSED", detail: reason });
+
+      return {
+        conversationId,
+        messageId: userMessage.id,
+        status: "AUTHORIZATION_REFUSED" as const,
+        intent: (conversationRow.currentIntent as unknown as BuyerIntentDTO | null) ?? null,
+        recommendations: [],
+        recommendationMode: null,
+        recommendationId: candidates.recommendationId,
+        clarification: null,
+        appliedConstraints: [],
+        candidateCount: candidates.productIds.length,
+        aiProviderMode: provider.mode,
+        dataFreshness: new Date().toISOString(),
+        traceId,
+        trace,
+        turnAction: turn.action,
+        offers: [],
+        comparison: null,
+        purchase: null,
+        unresolvedReason: reason,
+        checkout: null,
+      };
+    }
   }
 
   // ── COMPARE ─────────────────────────────────────────────────────────
@@ -217,6 +318,7 @@ export async function handleBuyerMessage(
       // a typed field rather than left for the client to reconstruct —
       // see the field's own doc comment for why that matters here.
       unresolvedReason: comparison ? null : message,
+      checkout: null,
     };
   }
 
@@ -257,6 +359,7 @@ export async function handleBuyerMessage(
         comparison: null,
         purchase: null,
         unresolvedReason: target.reason,
+        checkout: null,
       };
     }
 
@@ -268,6 +371,9 @@ export async function handleBuyerMessage(
       decisionLatencyMs: Math.max(0, Math.round(performance.now() - decisionStartedAt)),
     });
     const purchase = toPurchaseOutcome(proposal, target.productId, target.variantId, 1);
+    // Remember what was quoted, but only when it is actually authorizable.
+    // A declined proposal is not something "yes" may act on.
+    await setPendingProposal(prisma, conversationId, purchase.outcome === "DECLINE" ? null : proposal.id);
     const offers = await findBuyerVisibleOffers(prisma, [target.productId]);
 
     // The policy's own words, never a restatement — a softened decline is
@@ -301,6 +407,7 @@ export async function handleBuyerMessage(
       comparison: null,
       purchase,
       unresolvedReason: null,
+      checkout: null,
     };
   }
 
@@ -337,6 +444,7 @@ export async function handleBuyerMessage(
       comparison: null,
       purchase: null,
       unresolvedReason: null,
+      checkout: null,
       clarification: null,
       appliedConstraints: [],
       candidateCount: 0,
@@ -396,6 +504,7 @@ export async function handleBuyerMessage(
       comparison: null,
       purchase: null,
       unresolvedReason: null,
+      checkout: null,
       clarification: { required: true, reasonCode: "MISSING_CATEGORY", question: CLARIFICATION_QUESTION },
       appliedConstraints: buildAppliedConstraints(mergedIntent),
       candidateCount: 0,
@@ -452,6 +561,7 @@ export async function handleBuyerMessage(
       comparison: null,
       purchase: null,
       unresolvedReason: null,
+      checkout: null,
       clarification: null,
       appliedConstraints: buildAppliedConstraints(mergedIntent),
       candidateCount: 0,
@@ -538,6 +648,7 @@ export async function handleBuyerMessage(
     comparison: null,
     purchase: null,
     unresolvedReason: null,
+    checkout: null,
     recommendationMode: outcome.mode,
     recommendationId: recommendationRecord.id,
     clarification: null,

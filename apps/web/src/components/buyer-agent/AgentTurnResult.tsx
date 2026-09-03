@@ -22,7 +22,7 @@
  * themselves, and a client that recomputed it could disagree with the
  * table it is rendering.
  */
-import { AlertTriangle, BadgePercent, CheckCircle2, ShieldCheck } from "lucide-react";
+import { AlertTriangle, BadgePercent, CheckCircle2, CreditCard, ShieldCheck } from "lucide-react";
 import type { BuyerAgentResponseDTO } from "@razorgrowth/contracts";
 import { formatMoney } from "../../lib/format";
 import { Card, CardBody, CardHeader, CardTitle } from "../ui/Card";
@@ -138,7 +138,58 @@ function Purchase({ purchase }: { purchase: NonNullable<BuyerAgentResponseDTO["p
           <Money minor={purchase.amountMinor} currency={purchase.currency} />
         </span>
       </CardHeader>
-      <CardBody className="space-y-2">
+      <CardBody className="space-y-3">
+        {/* WHAT, not just how much. A buyer cannot check a lone total. */}
+        <div>
+          <p className="text-sm font-medium text-ink">{purchase.productName}</p>
+          <p className="text-xs text-ink-muted">
+            {purchase.variantTitle} · quantity {purchase.quantity}
+          </p>
+        </div>
+
+        {/* The arithmetic, shown as arithmetic. Every figure is the
+            server's own integer minor-unit value — nothing is recomputed
+            in this file, so what is displayed is what will be charged. */}
+        <dl className="space-y-1 border-t border-border-hair pt-2 text-sm">
+          <div className="flex justify-between gap-4">
+            <dt className="text-ink-muted">
+              {purchase.quantity} × <Money minor={purchase.unitPriceMinor} currency={purchase.currency} />
+            </dt>
+            <dd className="tabular-nums text-ink">
+              <Money minor={purchase.listTotalMinor} currency={purchase.currency} />
+            </dd>
+          </div>
+
+          {purchase.discountMinor > 0 ? (
+            <div className="flex justify-between gap-4">
+              <dt className="inline-flex items-center gap-1.5 text-success-text">
+                <BadgePercent size={13} aria-hidden />
+                {purchase.appliedOffer?.percentageBps
+                  ? `Merchant offer, ${(purchase.appliedOffer.percentageBps / 100).toFixed(
+                      purchase.appliedOffer.percentageBps % 100 === 0 ? 0 : 1,
+                    )}% off`
+                  : "Merchant offer"}
+              </dt>
+              <dd className="tabular-nums text-success-text">
+                &minus;<Money minor={purchase.discountMinor} currency={purchase.currency} />
+              </dd>
+            </div>
+          ) : null}
+
+          <div className="flex justify-between gap-4 border-t border-border-hair pt-1.5 font-semibold">
+            <dt className="text-ink">Total</dt>
+            <dd className="tabular-nums text-ink">
+              <Money minor={purchase.amountMinor} currency={purchase.currency} />
+            </dd>
+          </div>
+        </dl>
+
+        {/* Provenance for the discount, if there is one. Not marketing —
+            the merchant's own authorization. */}
+        {purchase.appliedOffer ? (
+          <p className="text-xs leading-snug text-ink-faint">{purchase.appliedOffer.provenance}</p>
+        ) : null}
+
         {/* The policy's own words, carried verbatim. A softened decline is
             a decline the buyer might not notice. */}
         <p className="text-sm leading-relaxed text-ink">{purchase.explanation}</p>
@@ -157,6 +208,61 @@ function Purchase({ purchase }: { purchase: NonNullable<BuyerAgentResponseDTO["p
   );
 }
 
+/* ── CHECKOUT ──────────────────────────────────────────────────────── */
+
+/**
+ * Where the payment actually is, as the server reports it.
+ *
+ * NOTHING HERE IS INFERRED. `paid` is set by the server only after it has
+ * verified a provider-confirmed capture; this component never decides that
+ * a purchase completed, because a browser cannot observe a charge. A UI
+ * that concluded otherwise would show a buyer an order that may not exist.
+ */
+function Checkout({ checkout }: { checkout: NonNullable<BuyerAgentResponseDTO["checkout"]> }) {
+  return (
+    <Card className="mt-3">
+      <CardHeader className="flex flex-wrap items-center justify-between gap-2">
+        <CardTitle>
+          <span className="inline-flex items-center gap-1.5">
+            <CreditCard size={14} className="text-brand-600" aria-hidden />
+            {checkout.paid ? "Payment confirmed" : "Ready for payment"}
+          </span>
+        </CardTitle>
+        <span className="text-sm font-semibold tabular-nums text-ink">
+          <Money minor={checkout.amountMinor} currency={checkout.currency} />
+        </span>
+      </CardHeader>
+      <CardBody className="space-y-2">
+        <dl className="grid grid-cols-2 gap-x-4 gap-y-1 text-xs">
+          <dt className="text-ink-faint">Payment state</dt>
+          <dd className="font-medium tabular-nums text-ink">{checkout.state}</dd>
+          {checkout.providerOrderId ? (
+            <>
+              <dt className="text-ink-faint">Provider order</dt>
+              <dd className="truncate font-mono text-ink-muted">{checkout.providerOrderId}</dd>
+            </>
+          ) : null}
+        </dl>
+
+        {checkout.paid ? (
+          <p className="inline-flex items-center gap-1.5 rounded-md bg-success-subtle px-2.5 py-1.5 text-xs text-success-text">
+            <CheckCircle2 size={13} className="shrink-0" aria-hidden />
+            <span>The provider confirmed this capture and the server verified it.</span>
+          </p>
+        ) : (
+          <p className="inline-flex items-center gap-1.5 rounded-md bg-surface-muted px-2.5 py-1.5 text-xs text-ink-muted">
+            <ShieldCheck size={13} className="shrink-0 text-brand-600" aria-hidden />
+            <span>
+              <strong className="font-semibold text-ink">Still not charged.</strong> The payment order exists; completing
+              payment is a separate step, and the result comes back from the provider rather than from this page.
+            </span>
+          </p>
+        )}
+      </CardBody>
+    </Card>
+  );
+}
+
 /* ── The turn ──────────────────────────────────────────────────────── */
 
 export function AgentTurnResult({ response }: { response: BuyerAgentResponseDTO }) {
@@ -167,6 +273,7 @@ export function AgentTurnResult({ response }: { response: BuyerAgentResponseDTO 
     <>
       {response.comparison ? <ComparisonTable comparison={response.comparison} /> : null}
       {response.purchase ? <Purchase purchase={response.purchase} /> : null}
+      {response.checkout ? <Checkout checkout={response.checkout} /> : null}
       <Offers offers={response.offers} />
     </>
   );

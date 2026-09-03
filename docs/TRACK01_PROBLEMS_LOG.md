@@ -1,4 +1,4 @@
-# TRACK01 — every problem hit, Parts 0 through 9 and the closing gap pass
+# TRACK01 — every problem hit, Parts 0 through 10 and the closing gap pass
 
 A complete log, including the small ones and the ones I caused myself. Kept in three categories per part, because they need different responses:
 
@@ -578,6 +578,53 @@ Recorded because reporting a removal that did not happen would be worse than rep
 
 ---
 
+# PART 10 — agentic cart and checkout
+
+## Product bugs
+
+### P10-1 · The offer was displayed and never applied
+Part 9 surfaced merchant-authorized offers to the buyer — a real 5%, traced to an AUTHORIZED governance row. `createPurchaseProposal` computed `variant.priceMinor * quantity` and stopped there.
+
+**The buyer read a discount and was quoted list price.** On the demo catalogue that is ₹4,500 shown as "5% off" and charged at ₹4,500 — worse than showing no offer at all, because the buyer has been told something untrue about their own money.
+
+Fixed by applying the offer in the same function that computes the total, in integer minor units. The discount is **recomputed against this basket** rather than copying the merchant's stored `discountMinor`: that figure was calculated against THEIR assumed basket, so at any other quantity it is right only by coincidence. A fixed-amount offer is capped at the basket, because a discount larger than the purchase is a refund nobody authorized.
+
+The seam it flows through was already built and already debugged: `OrderItem.lineDiscountMinor` exists because a *negotiated* discount once got silently stripped by a Zod schema and every negotiated purchase failed as `FINANCIAL_INTEGRITY_ERROR`. Execution recomputes `(unitPrice × qty) − lineDiscount` and refuses if it disagrees with the stored total — so the discount reaching the real Razorpay charge is enforced, not hoped for.
+
+### P10-2 · "Yes" authorized a purchase from a different conversation
+`findPendingProposal` looked up the buyer's most recent PROPOSED decision record. Decision records are scoped to the BUYER, not the conversation.
+
+So a shopper with an unanswered quote in one thread could open a fresh conversation, say "yes" to something else entirely, and **authorize the old purchase** — creating a real payment order against a basket they were not looking at.
+
+Caught immediately by a test asserting "yes" on a fresh conversation authorizes nothing; it returned `CHECKOUT_READY`. Fixed with `BuyerConversation.pendingProposalId` (migration `20260903020000`): the BUY turn records what it quoted, AUTHORIZE resolves only that, and it is cleared on authorization so one yes buys one thing. Ownership is still re-checked against the buyer — a conversation id is not proof of whose basket it is.
+
+Third instance of Pattern 14 in two parts, and the worst of them: P9-3 picked the wrong position, P9-9 picked the wrong variant, this picked the wrong **conversation**.
+
+## My own mistakes
+
+### P10-3 · I wrote a no-op line-ending restore
+`crlf ? s.replace(/\n/g, "\n") : s` in my own edit script — a replace of `\n` with `\n`. It would have silently converted a CRLF file to LF. Caught by reading the script before running it, which is the only reason it did not land.
+
+### P10-4 · Shell escaping, seventh and eighth time
+An apostrophe in "merchant's" inside a nested-quoted `node -e`, and before that a `&&` chain where the failing command short-circuited the `mkdir` but an unchained `echo "migration written"` still printed — so **the output told me a file had been created that did not exist.** I then spent a round trip confused about why Prisma saw no pending migration.
+
+The `&&` one is new and worth naming separately: the lesson has always been "write the script to a file", and that would not have helped here. What would have helped is not trusting a success message that was not conditional on the success.
+
+### P10-5 · Three component assertions were too strict for a correct render
+`getByText(/4,500/)` threw "found multiple elements" because the breakdown legitimately shows the unit price and the list subtotal, which are the same figure at quantity 1. The rendering was right; the assertions demanded uniqueness where the design does not have it. Switched to `getAllByText(...).length`, which asserts what actually matters.
+
+## What was NOT found
+
+The spec asks to remove duplicate cart/checkout systems. **There were none.** `Cart` and `CartItem` exist purely as internal execution artifacts written inside the commerce execution service — there is no cart API, no cart UI, no "add to cart" flow, and `/customer/cart` has redirected to the Buyer Agent since Part 1. Verified by tracing every importer of `cart-repository.ts` (two, both execution services) and grepping the web app for cart hooks and pages (none).
+
+Recorded because reporting a removal that did not happen would be worse than reporting nothing.
+
+## Environment friction
+
+None new. The PGlite cluster survived the whole part.
+
+---
+
 # Patterns worth naming
 
 **1. Two things that must agree will eventually disagree.** P0-1 (two prefix lists), P3-1 (a string compared against an enum), P2-3 (a fixture shaped like a DTO). Every one was invisible to the typechecker. The fixes that stuck replaced agreement with a single source: one access table, one enum comparison, one contract import.
@@ -604,6 +651,6 @@ Recorded because reporting a removal that did not happen would be worse than rep
 
 **13. Two working halves are not a working whole, and the seam is invisible from either side.** P9-1: the buyer conversation was correct, the purchase API was correct, every test on both passed, and the product still made a buyer leave the chat to spend money. Nothing was broken — the gap was *between* the things, where no test looks. Same shape as pattern 5, one level up: not "capability shipped, consumption forgotten" but "both ends shipped, join forgotten".
 
-**14. The dangerous bug is the one that silently picks something.** P9-3: "buy the second one" resolving to the first. P9-9: the right product, then a wrong variant of it — the same shape one layer deeper, found only because the fix for P9-3 made the next question ("which variant?") askable at all. Neither throws, neither logs, both look exactly like success. The defence that worked both times was refusing to resolve ambiguity at all — "buy this" with several options asks which one rather than guessing, because an agent that guesses well 90% of the time is an agent that buys the wrong thing every tenth purchase.
+**14. The dangerous bug is the one that silently picks something.** P9-3: "buy the second one" resolving to the first. P9-9: the right product, then a wrong variant of it — the same shape one layer deeper, found only because the fix for P9-3 made the next question ("which variant?") askable at all. Neither throws, neither logs, both look exactly like success. The defence that worked both times was refusing to resolve ambiguity at all — "buy this" with several options asks which one rather than guessing, because an agent that guesses well 90% of the time is an agent that buys the wrong thing every tenth purchase. P10-2 completes the set: the wrong position (P9-3), the wrong variant (P9-9), and now the wrong *conversation* — an affirmation resolving against a basket the buyer was not looking at. Each was found only after the previous one was fixed, because fixing one made the next question askable. **Every layer that resolves a reference is a layer that can resolve it wrongly, and none of them throw.**
 
-**6. Shell quoting is where my edits go to die.** P1-3 (backspace bytes), P4-10 (heredoc), P4-11 (CRLF), P9-11 (a NUL byte standing in for a space, in two files, found by nothing but a deliberate byte sweep). The first three broke something — a syntax error, a failed anchor — so they were caught the moment the script ran. P9-11 broke nothing: the corrupted string was still a valid, still-distinct sentinel, so 11/11 tests passed with the corruption sitting inside them. Writing a script file and running it with Node prevents the syntax errors. It does not prevent a byte substitution the language itself is indifferent to — that needs its own check.
+**6. Shell quoting is where my edits go to die.** P1-3 (backspace bytes), P4-10 (heredoc), P4-11 (CRLF), P9-11 (a NUL byte standing in for a space, in two files, found by nothing but a deliberate byte sweep). The first three broke something — a syntax error, a failed anchor — so they were caught the moment the script ran. P9-11 broke nothing: the corrupted string was still a valid, still-distinct sentinel, so 11/11 tests passed with the corruption sitting inside them. Writing a script file and running it with Node prevents the syntax errors. It does not prevent a byte substitution the language itself is indifferent to — that needs its own check. P10-4 adds a variant that is not about quoting at all: a \`&&\` chain whose failing command short-circuited the real work while an unchained \`echo\` still reported success. **A success message that is not conditional on the success is worse than no message** — it sent me looking for a database problem that did not exist.

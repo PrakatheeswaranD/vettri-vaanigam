@@ -55,6 +55,13 @@ function narrate(response: BuyerAgentResponseDTO): string {
         : "Priced it up and it's within your own limits. Nothing's charged until you authorize it.";
     case "PURCHASE_DECLINED":
       return "Your spending policy said no to that one.";
+    case "CHECKOUT_READY":
+      // Deliberately does not say "purchased" or "done". A payment order
+      // exists; the charge has not happened, and saying otherwise here is
+      // exactly the simulated completion this path must never show.
+      return "Authorized — the payment order is ready. Nothing has been charged yet.";
+    case "AUTHORIZATION_REFUSED":
+      return response.unresolvedReason ?? "I could not authorize that. Nothing has been charged.";
     case "ACTION_UNRESOLVED":
       // Server-composed, the same way `clarification.question` already is
       // — the client cannot reconstruct WHY a buy or compare was

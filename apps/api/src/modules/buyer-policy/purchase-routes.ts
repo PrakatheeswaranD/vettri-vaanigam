@@ -4,40 +4,16 @@ import { paymentClientVerificationRequestSchema } from "@razorgrowth/contracts";
 import { prisma } from "../../db/client.js";
 import { AppError } from "../../http/errors.js";
 import { getBuyerContextId } from "../authorization/demo-context.js";
-import { createPurchaseProposal } from "./purchase-proposal-service.js";
-import { categoryPermitted } from "./resolve-policy.js";
+import { authorizePurchaseProposal, createPurchaseProposal } from "./purchase-proposal-service.js";
 import { requireApprovalRole } from "../auth/middleware.js";
-import { appendLedgerEvent, withLedgerConcurrencyRetry } from "../audit/ledger.js";
-import { executeExternalAgentPurchase, ExternalPurchaseExecutionError } from "../gateway/execution-service.js";
 import { getPayment, verifyClientCompletion } from "../payments/payment-service.js";
 import { getPaymentGateway } from "../payments/gateway-factory.js";
 import { negotiateProposal, loadCustomerHistory, loadNegotiationPolicy } from "./negotiation-service.js";
 import { computeCustomerStanding } from "@razorgrowth/domain";
 
-/**
- * The stored basket, as execution will re-price it.
- *
- * `lineDiscountMinor` is part of the shape because a negotiated discount
- * is recorded ON the line (see `applyLineDiscounts`). Zod strips unknown
- * keys, so omitting it here silently dropped the discount between the
- * proposal and execution, and every negotiated purchase was refused as
- * FINANCIAL_INTEGRITY_ERROR. This is read from the server's own
- * DecisionRecord, never from a request body.
- */
-const basketSchema = z.array(z.object({ productId: z.string().uuid(), variantId: z.string().uuid(), quantity: z.number().int().positive(), unitPriceMinor: z.number().int().nonnegative(), lineDiscountMinor: z.number().int().nonnegative().optional() })).length(1);
 const idSchema = z.object({ id: z.string().uuid() });
 const agentId = "customer-buyer-agent";
 
-/**
- * The single category gate, used by BOTH the proposal decision and the
- * re-check at authorization time. Two copies of an authorization rule is
- * how one of them ends up stale, and this one decides whether an agent
- * may spend money.
- *
- * `categoryPermitted` moved to `resolve-policy.ts` in Part 9: the Buyer
- * Agent conversation needs the same check, and two copies would be two
- * answers to "may this shopper buy this".
- */
 
 async function ownedProposal(id: string, buyerContext: string) {
   const row = await prisma.decisionRecord.findFirst({ where: { id, externalAgentId: agentId, protocolActorRef: buyerContext } });
@@ -214,55 +190,18 @@ export function registerBuyerPurchaseRoutes(app: FastifyInstance, prefix: string
 
   app.post(`${prefix}/buyer/purchase-proposals/:id/authorize`, async (request) => {
     if (request.merchantUserRole !== "CUSTOMER") requireApprovalRole(request);
-    const buyerContext = getBuyerContextId(request);
     const { id } = idSchema.parse(request.params);
-    const row = await ownedProposal(id, buyerContext);
-    if (row.internalPaymentId) return getPayment(prisma, row.merchantId, row.internalPaymentId);
-    const lines = basketSchema.parse(row.normalizedBasket);
-    await withLedgerConcurrencyRetry(prisma, async (tx) => {
-      // This row update serializes all purchases for one buyer context before
-      // reserving daily allowance, including simultaneous cross-merchant buys.
-      const policy = await tx.buyerSpendingPolicy.update({ where: { customerAccountId: buyerContext }, data: { updatedAt: new Date() } });
-      const current = await tx.decisionRecord.findUniqueOrThrow({ where: { id } });
-      if (current.settlementStatus !== "PROPOSED") throw AppError.conflict("This proposal was already attempted. Check payment status; do not retry.");
-      if (current.outcome === "DECLINE") throw new AppError("POLICY_DENIED", current.explanation);
-      if (!current.authorizationExpiresAt || current.authorizationExpiresAt <= new Date()) throw new AppError("AUTHORIZATION_EXPIRED", "Create a fresh proposal; this authorization has expired.");
-      const variant = await tx.productVariant.findUniqueOrThrow({ where: { id: lines[0]!.variantId }, include: { product: true } });
-      if (!categoryPermitted(policy, variant.product.category, z.array(z.string()).parse(policy.allowedCategories)) || policy.currency !== current.currency || ((current.computedTotalMinor ?? 0) > policy.autonomousPurchaseLimitMinor && !policy.approvalRequiredAboveLimit)) throw new AppError("POLICY_CHANGED", "The current buyer policy no longer permits this purchase.");
-      const dayStart = new Date(); dayStart.setUTCHours(0, 0, 0, 0);
-      const reserved = await tx.decisionRecord.aggregate({ where: { externalAgentId: agentId, protocolActorRef: buyerContext, stepUpDecidedAt: { gte: dayStart }, settlementStatus: { notIn: ["PROPOSED", "FAILED"] } }, _sum: { computedTotalMinor: true } });
-      if ((reserved._sum.computedTotalMinor ?? 0) + (current.computedTotalMinor ?? 0) > policy.dailyLimitMinor) throw new AppError("POLICY_DENIED", "Daily spending allowance is exhausted, including pending purchases.");
-      await tx.decisionRecord.update({ where: { id }, data: { settlementStatus: "EXECUTING", permissionType: "EXPLICIT_BUYER_APPROVAL", stepUpDecidedAt: new Date(), authorizationMaxAmountMinor: current.computedTotalMinor, authorizationCurrency: current.currency, authorizationMerchantScope: current.merchantId } });
-      await appendLedgerEvent(tx, { merchantId: row.merchantId, workflowId: row.workflowId!, actorType: "COMMERCE", actionType: "BUYER_PURCHASE_AUTHORIZED", status: "EXECUTED", conciseReason: "Buyer explicitly authorized the server-priced basket; daily allowance reserved.", relatedEntityType: "DecisionRecord", relatedEntityId: id });
+    // The whole decision — allowance reservation, re-checked policy,
+    // execution, and the ambiguous-failure handling — lives in
+    // `authorizePurchaseProposal`. The Buyer Agent conversation calls the
+    // SAME function when a shopper says "yes, authorize it", because a
+    // second implementation of money-moving authorization is the one that
+    // eventually double-charges.
+    return authorizePurchaseProposal(prisma, {
+      buyerContext: getBuyerContextId(request),
+      proposalId: id,
+      agentId,
     });
-    try {
-      const result = await executeExternalAgentPurchase(prisma, { merchantId: row.merchantId, decisionId: id, workflowId: row.workflowId!, currency: row.currency!, amountMinor: row.computedTotalMinor!, lines });
-      await prisma.decisionRecord.update({ where: { id }, data: { internalOrderId: result.orderId, internalPaymentId: result.paymentId, providerOrderId: result.providerOrderId, settlementStatus: "PAYMENT_PENDING" } });
-      return getPayment(prisma, row.merchantId, result.paymentId);
-    } catch (error) {
-      // Ambiguous execution consumes the proposal: never re-submit a charge.
-      //
-      // But only genuinely ambiguous execution. `executeExternalAgentPurchase`
-      // raises a plain `AppError` only from inside its opening transaction —
-      // repricing, eligibility, stock — which ROLLS BACK, so no cart, order,
-      // checkout, payment or reservation exists and no provider was ever
-      // called. Filing that as UNKNOWN was wrong twice over: it claims a
-      // charge might exist when the rollback proves none does, and because
-      // reserved daily allowance counts every status except PROPOSED and
-      // FAILED, it permanently consumed the shopper's daily limit for a
-      // purchase that never happened. Anything past that transaction arrives
-      // as ExternalPurchaseExecutionError carrying the status the payment
-      // evidence actually supports; anything else stays UNKNOWN, because an
-      // unrecognised failure after a provider call is exactly the case where
-      // guessing is unsafe.
-      const settlementStatus = error instanceof ExternalPurchaseExecutionError
-        ? error.executionStatus
-        : error instanceof AppError
-          ? "FAILED"
-          : "UNKNOWN";
-      await prisma.decisionRecord.update({ where: { id }, data: { settlementStatus, ...(error instanceof ExternalPurchaseExecutionError ? { internalOrderId: error.refs.orderId, internalPaymentId: error.refs.paymentId, providerOrderId: error.refs.providerOrderId } : {}) } });
-      throw error;
-    }
   });
 
   app.get(`${prefix}/buyer/purchase-proposals/:id/payment`, async (request) => {
