@@ -13,7 +13,25 @@ export interface ProductListFilters {
 }
 
 export const productWithVariants = {
-  include: { variants: { include: { inventory: true } } },
+  include: {
+    variants: { include: { inventory: true } },
+    /**
+     * Relationships, with enough of each target to answer "can I add
+     * this?" without a second round trip.
+     *
+     * Loaded here rather than in a separate query because every consumer
+     * of a product — the human catalogue, the agent catalogue, the
+     * marketplace — wants the same joined shape, and three call sites
+     * assembling it three ways is how they drift.
+     */
+    relationshipsAsSource: {
+      include: {
+        targetProduct: {
+          include: { variants: { include: { inventory: true } } },
+        },
+      },
+    },
+  },
 } satisfies Prisma.ProductDefaultArgs;
 
 /**

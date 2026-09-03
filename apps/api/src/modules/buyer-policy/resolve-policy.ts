@@ -46,14 +46,35 @@ export async function purchasableCategories(): Promise<string[]> {
 }
 
 /**
+ * Whether the shopper's policy permits buying from this category.
+ *
+ * `allowAllCategories` is a real column the shopper set deliberately —
+ * never a magic word matched out of `allowedCategories`. A wildcard hidden
+ * in user-supplied text is what an injection would aim for, and it makes a
+ * deliberate "allow everything" indistinguishable from a typo.
+ *
+ * Lives here rather than in a route because two callers now need it: the
+ * HTTP purchase path and the Buyer Agent conversation. A second copy would
+ * be a second answer to "may this shopper buy this".
+ */
+export function categoryPermitted(
+  policy: { allowAllCategories: boolean },
+  category: string,
+  allowedCategories: string[],
+): boolean {
+  if (policy.allowAllCategories) return true;
+  return allowedCategories.includes(category);
+}
+
+/**
  * Returns this buyer context's policy, creating one seeded from real
  * categories on first contact. Never widens an existing policy.
  */
 export async function resolveBuyerPolicy(buyerContext: string) {
-  const existing = await prisma.buyerSpendingPolicy.findUnique({ where: { merchantId: buyerContext } });
+  const existing = await prisma.buyerSpendingPolicy.findUnique({ where: { customerAccountId: buyerContext } });
   if (existing) return existing;
 
   return prisma.buyerSpendingPolicy.create({
-    data: { merchantId: buyerContext, allowedCategories: await purchasableCategories() },
+    data: { customerAccountId: buyerContext, allowedCategories: await purchasableCategories() },
   });
 }

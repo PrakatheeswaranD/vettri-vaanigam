@@ -4,7 +4,10 @@ import type { PolicyEvaluationInput } from "./policy-types.js";
 
 const NOW = new Date("2026-01-01T12:00:00.000Z");
 
-function baseInput(overrides: Partial<PolicyEvaluationInput["proposal"]> = {}): PolicyEvaluationInput {
+function baseInput(
+  overrides: Partial<PolicyEvaluationInput["proposal"]> = {},
+  policyOverrides: Partial<PolicyEvaluationInput["policy"]> = {},
+): PolicyEvaluationInput {
   return {
     now: NOW,
     policy: {
@@ -16,6 +19,17 @@ function baseInput(overrides: Partial<PolicyEvaluationInput["proposal"]> = {}): 
       autoApprovalOrderAmountMinor: 1_000_000,
       maxRecoveryAttempts: 2,
       proposalValidityMinutes: 30,
+      // PART 08 boundaries. The defaults here are deliberately PERMISSIVE
+      // so every pre-existing assertion still tests what it was written to
+      // test; each new boundary has its own describe block below that
+      // overrides exactly one of them.
+      minMarginBps: 0,
+      maxAutonomousActionsPerDay: 1_000,
+      recoveryEnabled: true,
+      prohibitedActions: [],
+      eligibleCategories: [],
+      minCustomerPaidOrders: 0,
+      ...policyOverrides,
     },
     proposal: {
       createdAt: NOW,
@@ -28,6 +42,11 @@ function baseInput(overrides: Partial<PolicyEvaluationInput["proposal"]> = {}): 
       productEligible: true,
       productAvailable: true,
       recoveryAttemptCount: 0,
+      marginBps: null,
+      productCategory: "Running Shoes",
+      customerPaidOrderCount: null,
+      autonomousActionsToday: 0,
+      unattended: false,
       ...overrides,
     },
   };
@@ -169,5 +188,221 @@ describe("evaluatePolicy — determinism", () => {
     const a = evaluatePolicy(input);
     const b = evaluatePolicy(input);
     expect(a).toEqual(b);
+  });
+});
+
+/* ═══════════════════════════════════════════════════════════════════════
+ * PART 08 — the six boundaries that had no enforcement
+ *
+ * Every one of these is a DENY rather than a REQUIRE_APPROVAL, and that is
+ * the point being pinned: each is a merchant saying "not this, ever"
+ * rather than "not this without asking me". Routing any of them to
+ * approval would turn a prohibition into a prompt.
+ * ══════════════════════════════════════════════════════════════════════ */
+
+describe("evaluatePolicy — margin floor", () => {
+  it("denies a discount that would sell below the floor", () => {
+    const result = evaluatePolicy(
+      baseInput({ discountBps: 200, marginBps: 500 }, { minMarginBps: 1_000 }),
+    );
+    expect(result.outcome).toBe("DENY");
+    expect(result.reasonCodes).toContain("MARGIN_FLOOR_BREACHED");
+    expect(result.explanation).toContain("below the floor");
+  });
+
+  it("allows a discount that leaves exactly the floor", () => {
+    // Exactly AT a limit is not a breach — the same boundary convention
+    // every other limit in this engine uses.
+    const result = evaluatePolicy(
+      baseInput({ discountBps: 200, marginBps: 1_000 }, { minMarginBps: 1_000 }),
+    );
+    expect(result.outcome).toBe("ALLOW");
+  });
+
+  it("denies when cost is unknown and a floor is configured", () => {
+    // The conservative reading, and the one a floor implies: a merchant
+    // who asked not to sell below a margin did not mean "unless the
+    // margin cannot be computed".
+    const result = evaluatePolicy(
+      baseInput({ discountBps: 200, marginBps: null }, { minMarginBps: 1_000 }),
+    );
+    expect(result.outcome).toBe("DENY");
+    expect(result.reasonCodes).toContain("MARGIN_FLOOR_BREACHED");
+    expect(result.explanation).toContain("no recorded cost");
+  });
+
+  it("never tests the floor on an action carrying no discount", () => {
+    // Otherwise every cross-sell of a thin-margin product would be denied
+    // for a discount it never asked for.
+    const result = evaluatePolicy(
+      baseInput({ discountBps: null, marginBps: null }, { minMarginBps: 5_000 }),
+    );
+    expect(result.outcome).toBe("ALLOW");
+  });
+
+  it("never tests the floor on a zero discount", () => {
+    const result = evaluatePolicy(
+      baseInput({ discountBps: 0, marginBps: null }, { minMarginBps: 5_000 }),
+    );
+    expect(result.outcome).toBe("ALLOW");
+  });
+});
+
+describe("evaluatePolicy — daily autonomous action limit", () => {
+  it("denies an unattended action once the day's ceiling is reached", () => {
+    const result = evaluatePolicy(
+      baseInput({ unattended: true, autonomousActionsToday: 50 }, { maxAutonomousActionsPerDay: 50 }),
+    );
+    expect(result.outcome).toBe("DENY");
+    expect(result.reasonCodes).toContain("DAILY_ACTION_LIMIT_REACHED");
+  });
+
+  it("allows the action that reaches the ceiling but does not exceed it", () => {
+    const result = evaluatePolicy(
+      baseInput({ unattended: true, autonomousActionsToday: 49 }, { maxAutonomousActionsPerDay: 50 }),
+    );
+    expect(result.outcome).toBe("ALLOW");
+  });
+
+  it("does not apply the ceiling to a merchant who is present", () => {
+    // The limit exists for the case where nobody is watching. A merchant
+    // pressing "run a cycle" is watching.
+    const result = evaluatePolicy(
+      baseInput({ unattended: false, autonomousActionsToday: 999 }, { maxAutonomousActionsPerDay: 50 }),
+    );
+    expect(result.outcome).toBe("ALLOW");
+  });
+});
+
+describe("evaluatePolicy — recovery permission", () => {
+  it("denies recovery outright when the merchant has switched it off", () => {
+    const result = evaluatePolicy(
+      baseInput({ actionType: "RECOVERY" }, { recoveryEnabled: false }),
+    );
+    expect(result.outcome).toBe("DENY");
+    expect(result.reasonCodes).toContain("RECOVERY_NOT_PERMITTED");
+  });
+
+  it("leaves other action types alone when recovery is off", () => {
+    const result = evaluatePolicy(
+      baseInput({ actionType: "CROSS_SELL" }, { recoveryEnabled: false }),
+    );
+    expect(result.outcome).toBe("ALLOW");
+  });
+});
+
+describe("evaluatePolicy — prohibited actions", () => {
+  it("denies an action type on the prohibited list", () => {
+    const result = evaluatePolicy(
+      baseInput({ actionType: "BOUNDED_OFFER" }, { prohibitedActions: ["BOUNDED_OFFER"] }),
+    );
+    expect(result.outcome).toBe("DENY");
+    expect(result.reasonCodes).toContain("ACTION_TYPE_PROHIBITED");
+  });
+
+  it("prohibition survives the action type being enabled elsewhere", () => {
+    // A denylist rather than the absence of an allow, precisely so that
+    // enabling the feature in growth configuration cannot re-permit
+    // something the merchant prohibited.
+    const result = evaluatePolicy(
+      baseInput({ actionType: "BOUNDED_OFFER", actionTypeEnabled: true }, { prohibitedActions: ["BOUNDED_OFFER"] }),
+    );
+    expect(result.outcome).toBe("DENY");
+    expect(result.reasonCodes).toContain("ACTION_TYPE_PROHIBITED");
+  });
+});
+
+describe("evaluatePolicy — eligible categories", () => {
+  it("treats an empty list as every category permitted", () => {
+    const result = evaluatePolicy(baseInput({ productCategory: "Anything" }, { eligibleCategories: [] }));
+    expect(result.outcome).toBe("ALLOW");
+  });
+
+  it("denies a category outside a named set", () => {
+    const result = evaluatePolicy(
+      baseInput({ productCategory: "Hydration" }, { eligibleCategories: ["Running Shoes"] }),
+    );
+    expect(result.outcome).toBe("DENY");
+    expect(result.reasonCodes).toContain("CATEGORY_NOT_ELIGIBLE");
+  });
+
+  it("denies an unknown category when a set is named", () => {
+    // A product with no category cannot be shown to be inside the
+    // merchant's set, so it is outside it.
+    const result = evaluatePolicy(
+      baseInput({ productCategory: null }, { eligibleCategories: ["Running Shoes"] }),
+    );
+    expect(result.outcome).toBe("DENY");
+    expect(result.reasonCodes).toContain("CATEGORY_NOT_ELIGIBLE");
+  });
+});
+
+describe("evaluatePolicy — eligible customers", () => {
+  it("denies a customer with fewer paid orders than required", () => {
+    const result = evaluatePolicy(
+      baseInput({ customerPaidOrderCount: 0 }, { minCustomerPaidOrders: 1 }),
+    );
+    expect(result.outcome).toBe("DENY");
+    expect(result.reasonCodes).toContain("CUSTOMER_NOT_ELIGIBLE");
+  });
+
+  it("allows a customer who exactly meets the requirement", () => {
+    const result = evaluatePolicy(
+      baseInput({ customerPaidOrderCount: 1 }, { minCustomerPaidOrders: 1 }),
+    );
+    expect(result.outcome).toBe("ALLOW");
+  });
+
+  it("skips the boundary when the action targets nobody in particular", () => {
+    // A catalogue-wide cross-sell has no customer to be ineligible. The
+    // boundary is about WHO is targeted, and nobody is.
+    const result = evaluatePolicy(
+      baseInput({ customerPaidOrderCount: null }, { minCustomerPaidOrders: 5 }),
+    );
+    expect(result.outcome).toBe("ALLOW");
+  });
+});
+
+describe("evaluatePolicy — precedence holds with the new boundaries", () => {
+  it("reports a prohibition rather than an approval when both would fire", () => {
+    // Tier 1 always wins. A prohibited action that ALSO exceeds the
+    // approval threshold must read as prohibited, not as "waiting for
+    // you" — the merchant would otherwise be invited to approve something
+    // they had forbidden.
+    const result = evaluatePolicy(
+      baseInput(
+        { actionType: "BOUNDED_OFFER", discountBps: 900 },
+        { prohibitedActions: ["BOUNDED_OFFER"], autoApprovalDiscountBps: 300, maxDiscountBps: 1_000 },
+      ),
+    );
+    expect(result.outcome).toBe("DENY");
+    expect(result.reasonCodes).toContain("ACTION_TYPE_PROHIBITED");
+    expect(result.reasonCodes).not.toContain("DISCOUNT_REQUIRES_APPROVAL");
+  });
+
+  it("reports every applicable Tier 1 reason together", () => {
+    const result = evaluatePolicy(
+      baseInput(
+        { actionType: "RECOVERY", productCategory: "Hydration", unattended: true, autonomousActionsToday: 99 },
+        {
+          recoveryEnabled: false,
+          eligibleCategories: ["Running Shoes"],
+          maxAutonomousActionsPerDay: 10,
+        },
+      ),
+    );
+    expect(result.outcome).toBe("DENY");
+    // A complete explanation, not just the first thing found — a merchant
+    // fixing one boundary should not discover the next one at the next
+    // attempt.
+    expect(result.reasonCodes).toContain("RECOVERY_NOT_PERMITTED");
+    expect(result.reasonCodes).toContain("CATEGORY_NOT_ELIGIBLE");
+    expect(result.reasonCodes).toContain("DAILY_ACTION_LIMIT_REACHED");
+  });
+
+  it("rejects a margin floor above 100%", () => {
+    const result = evaluatePolicy(baseInput({}, { minMarginBps: 10_001 }));
+    expect(result.outcome).toBe("DENY");
+    expect(result.reasonCodes).toContain("POLICY_CONFIGURATION_INVALID");
   });
 });

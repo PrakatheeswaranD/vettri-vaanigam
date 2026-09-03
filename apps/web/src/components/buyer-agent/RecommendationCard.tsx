@@ -22,7 +22,7 @@ export function RecommendationCard({ recommendation }: { recommendation: Recomme
   // conversation they were reading. Same product page, role-correct path.
   const role = useExperienceRole();
   const detailHref = role === "customer"
-    ? `/customer/product/${recommendation.productId}`
+    ? `/customer/discover/${recommendation.productId}`
     : `/catalog/${recommendation.productId}`;
   const [showProposalModal, setShowProposalModal] = useState(false);
   const variant = recommendation.product.variants.find((v) => v.variantId === recommendation.variantId);

@@ -97,20 +97,39 @@ export async function evaluateAndProposeRecovery(
   const recoveryActionEnabled = allowedActionTypes(growthConfig).includes("RECOVERY");
   const allowedActions: RecoveryAction[] = eligibility.outcome === "ELIGIBLE" && recoveryActionEnabled ? ["RETRY_SAME_CHECKOUT"] : [];
 
-  // Find the original proposal that produced this order, for
-  // `primaryProductId` continuity (PART 08 §19 — the recovery proposal
-  // references the SAME product the failed order was actually for).
-  // Every order this codebase creates goes through `CommerceExecutionService`
-  // (PART 06), which always sets `growthProposalId` — there is no real
-  // path where it is missing, so this is a genuine conflict, never a
-  // fabricated fallback product ID.
+  // `primaryProductId` continuity (PART 08 §19): the recovery proposal
+  // must reference the SAME product the failed order was actually for.
+  //
+  // This used to be read from the order's originating growth proposal,
+  // guarded by the assumption that "every order this codebase creates
+  // goes through CommerceExecutionService, which always sets
+  // growthProposalId". That assumption only ever held for AGENT-ORIGINATED
+  // orders. A direct buyer whose card is declined has no growth proposal
+  // and never will — and that is the single most valuable payment a
+  // merchant wants recovered. The guard turned it into a hard 409, so
+  // recovery was unreachable for exactly the case it exists to serve.
+  //
+  // The order's own items are a better source anyway: they state, without
+  // indirection, what was actually being bought. The proposal is still
+  // preferred when one exists, so agent-originated recoveries keep their
+  // existing provenance.
   const originalProposal = order.growthProposalId
     ? await prisma.growthActionProposal.findFirst({ where: { id: order.growthProposalId, merchantId } })
     : null;
-  if (!originalProposal) {
-    throw AppError.conflict("The order underlying this payment has no originating growth proposal to recover from.");
+
+  const firstItem = await prisma.orderItem.findFirst({
+    where: { orderId: order.id },
+    orderBy: { id: "asc" },
+    select: { variant: { select: { productId: true } } },
+  });
+
+  const primaryProductId = originalProposal?.primaryProductId ?? firstItem?.variant.productId ?? null;
+  if (!primaryProductId) {
+    // An order with no items at all is genuinely unrecoverable — there is
+    // nothing to retry a purchase OF. Still a conflict, but now it means
+    // what it says.
+    throw AppError.conflict("This order has no line items, so there is no product to recover a purchase for.");
   }
-  const primaryProductId = originalProposal.primaryProductId;
 
   if (allowedActions.length === 0) {
     return persistRecoveryProposal(prisma, {

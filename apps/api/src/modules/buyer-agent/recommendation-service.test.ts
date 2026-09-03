@@ -31,6 +31,7 @@ function product(id: string, overrides: Partial<AgentReadableProductDTO> = {}): 
     freshness: { productUpdatedAt: new Date().toISOString(), oldestPriceUpdateAt: null, oldestInventoryUpdateAt: null },
     readiness: { state: "AGENT_READY", missingCritical: [], missingImportant: [] },
     provenance: { source: "MERCHANT_AUTHORED", derivedFields: "SYSTEM_DERIVED", dataset: "SYNTHETIC_DEMO" },
+    relationships: { crossSell: [], upsell: [], similar: [], bundle: [] },
     ...overrides,
   };
 }

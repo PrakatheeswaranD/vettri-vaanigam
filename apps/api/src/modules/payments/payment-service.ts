@@ -26,14 +26,23 @@ const RECONCILE_COOLDOWN_MS = 5000;
 
 type CheckoutWithOrder = CheckoutSession & { order: Order & { items: OrderItem[] } };
 
+/**
+ * Tamper check on an order's financial identity.
+ *
+ * A missing `authorizationId` used to fail this outright. That conflated
+ * provenance with integrity: an order placed directly by a buyer has no
+ * agent authorization, is perfectly well-formed, and was being treated as
+ * corrupt. The hash comparison is the actual check — it still catches any
+ * change to the amount or the line items — and the empty string is the
+ * canonical "no agent authorization" value the fingerprint was built with.
+ */
 function verifyOrderFingerprint(order: Order & { items: OrderItem[] }, expectedFingerprint: string): boolean {
-  if (!order.authorizationId) return false;
   const recomputed = computeOrderFingerprint({
     orderId: order.id,
     merchantId: order.merchantId,
     currency: order.currency,
     totalAmountMinor: order.totalAmountMinor,
-    authorizationId: order.authorizationId,
+    authorizationId: order.authorizationId ?? "",
     lines: order.items,
   });
   return recomputed === expectedFingerprint;

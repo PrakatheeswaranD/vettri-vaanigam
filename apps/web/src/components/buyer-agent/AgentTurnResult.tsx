@@ -1,0 +1,173 @@
+/**
+ * What the agent produced when the buyer asked it to DO something.
+ *
+ * Three turn outcomes that did not exist before Part 9, because the
+ * conversation could not previously do anything except search: a factual
+ * side-by-side, the merchant-authorized offers on what was recommended,
+ * and a priced purchase proposal.
+ *
+ * WHY THIS IS NOT THE OTHER COMPARISON TABLE
+ *
+ * `ProductComparisonTable` renders on a SEARCH turn and compares match
+ * quality — why each result was recommended, with reason codes and match
+ * percentages. This renders on a COMPARE turn and compares catalogue
+ * FACTS: price, stock, returns, the attributes the products record.
+ * Different columns answering different questions, which is why both
+ * exist rather than one pretending to do both jobs.
+ *
+ * EVERY VALUE HERE CAME FROM THE SERVER
+ *
+ * Nothing is computed in this file — not a discount, not a total, not
+ * which row differs. `differs` is derived server-side from the values
+ * themselves, and a client that recomputed it could disagree with the
+ * table it is rendering.
+ */
+import { AlertTriangle, BadgePercent, CheckCircle2, ShieldCheck } from "lucide-react";
+import type { BuyerAgentResponseDTO } from "@razorgrowth/contracts";
+import { formatMoney } from "../../lib/format";
+import { Card, CardBody, CardHeader, CardTitle } from "../ui/Card";
+
+function Money({ minor, currency }: { minor: number; currency: string }) {
+  return <>{formatMoney({ amountMinor: minor, currency: currency as "INR" | "USD" })}</>;
+}
+
+/* ── COMPARISON ────────────────────────────────────────────────────── */
+
+function ComparisonTable({ comparison }: { comparison: NonNullable<BuyerAgentResponseDTO["comparison"]> }) {
+  const differing = comparison.rows.filter((row) => row.differs);
+  return (
+    <Card className="mt-3">
+      <CardHeader className="flex flex-wrap items-center justify-between gap-2">
+        <CardTitle>Side by side</CardTitle>
+        <span className="text-xs text-ink-muted">
+          {differing.length} of {comparison.rows.length} fields actually differ
+        </span>
+      </CardHeader>
+      <CardBody>
+        <div className="overflow-x-auto">
+          <table className="w-full min-w-[480px] text-left text-xs">
+            <tbody className="divide-y divide-border-hair">
+              {comparison.rows.map((row) => (
+                <tr key={row.label} className={row.differs ? "" : "text-ink-muted"}>
+                  <th scope="row" className="py-2 pr-4 align-top font-medium capitalize text-ink-faint">
+                    {row.label}
+                    {row.differs ? <span className="ml-1.5 text-brand-600" aria-label="differs">•</span> : null}
+                  </th>
+                  {row.values.map((value, index) => (
+                    <td key={index} className="py-2 pr-4 align-top tabular-nums">
+                      {/* A field a product does not record shows as "not
+                          recorded", never as a plausible default — "no
+                          rating" and "rated 0" are opposite claims. */}
+                      {value ?? <span className="italic text-ink-faint">not recorded</span>}
+                    </td>
+                  ))}
+                </tr>
+              ))}
+            </tbody>
+          </table>
+        </div>
+        <p className="mt-3 text-xs leading-relaxed text-ink-faint">
+          Every value is a published catalogue field. There is deliberately no “which is better” row — the agent already
+          made its recommendation, and a second opinion dressed as a table would hide that it is an opinion.
+        </p>
+      </CardBody>
+    </Card>
+  );
+}
+
+/* ── OFFERS ────────────────────────────────────────────────────────── */
+
+function Offers({ offers }: { offers: BuyerAgentResponseDTO["offers"] }) {
+  if (offers.length === 0) return null;
+  return (
+    <Card className="mt-3">
+      <CardHeader>
+        <CardTitle>
+          <span className="inline-flex items-center gap-1.5">
+            <BadgePercent size={14} className="text-success-text" aria-hidden />
+            Offers the merchant has authorized
+          </span>
+        </CardTitle>
+      </CardHeader>
+      <CardBody className="space-y-3">
+        {offers.map((offer) => (
+          <div key={offer.proposalId} className="rounded-md border border-border-hair px-3 py-2">
+            <div className="flex flex-wrap items-baseline justify-between gap-2">
+              <span className="text-sm font-semibold text-ink">
+                {offer.percentageBps !== null ? `${(offer.percentageBps / 100).toFixed(offer.percentageBps % 100 === 0 ? 0 : 1)}% off` : "Offer"}
+              </span>
+              {offer.discountMinor !== null && offer.currency ? (
+                <span className="text-sm tabular-nums text-success-text">
+                  &minus;<Money minor={offer.discountMinor} currency={offer.currency} />
+                </span>
+              ) : null}
+            </div>
+            {offer.baseAmountMinor !== null && offer.currency ? (
+              <p className="mt-0.5 text-xs tabular-nums text-ink-muted">
+                on <Money minor={offer.baseAmountMinor} currency={offer.currency} />
+              </p>
+            ) : null}
+            {/* Provenance, not marketing. This is not "a deal we found" —
+                it is one this merchant's own policy engine authorized. */}
+            <p className="mt-1 text-xs leading-snug text-ink-faint">{offer.provenance}</p>
+          </div>
+        ))}
+      </CardBody>
+    </Card>
+  );
+}
+
+/* ── PURCHASE ──────────────────────────────────────────────────────── */
+
+function Purchase({ purchase }: { purchase: NonNullable<BuyerAgentResponseDTO["purchase"]> }) {
+  const declined = purchase.outcome === "DECLINE";
+  return (
+    <Card className="mt-3">
+      <CardHeader className="flex flex-wrap items-center justify-between gap-2">
+        <CardTitle>
+          <span className="inline-flex items-center gap-1.5">
+            {declined ? (
+              <AlertTriangle size={14} className="text-danger-text" aria-hidden />
+            ) : (
+              <ShieldCheck size={14} className="text-brand-600" aria-hidden />
+            )}
+            {declined ? "Your spending policy declined this" : "Priced and proposed"}
+          </span>
+        </CardTitle>
+        <span className="text-sm font-semibold tabular-nums text-ink">
+          <Money minor={purchase.amountMinor} currency={purchase.currency} />
+        </span>
+      </CardHeader>
+      <CardBody className="space-y-2">
+        {/* The policy's own words, carried verbatim. A softened decline is
+            a decline the buyer might not notice. */}
+        <p className="text-sm leading-relaxed text-ink">{purchase.explanation}</p>
+
+        {!declined ? (
+          <p className="inline-flex items-center gap-1.5 rounded-md bg-surface-muted px-2.5 py-1.5 text-xs text-ink-muted">
+            <CheckCircle2 size={13} className="shrink-0 text-brand-600" aria-hidden />
+            <span>
+              <strong className="font-semibold text-ink">Nothing has been charged.</strong> The agent priced this from
+              the catalogue and your own policy decided; money moves only when you authorize it.
+            </span>
+          </p>
+        ) : null}
+      </CardBody>
+    </Card>
+  );
+}
+
+/* ── The turn ──────────────────────────────────────────────────────── */
+
+export function AgentTurnResult({ response }: { response: BuyerAgentResponseDTO }) {
+  // Offers ride along on any turn that produced them, because a buyer
+  // comparing or buying wants to know about a discount just as much as
+  // one searching does.
+  return (
+    <>
+      {response.comparison ? <ComparisonTable comparison={response.comparison} /> : null}
+      {response.purchase ? <Purchase purchase={response.purchase} /> : null}
+      <Offers offers={response.offers} />
+    </>
+  );
+}

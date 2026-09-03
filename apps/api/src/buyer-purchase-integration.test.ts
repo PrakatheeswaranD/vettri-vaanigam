@@ -1,18 +1,23 @@
 import { afterAll, beforeAll, describe, expect, it } from "vitest";
 import type { FastifyInstance } from "fastify";
-import { buildAuthedTestApp, getTestMerchantId } from "./test-helpers/test-app.js";
+import { buildCustomerTestApp, getTestBuyerContextId } from "./test-helpers/test-app.js";
 import { prisma } from "./db/client.js";
 
 let app: FastifyInstance;
-beforeAll(async () => { app = await buildAuthedTestApp(); });
+beforeAll(async () => { app = await buildCustomerTestApp(); });
 afterAll(async () => { await app?.close(); await prisma.$disconnect(); });
 
 describe("governed buyer purchase integration", () => {
   it("creates a cross-merchant order once and returns actual uncaptured payment evidence", async () => {
-    const buyerId = await getTestMerchantId(prisma);
+    // The BUYER's own context — the partition their proposals and
+    // spending policy live under. `merchantId: { not: buyerId }` below is
+    // what makes this a cross-merchant purchase, so passing the seller's
+    // id here (as this did while the two were indistinguishable) excluded
+    // the wrong catalogue.
+    const buyerId = await getTestBuyerContextId(prisma);
     const variant = await prisma.productVariant.findFirstOrThrow({ where: { active: true, product: { merchantId: { not: buyerId }, status: "ACTIVE" }, inventory: { availableQuantity: { gt: 1 } } }, include: { product: true, inventory: true } });
-    const previousPolicy = await prisma.buyerSpendingPolicy.findUnique({ where: { merchantId: buyerId } });
-    await prisma.buyerSpendingPolicy.upsert({ where: { merchantId: buyerId }, update: { dailyLimitMinor: 100_000_000, autonomousPurchaseLimitMinor: 1, allowedCategories: [variant.product.category], approvalRequiredAboveLimit: true }, create: { merchantId: buyerId, dailyLimitMinor: 100_000_000, autonomousPurchaseLimitMinor: 1, allowedCategories: [variant.product.category], approvalRequiredAboveLimit: true } });
+    const previousPolicy = await prisma.buyerSpendingPolicy.findUnique({ where: { customerAccountId: buyerId } });
+    await prisma.buyerSpendingPolicy.upsert({ where: { customerAccountId: buyerId }, update: { dailyLimitMinor: 100_000_000, autonomousPurchaseLimitMinor: 1, allowedCategories: [variant.product.category], approvalRequiredAboveLimit: true }, create: { customerAccountId: buyerId, dailyLimitMinor: 100_000_000, autonomousPurchaseLimitMinor: 1, allowedCategories: [variant.product.category], approvalRequiredAboveLimit: true } });
     try {
       const proposalResponse = await app.inject({ method: "POST", url: "/api/v1/buyer/purchase-proposals", payload: { variantId: variant.id, quantity: 1 } });
       expect(proposalResponse.statusCode, proposalResponse.body).toBe(200);
@@ -34,7 +39,7 @@ describe("governed buyer purchase integration", () => {
       expect(evidence.statusCode).toBe(200);
       expect(evidence.json().id).toBe(payment.id);
     } finally {
-      if (previousPolicy) await prisma.buyerSpendingPolicy.update({ where: { merchantId: buyerId }, data: { dailyLimitMinor: previousPolicy.dailyLimitMinor, autonomousPurchaseLimitMinor: previousPolicy.autonomousPurchaseLimitMinor, allowedCategories: previousPolicy.allowedCategories!, approvalRequiredAboveLimit: previousPolicy.approvalRequiredAboveLimit } });
+      if (previousPolicy) await prisma.buyerSpendingPolicy.update({ where: { customerAccountId: buyerId }, data: { dailyLimitMinor: previousPolicy.dailyLimitMinor, autonomousPurchaseLimitMinor: previousPolicy.autonomousPurchaseLimitMinor, allowedCategories: previousPolicy.allowedCategories!, approvalRequiredAboveLimit: previousPolicy.approvalRequiredAboveLimit } });
     }
   });
 });

@@ -202,7 +202,7 @@ export default function TrustTracePage() {
           ) : null}
 
           <p className="text-xs text-ink-faint">
-            Want to try to break it? <Link to="/break-the-agent" className="font-medium text-brand-600 hover:underline">Open Break the Agent</Link>.
+            Want to try to break it? <Link to="/merchant/governance/sandbox" className="font-medium text-brand-600 hover:underline">Open Break the Agent</Link>.
           </p>
         </>
       ) : null}

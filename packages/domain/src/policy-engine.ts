@@ -36,6 +36,9 @@ function isPolicyConfigurationValid(policy: PolicyEvaluationInput["policy"]): bo
   if (policy.maxOrderAmountMinor < 0 || policy.autoApprovalOrderAmountMinor < 0) return false;
   if (policy.maxRecoveryAttempts < 0) return false;
   if (policy.proposalValidityMinutes <= 0) return false;
+  if (policy.minMarginBps < 0 || policy.minMarginBps > 10_000) return false;
+  if (policy.maxAutonomousActionsPerDay < 0) return false;
+  if (policy.minCustomerPaidOrders < 0) return false;
   return true;
 }
 
@@ -63,6 +66,40 @@ export function evaluatePolicy(input: PolicyEvaluationInput): PolicyDecisionResu
     invalidReasons.push("RECOVERY_LIMIT_EXCEEDED");
   }
 
+  // ── PART 08 — prohibitions and eligibility ────────────────────────
+  //
+  // All Tier 1, all DENY. Every one of these is a merchant saying "not
+  // this, ever" rather than "not this without asking me" — routing any of
+  // them to REQUIRE_APPROVAL would turn a prohibition into a prompt.
+
+  if (policy.prohibitedActions.includes(proposal.actionType)) {
+    invalidReasons.push("ACTION_TYPE_PROHIBITED");
+  }
+  if (proposal.actionType === "RECOVERY" && !policy.recoveryEnabled) {
+    invalidReasons.push("RECOVERY_NOT_PERMITTED");
+  }
+  // Empty means every category is permitted. A merchant who has named
+  // categories has excluded the rest by saying so.
+  if (
+    policy.eligibleCategories.length > 0 &&
+    (proposal.productCategory === null || !policy.eligibleCategories.includes(proposal.productCategory))
+  ) {
+    invalidReasons.push("CATEGORY_NOT_ELIGIBLE");
+  }
+  // Skipped, not failed, when the action targets nobody in particular.
+  if (
+    policy.minCustomerPaidOrders > 0 &&
+    proposal.customerPaidOrderCount !== null &&
+    proposal.customerPaidOrderCount < policy.minCustomerPaidOrders
+  ) {
+    invalidReasons.push("CUSTOMER_NOT_ELIGIBLE");
+  }
+  // Only for unattended runs. A merchant pressing the button is present
+  // and supervising; the ceiling exists for the case where nobody is.
+  if (proposal.unattended && proposal.autonomousActionsToday >= policy.maxAutonomousActionsPerDay) {
+    invalidReasons.push("DAILY_ACTION_LIMIT_REACHED");
+  }
+
   if (invalidReasons.length > 0) {
     return {
       outcome: "DENY",
@@ -82,6 +119,24 @@ export function evaluatePolicy(input: PolicyEvaluationInput): PolicyDecisionResu
   if (proposal.orderAmountMinor !== null && proposal.orderAmountMinor > policy.maxOrderAmountMinor) {
     hardLimitReasons.push("ORDER_AMOUNT_LIMIT_EXCEEDED");
   }
+  /**
+   * The margin floor, checked only when a discount is actually requested.
+   *
+   * An action with no offer cannot breach a margin floor, so a proposal
+   * carrying no discount is never tested — otherwise every cross-sell of
+   * a thin-margin product would be denied for a discount it never asked
+   * for.
+   *
+   * A NULL margin with a floor configured is a breach. The merchant has
+   * asked not to sell below a margin they cannot compute here, and
+   * proceeding would mean discounting a product whose cost is unknown.
+   * Refusing is the conservative reading and the one a floor implies.
+   */
+  if (proposal.discountBps !== null && proposal.discountBps > 0 && policy.minMarginBps > 0) {
+    if (proposal.marginBps === null || proposal.marginBps < policy.minMarginBps) {
+      hardLimitReasons.push("MARGIN_FLOOR_BREACHED");
+    }
+  }
 
   if (hardLimitReasons.length > 0) {
     const parts: string[] = [];
@@ -93,6 +148,13 @@ export function evaluatePolicy(input: PolicyEvaluationInput): PolicyDecisionResu
     if (hardLimitReasons.includes("ORDER_AMOUNT_LIMIT_EXCEEDED")) {
       parts.push(
         `requested order amount ${proposal.orderAmountMinor} exceeds the maximum permitted order amount of ${policy.maxOrderAmountMinor} (minor units)`,
+      );
+    }
+    if (hardLimitReasons.includes("MARGIN_FLOOR_BREACHED")) {
+      parts.push(
+        proposal.marginBps === null
+          ? `this product has no recorded cost, so the resulting margin cannot be computed, and the margin floor of ${formatBps(policy.minMarginBps)} cannot be shown to hold`
+          : `the resulting margin of ${formatBps(proposal.marginBps)} is below the floor of ${formatBps(policy.minMarginBps)}`,
       );
     }
     return {

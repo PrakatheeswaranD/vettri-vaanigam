@@ -2,6 +2,9 @@ import type { Prisma, PrismaClient, ProductRelationshipType } from "@prisma/clie
 
 const DEFAULT_GROWTH_CONFIG = {
   growthActionsEnabled: true,
+  // Unattended cycles are opt-in. A merchant with no config row has not
+  // agreed to anything, so the fallback must never be the permissive one.
+  autonomousRunsEnabled: false,
   crossSellEnabled: true,
   upsellEnabled: true,
   bundleEnabled: true,
@@ -22,6 +25,27 @@ const DEFAULT_GROWTH_CONFIG = {
 export async function getGrowthConfig(prisma: PrismaClient, merchantId: string) {
   const config = await prisma.merchantGrowthConfig.findUnique({ where: { merchantId } });
   return config ?? { merchantId, ...DEFAULT_GROWTH_CONFIG };
+}
+
+/**
+ * Changes the envelope the agent operates inside.
+ *
+ * An upsert rather than an update: a merchant whose config row has never
+ * been written is running on `DEFAULT_GROWTH_CONFIG`, and the first change
+ * they make must create the row rather than fail on a missing one. The
+ * defaults are spread first so a partial change cannot silently reset
+ * every boundary the merchant did not mention.
+ */
+export function updateGrowthConfig(
+  prisma: PrismaClient,
+  merchantId: string,
+  changes: Partial<typeof DEFAULT_GROWTH_CONFIG>,
+) {
+  return prisma.merchantGrowthConfig.upsert({
+    where: { merchantId },
+    update: changes,
+    create: { merchantId, ...DEFAULT_GROWTH_CONFIG, ...changes },
+  });
 }
 
 export function listRelationshipsForProduct(prisma: PrismaClient, merchantId: string, sourceProductId: string) {
@@ -104,17 +128,34 @@ export function listProposals(prisma: PrismaClient, merchantId: string, limit: n
 
 /** PART 04 §28 — reuse the Buyer Agent's own already-validated,
  * already-normalized conversation intent rather than re-parsing raw text. */
-export async function getConversationIntentSnapshot(prisma: PrismaClient, merchantId: string, conversationId: string) {
-  const conversation = await prisma.buyerConversation.findFirst({
-    where: { id: conversationId, merchantId },
+/**
+ * The buyer's disclosed intent — what a recovery offer is sized against.
+ *
+ * Scoped by conversation id alone for the same reason as
+ * `getRecommendationRecord`: a `BuyerConversation` belongs to the SHOPPER,
+ * not to the merchant whose product it discussed. Filtering by the
+ * caller's merchant id returned null for every real cross-merchant
+ * conversation, which read to the caller as "this buyer disclosed no
+ * budget" — so the recovery path computed no gap, declined to propose,
+ * and the merchant saw "no relevant growth candidate" for a shopper who
+ * had stated a budget in plain words.
+ *
+ * Nothing merchant-confidential is exposed: the snapshot is the shopper's
+ * own stated constraints, and the caller can only act on it for a product
+ * it already proved it owns.
+ */
+export async function getConversationIntentSnapshot(prisma: PrismaClient, conversationId: string) {
+  const conversation = await prisma.buyerConversation.findUnique({
+    where: { id: conversationId },
     select: { currentIntent: true },
   });
   return conversation?.currentIntent ?? null;
 }
 
-export async function getRecommendationIntentSnapshot(prisma: PrismaClient, merchantId: string, recommendationId: string) {
-  const record = await prisma.recommendationRecord.findFirst({
-    where: { id: recommendationId, merchantId },
+/** Same ownership reasoning as `getConversationIntentSnapshot`. */
+export async function getRecommendationIntentSnapshot(prisma: PrismaClient, recommendationId: string) {
+  const record = await prisma.recommendationRecord.findUnique({
+    where: { id: recommendationId },
     select: { intentSnapshot: true },
   });
   return record?.intentSnapshot ?? null;
@@ -124,9 +165,33 @@ export async function getRecommendationIntentSnapshot(prisma: PrismaClient, merc
  * the Merchant Agent can propose a bounded recovery offer closing the
  * exact disclosed budget gap, reusing PART 03's own recorded outcome
  * rather than re-deriving it. */
-export function getRecommendationRecord(prisma: PrismaClient, merchantId: string, recommendationId: string) {
-  return prisma.recommendationRecord.findFirst({
-    where: { id: recommendationId, merchantId },
+/**
+ * A recommendation the merchant is being asked to make a recovery offer on.
+ *
+ * WHY THIS IS NOT SCOPED BY `merchantId`
+ *
+ * A `RecommendationRecord` is filed under the context that OWNS THE
+ * CONVERSATION — the shopper's — because that is who the conversation
+ * belongs to. The merchant making a recovery offer is the SELLER of a
+ * product inside it. Those are two different parties, so filtering this
+ * lookup by the caller's merchant id could only ever match when the
+ * shopper and the seller were the same row, which stopped being true the
+ * moment shoppers stopped being merchants. The recovery path then silently
+ * found nothing, fell through to the generic growth proposer, and the
+ * merchant got REJECTED_VALIDATION instead of the offer.
+ *
+ * The authorization that matters is still enforced, and enforced better,
+ * by the caller: the primary product is loaded through
+ * `getAgentCatalogProduct(prisma, merchantId, …)`, which only resolves
+ * products this merchant owns, and the caller then requires that the
+ * record actually recommended that product. A merchant can therefore only
+ * reach a recommendation that named something they sell — which is the
+ * real rule — rather than only their own shoppers' recommendations, which
+ * is a rule that describes a single-tenant marketplace.
+ */
+export function getRecommendationRecord(prisma: PrismaClient, recommendationId: string) {
+  return prisma.recommendationRecord.findUnique({
+    where: { id: recommendationId },
   });
 }
 

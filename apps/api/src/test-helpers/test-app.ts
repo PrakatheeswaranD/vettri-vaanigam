@@ -18,6 +18,11 @@ import { AppError } from "../http/errors.js";
 export const TEST_MERCHANT_EMAIL = "owner@meridianathletics.demo";
 export const TEST_MERCHANT_PASSWORD = "MeridianDemo!2026";
 
+/** The demo shopper, created by `scripts/provision-demo-identities.ts`
+ * (NOT by `prisma/seed.ts` — see `buildCustomerTestApp` below). */
+export const TEST_CUSTOMER_EMAIL = "customer@vaanigam.demo";
+export const TEST_CUSTOMER_PASSWORD = "CustomerDemo!2026";
+
 /**
  * Resolves the seeded demo merchant's id directly for tests that call
  * service-layer functions rather than going through an authenticated HTTP
@@ -45,18 +50,22 @@ export async function getTestMerchantUserId(prisma: PrismaClient): Promise<strin
   return merchantUser.id;
 }
 
-export async function buildAuthedTestApp(): Promise<FastifyInstance> {
+async function buildSessionTestApp(
+  email: string,
+  password: string,
+  remedy: string,
+): Promise<FastifyInstance> {
   const app = buildApp();
   await app.ready();
 
   const loginRes = await app.inject({
     method: "POST",
     url: "/api/v1/auth/login",
-    payload: { email: TEST_MERCHANT_EMAIL, password: TEST_MERCHANT_PASSWORD },
+    payload: { email, password },
   });
   if (loginRes.statusCode !== 200) {
     throw new Error(
-      `Test login failed (${loginRes.statusCode}): ${loginRes.body}. Has "pnpm db:seed" been run against this database?`,
+      `Test login failed for ${email} (${loginRes.statusCode}): ${loginRes.body}. ${remedy}`,
     );
   }
   const token = (loginRes.json() as { token: string }).token;
@@ -72,4 +81,56 @@ export async function buildAuthedTestApp(): Promise<FastifyInstance> {
   }) as typeof app.inject;
 
   return app;
+}
+
+/** A MERCHANT-side session (the seeded demo owner). Use for anything under
+ * the merchant management surface. */
+export async function buildAuthedTestApp(): Promise<FastifyInstance> {
+  return buildSessionTestApp(
+    TEST_MERCHANT_EMAIL,
+    TEST_MERCHANT_PASSWORD,
+    'Has "pnpm db:seed" been run against this database?',
+  );
+}
+
+/**
+ * A SHOPPER session.
+ *
+ * Every customer-surface test used to drive `/buyer/*` with the merchant
+ * session above, which worked only because nothing yet enforced the split
+ * between "the person selling" and "the person buying". The moment that
+ * split was enforced, five suites turned red at once — not because the
+ * behaviour under test broke, but because the tests had never actually
+ * been exercising a shopper.
+ *
+ * The demo shopper is created by `scripts/provision-demo-identities.ts`,
+ * which `prisma/seed.ts` does NOT call, so the failure message says so
+ * rather than sending the reader to re-run a seed that was never going to
+ * produce this account.
+ */
+export async function buildCustomerTestApp(): Promise<FastifyInstance> {
+  return buildSessionTestApp(
+    TEST_CUSTOMER_EMAIL,
+    TEST_CUSTOMER_PASSWORD,
+    'The demo shopper comes from "pnpm --filter @razorgrowth/api exec tsx scripts/provision-demo-identities.ts", not from db:seed.',
+  );
+}
+
+/** The shopper's own account id — what `/buyer/*` routes partition
+ * their rows by. Read from `customerAccountId`, not `merchantId`: those
+ * held the same value while a shopper was filed under a synthetic
+ * merchant, and reading the merchant column here would keep the two
+ * meanings tangled after the schema stopped tangling them. */
+export async function getTestBuyerContextId(prisma: PrismaClient): Promise<string> {
+  const customer = await prisma.merchantUser.findUnique({
+    where: { email: TEST_CUSTOMER_EMAIL },
+    select: { customerAccountId: true },
+  });
+  if (!customer?.customerAccountId) {
+    throw new AppError(
+      "INTERNAL_ERROR",
+      `Demo shopper "${TEST_CUSTOMER_EMAIL}" has no customer account. Run scripts/provision-demo-identities.ts.`,
+    );
+  }
+  return customer.customerAccountId;
 }

@@ -57,14 +57,13 @@ interface IntentSnapshotShape {
 
 async function resolveBuyerContext(
   prisma: PrismaClient,
-  merchantId: string,
   conversationId: string | undefined,
   recommendationId: string | undefined,
 ): Promise<BuyerContextSignals> {
   const snapshot = conversationId
-    ? await getConversationIntentSnapshot(prisma, merchantId, conversationId)
+    ? await getConversationIntentSnapshot(prisma, conversationId)
     : recommendationId
-      ? await getRecommendationIntentSnapshot(prisma, merchantId, recommendationId)
+      ? await getRecommendationIntentSnapshot(prisma, recommendationId)
       : null;
 
   if (!snapshot || typeof snapshot !== "object") return { preferredAttributes: {}, budgetMaxMinor: null };
@@ -151,9 +150,14 @@ async function tryBuildRecoveryProposal(
     maxProposedDiscountBps: number;
   },
 ): Promise<RecoveryProposalResult | null> {
-  const record = await getRecommendationRecord(prisma, params.merchantId, params.recommendationId);
+  const record = await getRecommendationRecord(prisma, params.recommendationId);
   if (!record || record.mode !== "NEAR_MATCH") return null;
 
+  // The authorization gate for this path. `primaryProduct` was already
+  // resolved through the merchant-scoped agent-catalog boundary, so it is
+  // provably this merchant's product; requiring the record to have
+  // actually recommended it is what stops a merchant reaching into an
+  // unrelated shopper's recommendation. See `getRecommendationRecord`.
   const recommendedProductIds = record.recommendedProductIds as string[];
   if (!recommendedProductIds.includes(params.primaryProduct.productId)) return null;
 
@@ -285,7 +289,7 @@ export async function proposeGrowthAction(
     });
   }
 
-  const buyerContext = await resolveBuyerContext(prisma, params.merchantId, params.conversationId, params.recommendationId);
+  const buyerContext = await resolveBuyerContext(prisma, params.conversationId, params.recommendationId);
   const { primaryProduct, candidateSet, allCandidateProductIds } = await buildGrowthCandidates(
     prisma,
     params.merchantId,

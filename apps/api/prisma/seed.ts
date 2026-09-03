@@ -15,7 +15,8 @@
  */
 import { randomUUID } from "node:crypto";
 import { PrismaClient, type Prisma } from "@prisma/client";
-import { fixedClock } from "@razorgrowth/domain";
+import { fixedClock, type PaymentFailureCategory } from "@razorgrowth/domain";
+import { computeOrderFingerprint, ORDER_FINGERPRINT_VERSION } from "../src/modules/commerce/order-fingerprint.js";
 import { runReadinessAssessment } from "../src/modules/readiness/engine.js";
 import { appendLedgerEvent, type AppendLedgerEventParams } from "../src/modules/audit/ledger.js";
 import { hashPassword } from "../src/modules/auth/password.js";
@@ -317,16 +318,27 @@ async function resetDemoMerchant(merchantSlug: string) {
   await prisma.growthActionProposal.deleteMany({ where: { merchantId } });
   await prisma.productRelationship.deleteMany({ where: { merchantId } });
   await prisma.merchantGrowthConfig.deleteMany({ where: { merchantId } });
+  // Conversations belong to the SHOPPER, not to this merchant, so they
+  // cannot be deleted "by merchant". What ties one to this merchant is the
+  // recommendation it produced — so the conversations cleared here are the
+  // ones that recommended this catalogue, which is about to be rebuilt
+  // with new product ids. Both must be found BEFORE the recommendation
+  // rows they are found through are deleted.
+  const staleConversationIds = (
+    await prisma.buyerConversation.findMany({
+      where: { recommendations: { some: { merchantId } } },
+      select: { id: true },
+    })
+  ).map((row) => row.id);
   await prisma.recommendationRecord.deleteMany({ where: { merchantId } });
-  await prisma.buyerMessage.deleteMany({ where: { conversation: { merchantId } } });
-  await prisma.buyerConversation.deleteMany({ where: { merchantId } });
+  await prisma.buyerMessage.deleteMany({ where: { conversationId: { in: staleConversationIds } } });
+  await prisma.buyerConversation.deleteMany({ where: { id: { in: staleConversationIds } } });
   await prisma.orderItem.deleteMany({ where: { order: { merchantId } } });
   await prisma.order.deleteMany({ where: { merchantId } });
   await prisma.cartItem.deleteMany({ where: { cart: { merchantId } } });
   await prisma.cart.deleteMany({ where: { merchantId } });
   await prisma.agentAction.deleteMany({ where: { merchantId } });
   await prisma.readinessSnapshot.deleteMany({ where: { merchantId } });
-  await prisma.growthOpportunity.deleteMany({ where: { merchantId } });
   await prisma.inventory.deleteMany({ where: { variant: { product: { merchantId } } } });
   await prisma.productVariant.deleteMany({ where: { product: { merchantId } } });
   await prisma.product.deleteMany({ where: { merchantId } });
@@ -383,13 +395,33 @@ async function main() {
   });
 
   console.log("[seed] creating merchant owner account...");
+  /** The demo shopper's account id, needed further down for their policy. */
+  let customerAccountId: string | null = null;
   for (const identity of [
     { slug: "demo-customer-context", name: "Demo Customer", email: "customer@vaanigam.demo", role: "CUSTOMER" as const, password: "CustomerDemo!2026" },
     { slug: "demo-platform-context", name: "Platform Administration", email: "admin@vaanigam.demo", role: "PLATFORM_ADMIN" as const, password: "AdminDemo!2026" },
   ]) {
     const context = await prisma.merchant.upsert({ where: { slug: identity.slug }, update: {}, create: { slug: identity.slug, name: identity.name, defaultCurrency: "INR", businessCategory: "Identity context", status: "ACTIVE" } });
-    await prisma.merchantUser.upsert({ where: { email: identity.email }, update: { role: identity.role, merchantId: context.id, passwordHash: await hashPassword(identity.password) }, create: { merchantId: context.id, email: identity.email, role: identity.role, passwordHash: await hashPassword(identity.password) } });
+    // A shopper gets a real CustomerAccount, and it takes the identity
+    // context's id deliberately: `DecisionRecord.protocolActorRef` is a
+    // free-form actor reference with no foreign key and already holds that
+    // value on every historical purchase. Same id, so nothing has to be
+    // rewritten and the two can never disagree.
+    if (identity.role === "CUSTOMER") {
+      await prisma.customerAccount.upsert({
+        where: { id: context.id },
+        update: { displayName: identity.name },
+        create: { id: context.id, displayName: identity.name },
+      });
+      customerAccountId = context.id;
+    }
+    await prisma.merchantUser.upsert({
+      where: { email: identity.email },
+      update: { role: identity.role, merchantId: context.id, customerAccountId: identity.role === "CUSTOMER" ? context.id : null, passwordHash: await hashPassword(identity.password) },
+      create: { merchantId: context.id, customerAccountId: identity.role === "CUSTOMER" ? context.id : null, email: identity.email, role: identity.role, passwordHash: await hashPassword(identity.password) },
+    });
   }
+  if (!customerAccountId) throw new Error("[seed] the demo CUSTOMER identity did not produce a customer account.");
   await prisma.merchantUser.create({
     data: {
       merchantId: merchant.id,
@@ -575,21 +607,43 @@ async function main() {
   await withConnectionRetry(() => prisma.inventory.createMany({ data: inventoryRows }), "inventory batch");
 
   console.log("[seed] creating historical orders + payments...");
-  const orderSpecs: { status: "PAID" | "FAILED" | "PENDING"; paymentState: "CAPTURED" | "FAILED" | "CREATED"; failureCategory: string | null }[] = [
-    { status: "PAID", paymentState: "CAPTURED", failureCategory: null },
-    { status: "PAID", paymentState: "CAPTURED", failureCategory: null },
-    { status: "PAID", paymentState: "CAPTURED", failureCategory: null },
-    { status: "PAID", paymentState: "CAPTURED", failureCategory: null },
-    { status: "PAID", paymentState: "CAPTURED", failureCategory: null },
-    { status: "PAID", paymentState: "CAPTURED", failureCategory: null },
-    { status: "PAID", paymentState: "CAPTURED", failureCategory: null },
-    { status: "PAID", paymentState: "CAPTURED", failureCategory: null },
-    { status: "PAID", paymentState: "CAPTURED", failureCategory: null },
-    { status: "FAILED", paymentState: "FAILED", failureCategory: "CARD_DECLINED" },
-    { status: "FAILED", paymentState: "FAILED", failureCategory: "INSUFFICIENT_FUNDS" },
-    { status: "FAILED", paymentState: "FAILED", failureCategory: "BANK_TIMEOUT" },
-    { status: "PENDING", paymentState: "CREATED", failureCategory: null },
-    { status: "PENDING", paymentState: "CREATED", failureCategory: null },
+  /**
+   * `failureCode` is the raw, provider-shaped string a merchant would see
+   * in a gateway dashboard. `failureCategory` is the NORMALIZED value from
+   * `@razorgrowth/domain`'s closed `PAYMENT_FAILURE_CATEGORIES` taxonomy.
+   *
+   * These were previously the same string, which meant the database held
+   * categories (`CARD_DECLINED`, `BANK_TIMEOUT`) that are not members of
+   * the taxonomy at all. Anything reading `failureCategory` as a domain
+   * value — recovery eligibility above all — silently fell through to its
+   * "category unknown" branch and skipped the retryability check, so a
+   * bank timeout looked exactly as recoverable as a declined card.
+   *
+   * With the taxonomy applied, `TIMEOUT_UNKNOWN` is correctly NOT
+   * retryable (an unverified outcome must be reconciled, never retried
+   * blind), so the timeout row is now excluded from recovery — which is
+   * the whole point of having the taxonomy.
+   */
+  const orderSpecs: {
+    status: "PAID" | "FAILED" | "PENDING";
+    paymentState: "CAPTURED" | "FAILED" | "CREATED";
+    failureCode: string | null;
+    failureCategory: PaymentFailureCategory | null;
+  }[] = [
+    { status: "PAID", paymentState: "CAPTURED", failureCode: null, failureCategory: null },
+    { status: "PAID", paymentState: "CAPTURED", failureCode: null, failureCategory: null },
+    { status: "PAID", paymentState: "CAPTURED", failureCode: null, failureCategory: null },
+    { status: "PAID", paymentState: "CAPTURED", failureCode: null, failureCategory: null },
+    { status: "PAID", paymentState: "CAPTURED", failureCode: null, failureCategory: null },
+    { status: "PAID", paymentState: "CAPTURED", failureCode: null, failureCategory: null },
+    { status: "PAID", paymentState: "CAPTURED", failureCode: null, failureCategory: null },
+    { status: "PAID", paymentState: "CAPTURED", failureCode: null, failureCategory: null },
+    { status: "PAID", paymentState: "CAPTURED", failureCode: null, failureCategory: null },
+    { status: "FAILED", paymentState: "FAILED", failureCode: "CARD_DECLINED", failureCategory: "PAYMENT_DECLINED" },
+    { status: "FAILED", paymentState: "FAILED", failureCode: "INSUFFICIENT_FUNDS", failureCategory: "INSUFFICIENT_FUNDS" },
+    { status: "FAILED", paymentState: "FAILED", failureCode: "BANK_TIMEOUT", failureCategory: "TIMEOUT_UNKNOWN" },
+    { status: "PENDING", paymentState: "CREATED", failureCode: null, failureCategory: null },
+    { status: "PENDING", paymentState: "CREATED", failureCode: null, failureCategory: null },
   ];
 
   for (let i = 0; i < orderSpecs.length; i++) {
@@ -631,19 +685,96 @@ async function main() {
       });
     }
 
+    /**
+     * A Cart and CheckoutSession for every order.
+     *
+     * These used to be omitted: seed orders jumped straight to a Payment
+     * with `checkoutId: null`. That produced data no real code path can
+     * produce, and it broke the thing the demo most needs to work —
+     * `evaluateAndProposeRecovery` refuses outright with "no checkout
+     * session exists for this payment", so every failed payment in the
+     * seed was permanently unrecoverable. The fingerprint is computed with
+     * the SAME function commerce execution uses, not a placeholder string,
+     * so verification against it behaves identically to a live order.
+     */
+    const cart = await prisma.cart.create({
+      data: {
+        merchantId: merchant.id,
+        customerId: customer.id,
+        status: spec.status === "PAID" ? "CONVERTED" : "CHECKOUT_PENDING",
+        currency: "INR",
+        createdAt,
+        updatedAt: createdAt,
+        items: {
+          create: chosenVariants.map((v, idx) => ({
+            variantId: v.id,
+            quantity: quantities[idx]!,
+            unitPriceMinor: v.priceMinor,
+            currency: "INR" as const,
+            createdAt,
+          })),
+        },
+      },
+    });
+
+    const orderFingerprint = computeOrderFingerprint({
+      orderId: order.id,
+      merchantId: merchant.id,
+      currency: "INR",
+      totalAmountMinor,
+      // Seeded orders are direct buyer purchases with no agent
+      // authorization behind them; the fingerprint records that honestly
+      // rather than inventing an authorization id.
+      authorizationId: "",
+      lines: chosenVariants.map((v, idx) => ({
+        variantId: v.id,
+        quantity: quantities[idx]!,
+        unitPriceMinor: v.priceMinor,
+        lineDiscountMinor: 0,
+        lineTotalMinor: v.priceMinor * quantities[idx]!,
+      })),
+    });
+
+    await prisma.order.update({
+      where: { id: order.id },
+      data: { orderFingerprint, fingerprintVersion: ORDER_FINGERPRINT_VERSION },
+    });
+
+    const checkout = await prisma.checkoutSession.create({
+      data: {
+        merchantId: merchant.id,
+        customerId: customer.id,
+        cartId: cart.id,
+        orderId: order.id,
+        status:
+          spec.paymentState === "CAPTURED" ? "COMPLETED" : spec.paymentState === "FAILED" ? "FAILED" : "PAYMENT_IN_PROGRESS",
+        amountMinor: totalAmountMinor,
+        currency: "INR",
+        orderFingerprint,
+        fingerprintVersion: ORDER_FINGERPRINT_VERSION,
+        workflowId: randomUUID(),
+        createdAt,
+        expiresAt: new Date(createdAt.getTime() + 30 * 60 * 1000),
+      },
+    });
+
     await prisma.payment.create({
       data: {
         merchantId: merchant.id,
         orderId: order.id,
+        checkoutId: checkout.id,
         provider: "DEMO",
         amountMinor: totalAmountMinor,
         currency: "INR",
         state: spec.paymentState,
-        customerDebitStatus: spec.paymentState === "CAPTURED" ? "DEBITED" : spec.failureCategory === "BANK_TIMEOUT" ? "DEBITED" : "UNKNOWN",
+        // A timeout is the one failure where the customer may genuinely
+        // have been debited despite the merchant never being credited —
+        // which is exactly why it is not retryable without reconciling.
+        customerDebitStatus: spec.paymentState === "CAPTURED" ? "DEBITED" : spec.failureCategory === "TIMEOUT_UNKNOWN" ? "DEBITED" : "UNKNOWN",
         merchantCreditStatus: spec.paymentState === "CAPTURED" ? "CREDITED" : spec.paymentState === "FAILED" ? "NOT_CREDITED" : "UNKNOWN",
         automaticRetryBlocked: spec.paymentState === "FAILED",
         failureCategory: spec.failureCategory,
-        failureCode: spec.failureCategory,
+        failureCode: spec.failureCode,
         createdAt,
         updatedAt: createdAt,
         capturedAt: spec.paymentState === "CAPTURED" ? createdAt : null,
@@ -861,58 +992,6 @@ async function main() {
   const overallScore = currentSnapshot.overallScore;
   const weakest = currentAssessment.weakestDimension;
 
-  console.log("[seed] creating growth opportunities...");
-  const lowStockVariant = [...allVariants].sort((a, b) => a.priceMinor - b.priceMinor)[0];
-  await prisma.growthOpportunity.createMany({
-    data: [
-      {
-        merchantId: merchant.id,
-        category: "CROSS_SELL",
-        signal: "Customers who buy running shoes rarely add running socks in the same order.",
-        recommendation: "Surface a running-socks bundle offer at checkout when a shoe is added to cart.",
-        estimatedValueMinor: 42_000,
-        currency: "INR",
-        valueClassification: "OPPORTUNITY",
-        status: "IDENTIFIED",
-        isSyntheticDemo: true,
-      },
-      {
-        merchantId: merchant.id,
-        category: "READINESS_GAP",
-        signal: `${productsMissingPolicy.length} of ${PRODUCTS.length} products are missing structured return-policy and shipping information.`,
-        recommendation: "Add return-policy and shipping summaries to the remaining products to improve Policy Completeness.",
-        estimatedValueMinor: null,
-        currency: null,
-        valueClassification: "OPPORTUNITY",
-        status: "IDENTIFIED",
-        isSyntheticDemo: true,
-      },
-      {
-        merchantId: merchant.id,
-        category: "CATALOG_GAP",
-        signal: lowStockVariant
-          ? `Variant ${lowStockVariant.sku} has low visible inventory relative to recent demand.`
-          : "A high-interest variant has low visible inventory.",
-        recommendation: "Replenish inventory for high-interest, low-stock variants before they become agent-invisible.",
-        estimatedValueMinor: null,
-        currency: null,
-        valueClassification: "OPPORTUNITY",
-        status: "IDENTIFIED",
-        isSyntheticDemo: true,
-      },
-      {
-        merchantId: merchant.id,
-        category: "PAYMENT_RECOVERY",
-        signal: "3 recent checkouts failed at the payment step without a follow-up recovery attempt.",
-        recommendation: "Enable bounded, policy-controlled recovery proposals for failed payments.",
-        estimatedValueMinor: 128_000,
-        currency: "INR",
-        valueClassification: "ESTIMATED",
-        status: "PROPOSED",
-        isSyntheticDemo: true,
-      },
-    ],
-  });
 
   console.log("[seed] creating merchant growth configuration + product relationships...");
   await prisma.merchantGrowthConfig.create({
@@ -1058,22 +1137,34 @@ async function main() {
       relationship("Meridian Windshield Jacket", "Meridian ThermaCore Half-Zip", "COMPLEMENTARY"),
     ],
   });
-  await prisma.buyerSpendingPolicy.create({
-    data: {
-      merchantId: merchant.id,
-      currency: "INR",
-      autonomousPurchaseLimitMinor: 200_000,
-      dailyLimitMinor: 1_000_000,
-      // Derived from the catalogue this seed just created, not a fixed
-      // list. The old literal named three categories no merchant here
-      // stocks, so it only ever worked because "Running Shoes" had been
-      // bolted onto it — and it would silently start declining purchases
-      // again the moment the demo catalogue changed.
-      allowedCategories: (
-        await prisma.product.findMany({ where: { merchantId: merchant.id, status: "ACTIVE" }, select: { category: true }, distinct: ["category"] })
-      ).map((row) => row.category),
-      approvalRequiredAboveLimit: true,
-    },
+  // The SHOPPER's policy, not the seller's. This was created with
+  // `merchantId: merchant.id` — a buyer spending policy belonging to a
+  // merchant, which no shopper could ever have used and no route could
+  // ever have read, because /buyer/* is closed to merchant sessions.
+  //
+  // An UPSERT, not a create. The reset at the top of this seed clears the
+  // demo MERCHANT's rows; this policy belongs to the demo SHOPPER, who
+  // survives a merchant reset, so a second seed run would collide on the
+  // unique customer account. Re-running the seed has to stay idempotent.
+  const seededCategories = (
+    await prisma.product.findMany({ where: { merchantId: merchant.id, status: "ACTIVE" }, select: { category: true }, distinct: ["category"] })
+  ).map((row) => row.category);
+  const shopperPolicy = {
+    currency: "INR" as const,
+    autonomousPurchaseLimitMinor: 200_000,
+    dailyLimitMinor: 1_000_000,
+    // Derived from the catalogue this seed just created, not a fixed
+    // list. The old literal named three categories no merchant here
+    // stocks, so it only ever worked because "Running Shoes" had been
+    // bolted onto it — and it would silently start declining purchases
+    // again the moment the demo catalogue changed.
+    allowedCategories: seededCategories,
+    approvalRequiredAboveLimit: true,
+  };
+  await prisma.buyerSpendingPolicy.upsert({
+    where: { customerAccountId },
+    update: shopperPolicy,
+    create: { customerAccountId, ...shopperPolicy },
   });
 
   console.log("[seed] creating multi-merchant AI discovery fixtures...");

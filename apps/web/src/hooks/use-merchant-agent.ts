@@ -1,5 +1,5 @@
-import { useMutation, useQuery } from "@tanstack/react-query";
-import type { GrowthActionProposalDTO, MerchantGrowthConfigDTO } from "@razorgrowth/contracts";
+import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
+import type { AgentRunResultDTO, AgentStatusDTO, GrowthActionProposalDTO, MerchantGrowthConfigDTO } from "@razorgrowth/contracts";
 import { apiGet, apiPost } from "../lib/api-client";
 
 /** Query key shared with the PART 05 policy/approval/authorization
@@ -38,5 +38,42 @@ export function useProposeGrowthAction() {
         "/merchant-agent/growth/proposals",
         typeof params === "string" ? { primaryProductId: params } : params,
       ),
+  });
+}
+
+/**
+ * The agent's operating state, and the control that makes it act.
+ *
+ * `useAgentStatus` is a pure read model over proposals, ledger entries and
+ * payments — safe to poll, creates nothing.
+ *
+ * `useRunAgentCycle` is the opposite: it detects, proposes, applies policy
+ * and — inside the merchant's own automatic-approval limits — executes.
+ * It is a mutation for that reason, and every query the cycle can change
+ * is invalidated on success rather than left showing the state from
+ * before the agent acted.
+ */
+export function useAgentStatus() {
+  return useQuery({
+    queryKey: ["merchant-agent", "status"],
+    queryFn: () => apiGet<AgentStatusDTO>("/merchant-agent/status"),
+  });
+}
+
+export function useRunAgentCycle() {
+  const queryClient = useQueryClient();
+  return useMutation({
+    mutationFn: () => apiPost<AgentRunResultDTO>("/merchant-agent/run"),
+    onSuccess: () => {
+      for (const key of [
+        ["merchant-agent", "status"],
+        ["growth", "revenue-opportunities"],
+        ["growth", "summary"],
+        ["approvals", "pending"],
+        ["ledger"],
+      ]) {
+        void queryClient.invalidateQueries({ queryKey: key });
+      }
+    },
   });
 }

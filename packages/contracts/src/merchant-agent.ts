@@ -1,5 +1,6 @@
 import { z } from "zod";
 import { SUPPORTED_CURRENCIES } from "@razorgrowth/domain";
+import { moneySchema } from "./common.js";
 
 /**
  * Merchant Agent wire contracts (PART 04 §16-§20, §35-§38, §80-§81).
@@ -27,6 +28,9 @@ export const growthProposalStatusSchema = z.enum([
   "APPROVED",
   "APPROVAL_REJECTED",
   "AUTHORIZED",
+  "EXECUTED",
+  "VERIFIED",
+  "FAILED",
 ]);
 
 export const growthProposalModeSchema = z.enum([
@@ -57,10 +61,6 @@ export type GrowthReasonCodeDTO = z.infer<typeof growthReasonCodeSchema>;
  * actually implemented. */
 export const recoveryActionSchema = z.enum(["RETRY_SAME_CHECKOUT", "NO_RECOVERY"]);
 export type RecoveryActionDTO = z.infer<typeof recoveryActionSchema>;
-
-export const productRelationshipTypeSchema = z.enum(["COMPLEMENTARY", "UPSELL_ALTERNATIVE", "SIMILAR", "BUNDLE_COMPATIBLE"]);
-
-export const relationshipProvenanceSchema = z.enum(["MERCHANT_CONFIGURED", "CATALOG_METADATA", "SYSTEM_DERIVED", "DEMO_SEED"]);
 
 export const growthBlockerCodeSchema = z.enum([
   "UNKNOWN_INVENTORY",
@@ -179,6 +179,8 @@ export type GrowthProposalRequestDTO = z.infer<typeof growthProposalRequestSchem
 /** Non-secret merchant growth boundary configuration (PART 04 §21, §86). */
 export const merchantGrowthConfigSchema = z.object({
   growthActionsEnabled: z.boolean(),
+  /** Whether the agent may run cycles without the merchant present. */
+  autonomousRunsEnabled: z.boolean(),
   crossSellEnabled: z.boolean(),
   upsellEnabled: z.boolean(),
   bundleEnabled: z.boolean(),
@@ -190,3 +192,194 @@ export const merchantGrowthConfigSchema = z.object({
   currency: z.enum(SUPPORTED_CURRENCIES),
 });
 export type MerchantGrowthConfigDTO = z.infer<typeof merchantGrowthConfigSchema>;
+
+/* ═══════════════════════════════════════════════════════════════════════
+ * The autonomous cycle
+ *
+ * The Merchant Agent's loop, and the state it leaves behind. Both shapes
+ * below are READ MODELS over rows that already exist — proposals, ledger
+ * events, payments. Neither introduces a new source of financial truth.
+ * ══════════════════════════════════════════════════════════════════════ */
+
+/**
+ * How far one opportunity got down the pipeline.
+ *
+ * Stages are appended as they complete, so a step that stopped at
+ * `POLICY_CHECKED` visibly did not reach `AUTHORIZED` — the shape itself
+ * makes a skipped guardrail impossible to hide.
+ */
+export const agentRunStageSchema = z.enum([
+  "DETECTED",
+  "PROPOSED",
+  "POLICY_CHECKED",
+  "AUTHORIZED",
+  "EXECUTED",
+  "VERIFIED",
+]);
+export type AgentRunStageDTO = z.infer<typeof agentRunStageSchema>;
+
+/**
+ * What became of one opportunity.
+ *
+ * `REFUSED` and `BLOCKED` are deliberately not `FAILED`. The agent
+ * declining to retry an unreconciled payment, and the policy engine
+ * refusing an action outside its bounds, are both the system working as
+ * designed. Collapsing them into a failure count would make correct
+ * behaviour look like breakage — and would hide real breakage among it.
+ */
+export const agentRunOutcomeSchema = z.enum([
+  "EXECUTED",
+  "AWAITING_APPROVAL",
+  "BLOCKED",
+  "REFUSED",
+  "SKIPPED",
+  "FAILED",
+]);
+export type AgentRunOutcomeDTO = z.infer<typeof agentRunOutcomeSchema>;
+
+export const agentRunStepSchema = z.object({
+  opportunityId: z.string(),
+  opportunityType: z.string(),
+  title: z.string(),
+  /** The observed fact that triggered this, carried through so the run
+   * log answers "why did you do it?" without a second lookup. */
+  whyDetected: z.string(),
+  outcome: agentRunOutcomeSchema,
+  detail: z.string(),
+  proposalId: z.string().uuid().nullable(),
+  policyOutcome: z.string().nullable(),
+  authorizationId: z.string().uuid().nullable(),
+  stages: z.array(agentRunStageSchema),
+});
+export type AgentRunStepDTO = z.infer<typeof agentRunStepSchema>;
+
+export const agentRunResultSchema = z.object({
+  /** The ledger workflow this run wrote under, so the whole cycle is
+   * one verifiable chain in the audit trail. */
+  workflowId: z.string().uuid(),
+  startedAt: z.string().datetime(),
+  completedAt: z.string().datetime(),
+  detectedCount: z.number().int().min(0),
+  actionableCount: z.number().int().min(0),
+  consideredCount: z.number().int().min(0),
+  /** Actionable opportunities this cycle deliberately left for the next
+   * one. Stated so a bounded run never reads as an empty backlog. */
+  deferredCount: z.number().int().min(0),
+  counts: z.object({
+    executed: z.number().int().min(0),
+    awaitingApproval: z.number().int().min(0),
+    blocked: z.number().int().min(0),
+    refused: z.number().int().min(0),
+    failed: z.number().int().min(0),
+  }),
+  steps: z.array(agentRunStepSchema),
+});
+export type AgentRunResultDTO = z.infer<typeof agentRunResultSchema>;
+
+const agentProposalRefSchema = z.object({
+  proposalId: z.string().uuid(),
+  actionType: z.string().nullable(),
+  status: z.string(),
+  at: z.string().datetime(),
+});
+
+export const agentStatusSchema = z.object({
+  /** The top-ranked opportunity, as the agent's current objective. Null
+   * when the engine found nothing — an agent with no work says so rather
+   * than inventing an objective. */
+  objective: z
+    .object({
+      opportunityId: z.string(),
+      headline: z.string(),
+      why: z.string(),
+      proposedAction: z.string(),
+      effort: z.string(),
+      policyOutcome: z.string(),
+    })
+    .nullable(),
+
+  lastRun: z
+    .object({
+      workflowId: z.string(),
+      summary: z.string(),
+      status: z.string(),
+      completedAt: z.string().datetime(),
+    })
+    .nullable(),
+
+  detected: z.object({
+    count: z.number().int().min(0),
+    blockedByPolicy: z.number().int().min(0),
+    /** Opportunities the agent can act on with no buyer present. Reported
+     * apart from the total so the console never implies it can execute a
+     * cross-sell nobody is currently buying. */
+    directlyActionable: z.number().int().min(0),
+  }),
+
+  nextActions: z.array(
+    z.object({
+      opportunityId: z.string(),
+      type: z.string(),
+      title: z.string(),
+      why: z.string(),
+      actionLabel: z.string(),
+      effort: z.string(),
+      policyOutcome: z.string(),
+    }),
+  ),
+
+  /** Ledger entries the agent itself wrote. */
+  autonomousActions: z.array(
+    z.object({
+      id: z.string().uuid(),
+      actionType: z.string(),
+      reason: z.string(),
+      status: z.string(),
+      workflowId: z.string(),
+      at: z.string().datetime(),
+    }),
+  ),
+
+  executedActions: z.array(agentProposalRefSchema.extend({ explanation: z.string() })),
+  awaitingApproval: z.array(agentProposalRefSchema.extend({ explanation: z.string() })),
+  failures: z.array(agentProposalRefSchema.extend({ reason: z.string() })),
+
+  /** Provider-verified only. Nothing merely attempted appears here. */
+  verified: z.object({
+    capturedValue: moneySchema,
+    recoveredValue: moneySchema,
+    recoveredOrders: z.number().int().min(0),
+  }),
+
+  generatedAt: z.string().datetime(),
+});
+export type AgentStatusDTO = z.infer<typeof agentStatusSchema>;
+
+/**
+ * The growth boundaries a merchant may change.
+ *
+ * Deliberately a subset of `merchantGrowthConfigSchema`: `currency` is the
+ * merchant's own and is not an agent boundary, so it is not editable here.
+ * Every field is optional — a merchant flipping one switch should not have
+ * to resend their whole envelope and risk clobbering a ceiling they never
+ * opened the form to change.
+ */
+export const merchantGrowthConfigUpdateSchema = z
+  .object({
+    growthActionsEnabled: z.boolean(),
+    autonomousRunsEnabled: z.boolean(),
+    crossSellEnabled: z.boolean(),
+    upsellEnabled: z.boolean(),
+    bundleEnabled: z.boolean(),
+    boundedOffersEnabled: z.boolean(),
+    /** Capped at 100% and 50% respectively — not because the schema knows
+     * what is wise, but because a typo that adds a zero should be refused
+     * at the edge rather than authorising every future offer under it. */
+    maxUpsellIncreaseBps: z.number().int().min(0).max(10_000),
+    maxProposedDiscountBps: z.number().int().min(0).max(5_000),
+    maxCrossSellItems: z.number().int().min(1).max(10),
+    maxBundleItems: z.number().int().min(1).max(10),
+  })
+  .partial()
+  .refine((body) => Object.keys(body).length > 0, { message: "No growth boundary was supplied to change." });
+export type MerchantGrowthConfigUpdateDTO = z.infer<typeof merchantGrowthConfigUpdateSchema>;

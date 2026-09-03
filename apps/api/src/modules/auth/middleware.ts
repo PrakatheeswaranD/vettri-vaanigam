@@ -59,7 +59,80 @@ declare module "fastify" {
     merchantId: string;
     merchantUserId: string;
     merchantUserRole: string;
+    /** Set for CUSTOMER sessions only. See `getBuyerContextId`. */
+    customerAccountId: string | null;
   }
+}
+
+/**
+ * WHO MAY REACH WHAT — one table, read top to bottom, first match wins.
+ *
+ * This replaced two independent prefix checks that had drifted apart: a
+ * CUSTOMER allowlist naming `/buyer-agent/conversations/` and a later
+ * merchant-side denylist naming `/buyer-agent/`. Between them they left
+ * `POST /buyer-agent/messages` — the Buyer Agent's only chat endpoint —
+ * reachable by NOBODY: not on the customer allowlist, squarely on the
+ * merchant denylist. Nothing failed loudly, because the console happened
+ * to call a sibling route.
+ *
+ * Two lists that must agree are two lists that will eventually disagree.
+ * One table cannot: a surface is either listed for a role or it is not,
+ * and adding a route under an existing prefix inherits an answer instead
+ * of silently defaulting to "everyone but the people who need it".
+ *
+ * `SHOPPER` = the person buying. `MERCHANT` = every merchant-side role
+ * (OWNER / APPROVER / VIEWER). `PLATFORM_ADMIN` is its own audience.
+ */
+type Audience = "SHOPPER" | "MERCHANT" | "PLATFORM_ADMIN";
+
+interface AccessRule {
+  prefix: string;
+  allow: readonly Audience[];
+  /** Used verbatim in the 403 so the refusal names the actual boundary. */
+  surface: string;
+}
+
+const ACCESS_RULES: readonly AccessRule[] = [
+  // Shared surfaces first — these are the exceptions to the role split,
+  // so they must be matched before the broader prefixes below.
+  { prefix: "/api/v1/auth/", allow: ["SHOPPER", "MERCHANT", "PLATFORM_ADMIN"], surface: "authentication" },
+  { prefix: "/api/v1/system/", allow: ["SHOPPER", "MERCHANT", "PLATFORM_ADMIN"], surface: "system capabilities" },
+
+  // The shopper's own surface: their buyer agent, their proposals, their
+  // policy, and the cross-merchant catalogue they shop from.
+  { prefix: "/api/v1/buyer/", allow: ["SHOPPER"], surface: "customer purchasing" },
+  { prefix: "/api/v1/marketplace/", allow: ["SHOPPER"], surface: "marketplace shopping" },
+
+  // The platform operator's surface.
+  { prefix: "/api/v1/admin/", allow: ["PLATFORM_ADMIN"], surface: "platform administration" },
+];
+
+/** Everything not named above is merchant-side management. */
+const DEFAULT_AUDIENCES: readonly Audience[] = ["MERCHANT"];
+
+function audienceForRole(role: string): Audience {
+  if (role === "CUSTOMER") return "SHOPPER";
+  if (role === "PLATFORM_ADMIN") return "PLATFORM_ADMIN";
+  return "MERCHANT";
+}
+
+const AUDIENCE_LABEL: Record<Audience, string> = {
+  SHOPPER: "Customer sessions",
+  MERCHANT: "Merchant sessions",
+  PLATFORM_ADMIN: "Platform administrator sessions",
+};
+
+/** Exported for the access-model test, which asserts every registered
+ * route resolves to an audience that can actually reach it. */
+export function authorizePath(path: string, role: string): { allowed: true } | { allowed: false; message: string } {
+  const audience = audienceForRole(role);
+  const rule = ACCESS_RULES.find((candidate) => path.startsWith(candidate.prefix));
+  const allowed = rule ? rule.allow : DEFAULT_AUDIENCES;
+  if (allowed.includes(audience)) return { allowed: true };
+  return {
+    allowed: false,
+    message: `${AUDIENCE_LABEL[audience]} cannot access ${rule?.surface ?? "merchant management"} APIs.`,
+  };
 }
 
 function extractBearerToken(request: FastifyRequest): string | null {
@@ -82,12 +155,10 @@ export async function authenticateRequest(request: FastifyRequest, _reply: Fasti
   request.merchantId = session.merchantId;
   request.merchantUserId = session.merchantUserId;
   request.merchantUserRole = session.role;
+  request.customerAccountId = session.customerAccountId;
   const path = request.url.split("?", 1)[0]!;
-  if (path.startsWith("/api/v1/admin/") && session.role !== "PLATFORM_ADMIN") throw AppError.forbidden("Platform administrator access required.");
-  if (session.role === "CUSTOMER") {
-    const allowed = path.startsWith("/api/v1/buyer/") || path.startsWith("/api/v1/buyer-agent/conversations/") || path.startsWith("/api/v1/marketplace/") || path.startsWith("/api/v1/auth/") || path.startsWith("/api/v1/system/");
-    if (!allowed) throw AppError.forbidden("Customer sessions cannot access merchant management APIs.");
-  }
+  const verdict = authorizePath(path, session.role);
+  if (!verdict.allowed) throw AppError.forbidden(verdict.message);
 }
 
 /** RBAC: only OWNER or APPROVER may decide an approval (PART 10 §1).

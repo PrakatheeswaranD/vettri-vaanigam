@@ -13,7 +13,20 @@ for (const identity of [
   { slug: "demo-platform-context", name: "Platform Administration", email: "admin@vaanigam.demo", role: "PLATFORM_ADMIN" as const, password: "AdminDemo!2026" },
 ]) {
   const context = await prisma.merchant.upsert({ where: { slug: identity.slug }, update: {}, create: { slug: identity.slug, name: identity.name, defaultCurrency: "INR", businessCategory: "Identity context", status: "ACTIVE" } });
-  await prisma.merchantUser.upsert({ where: { email: identity.email }, update: {}, create: { merchantId: context.id, email: identity.email, role: identity.role, passwordHash: await hashPassword(identity.password) } });
+  // The shopper's own account, keyed to the identity context's id so a
+  // decision record's `protocolActorRef` keeps resolving to them.
+  if (identity.role === "CUSTOMER") {
+    await prisma.customerAccount.upsert({
+      where: { id: context.id },
+      update: { displayName: identity.name },
+      create: { id: context.id, displayName: identity.name },
+    });
+  }
+  await prisma.merchantUser.upsert({
+    where: { email: identity.email },
+    update: { customerAccountId: identity.role === "CUSTOMER" ? context.id : null },
+    create: { merchantId: context.id, customerAccountId: identity.role === "CUSTOMER" ? context.id : null, email: identity.email, role: identity.role, passwordHash: await hashPassword(identity.password) },
+  });
   // Categories come from what is actually purchasable, not a fixed list.
   // The old hard-coded default ("Electronics/Laptop", "Books",
   // "Accessories") is stocked by no merchant here, so the demo customer
@@ -22,9 +35,9 @@ for (const identity of [
   // src/modules/buyer-policy/resolve-policy.ts.
   if (identity.role === "CUSTOMER") {
     await prisma.buyerSpendingPolicy.upsert({
-      where: { merchantId: context.id },
+      where: { customerAccountId: context.id },
       update: {},
-      create: { merchantId: context.id, allowedCategories: await purchasableCategories(), dailyLimitMinor: 10_000_000, autonomousPurchaseLimitMinor: 200_000 },
+      create: { customerAccountId: context.id, allowedCategories: await purchasableCategories(), dailyLimitMinor: 10_000_000, autonomousPurchaseLimitMinor: 200_000 },
     });
   }
   console.log(`Demo ${identity.role} identity is available. Existing merchant data was not reset.`);

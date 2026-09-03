@@ -1,28 +1,18 @@
 import { useState } from "react";
 import { Link } from "react-router-dom";
-import { FlaskConical, Loader2, ScanLine, TrendingUp } from "lucide-react";
-import { useCatalog, useGrowthOpportunities } from "../hooks/use-api";
+import { FlaskConical, Loader2 } from "lucide-react";
+import { useCatalog } from "../hooks/use-api";
 import { useProposeGrowthAction } from "../hooks/use-merchant-agent";
 import { PageHeader } from "../components/layout/PageHeader";
 import { Card, CardBody, CardHeader, CardTitle } from "../components/ui/Card";
-import { EmptyState, ErrorState, Skeleton } from "../components/ui/States";
-import { ValueTag } from "../components/ui/ValueTag";
-import { DemoDataBadge } from "../components/ui/DemoDataBadge";
+import { ErrorState, Skeleton } from "../components/ui/States";
 import { GrowthProposalPanel } from "../components/merchant-agent/GrowthProposalPanel";
 import { GrowthSummaryPanel } from "../components/growth/GrowthSummaryPanel";
 import { AgentDrivenGrowth } from "../components/growth/AgentDrivenGrowth";
 import { CampaignManager } from "../components/growth/CampaignManager";
 import { useGatewayPolicy } from "../hooks/use-agent-gateway";
-import { formatMoney } from "../lib/format";
 import { ApiError } from "../lib/api-client";
 
-const CATEGORY_LABEL: Record<string, string> = {
-  CROSS_SELL: "Cross-sell",
-  UPSELL: "Upsell",
-  CATALOG_GAP: "Catalog Gap",
-  READINESS_GAP: "Readiness Gap",
-  PAYMENT_RECOVERY: "Payment Recovery",
-};
 
 /**
  * A PREVIEW tool, and labelled as one.
@@ -75,7 +65,7 @@ function GrowthPreviewSection() {
                 is a sale in hand.
               </li>
             </ul>
-            <Link to="/agent-gateway" className="mt-2 inline-block text-xs font-medium text-brand-600 hover:underline">
+            <Link to="/merchant/governance/decisions" className="mt-2 inline-block text-xs font-medium text-brand-600 hover:underline">
               Change these in the gateway policy →
             </Link>
           </div>
@@ -137,114 +127,36 @@ function GrowthPreviewSection() {
 }
 
 /**
- * Two nav items, two pages.
+ * Offers & Actions — the execution surface.
  *
- * "Growth" and "Opportunities & Offers" both rendered this one component,
- * so the sidebar offered a destination it did not have. They are also
- * genuinely different questions — "what did the negotiator do on real
- * agent baskets" is a report, and "what could we be doing" is a worklist —
- * and stacking both made a single page long enough that the opportunity
- * list sat below four other sections.
+ * WHY THIS IS ONE PAGE AGAIN
  *
- *   Growth   — what already happened: the summary, real agent baskets,
- *              and the campaigns running against them.
- *   Offers   — what could happen next: the identified opportunities, and
- *              the dry-run preview for trying the envelope against one.
+ * There used to be two: "Basket Growth" (what the negotiator did on real
+ * agent baskets) and "Opportunities & Offers" (a flat catalogue-derived
+ * worklist plus a dry-run tool). The worklist has since been replaced by
+ * the Revenue Opportunity Engine on its own page, which is where a
+ * merchant now decides WHAT to do. That left the two remaining halves
+ * answering the same question — what have my bounded actions actually
+ * done, and what would one do if I tried it — so they belong together.
+ *
+ * The split that survives is the one that matters:
+ *
+ *   Growth Opportunities  what is worth doing, ranked, with evidence.
+ *   Offers & Actions      what has been offered, what it did, and a
+ *                         dry run for trying the envelope safely.
  */
-export default function GrowthPage() {
+export default function OffersPage() {
   return (
     <div className="space-y-6">
       <PageHeader
-        title="Basket Growth"
-        lead="Which AI-buyer requests the gateway approved, and what the negotiator offered to grow those baskets — payment is reported separately."
+        title="Offers & actions"
+        lead="What your bounded growth actions have actually offered and earned, plus a dry run for testing your envelope before any buyer sees it."
       />
+
       <GrowthSummaryPanel />
       <AgentDrivenGrowth />
       <CampaignManager />
-    </div>
-  );
-}
-
-export function OffersPage() {
-  const { data, isLoading, isError, error, refetch } = useGrowthOpportunities();
-
-  return (
-    <div className="space-y-6">
-      <PageHeader
-        title="Opportunities & Offers"
-        lead="Basket expansion the Merchant Agent has found but nobody has acted on yet, and a dry run for trying your envelope against any product."
-      />
-
       <GrowthPreviewSection />
-
-      <div>
-        <h2 className="text-sm font-semibold uppercase tracking-wide text-ink-faint">Identified opportunities</h2>
-        <p className="mt-1 text-sm text-ink-muted">
-          Derived from catalogue, order and payment signals. Nothing here has been offered to a buyer.
-        </p>
-      </div>
-
-      {isLoading ? (
-        <div className="space-y-3">
-          {Array.from({ length: 3 }).map((_, i) => (
-            <Skeleton key={i} className="h-24 w-full" />
-          ))}
-        </div>
-      ) : isError ? (
-        <Card>
-          <ErrorState
-            message={error instanceof ApiError ? error.message : "Could not load growth opportunities."}
-            onRetry={() => refetch()}
-          />
-        </Card>
-      ) : !data || data.items.length === 0 ? (
-        <Card>
-          <EmptyState
-            icon={<TrendingUp size={18} />}
-            title="No growth opportunities identified yet"
-            description="Opportunities are derived from catalog, order, and payment signals as they accumulate."
-          />
-        </Card>
-      ) : (
-        <div className="space-y-3">
-          {data.items.map((opp) => (
-            <Card key={opp.id}>
-              <CardBody className="space-y-2">
-                <div className="flex flex-wrap items-center gap-2">
-                  <span className="rounded-full bg-brand-50 px-2 py-0.5 text-[11px] font-medium text-brand-700">
-                    {CATEGORY_LABEL[opp.category] ?? opp.category}
-                  </span>
-                  <ValueTag classification={opp.valueClassification} />
-                  {opp.isSyntheticDemo ? (
-                    <DemoDataBadge />
-                  ) : (
-                    // A positive marker, not just the absence of a demo
-                    // badge: these rows were written by the Catalog scan on
-                    // a real publish, and that is the whole point of the
-                    // feed no longer being fifteen fixed rows.
-                    <span className="inline-flex items-center gap-1 rounded-pill bg-success-subtle px-2 py-0.5 text-micro font-medium text-success-text">
-                      <ScanLine size={10} />
-                      Found by catalogue scan
-                    </span>
-                  )}
-                  <span className="ml-auto text-xs text-ink-faint">{opp.status.replace("_", " ")}</span>
-                </div>
-                <p className="text-sm text-ink-muted">
-                  <span className="font-medium text-ink">Signal: </span>
-                  {opp.signal}
-                </p>
-                <p className="text-sm text-ink-muted">
-                  <span className="font-medium text-ink">Recommendation: </span>
-                  {opp.recommendation}
-                </p>
-                {opp.estimatedValue ? (
-                  <p className="text-sm font-semibold text-ink">{formatMoney(opp.estimatedValue)}</p>
-                ) : null}
-              </CardBody>
-            </Card>
-          ))}
-        </div>
-      )}
     </div>
   );
 }

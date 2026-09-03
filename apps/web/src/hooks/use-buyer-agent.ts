@@ -1,19 +1,27 @@
 import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
 import type { BuyerAgentResponseDTO, BuyerConversationDTO } from "@razorgrowth/contracts";
 import { apiGet, apiPost } from "../lib/api-client";
-import { getExperienceRole } from "../lib/experience-role";
 
+/**
+ * The Buyer Agent lives entirely under `/buyer/`.
+ *
+ * This used to pick between `/buyer/marketplace/messages` and
+ * `/buyer-agent/messages` by role. They were the same handler, and the
+ * second one was refused for every role — so the branch's only real effect
+ * was that anyone who was not a customer got a 403 out of a chat box. The
+ * Buyer Agent is a shopper's tool; there is one endpoint and no branch.
+ */
 export function useSendBuyerMessage() {
   return useMutation({
     mutationFn: (params: { conversationId?: string; message: string }) =>
-      apiPost<BuyerAgentResponseDTO>(getExperienceRole() === "customer" ? "/buyer/marketplace/messages" : "/buyer-agent/messages", params),
+      apiPost<BuyerAgentResponseDTO>("/buyer/messages", params),
   });
 }
 
 export function useBuyerConversation(conversationId: string | undefined) {
   return useQuery({
     queryKey: ["buyer-agent", "conversation", conversationId],
-    queryFn: () => apiGet<BuyerConversationDTO>(`/buyer-agent/conversations/${conversationId}`),
+    queryFn: () => apiGet<BuyerConversationDTO>(`/buyer/conversations/${conversationId}`),
     enabled: Boolean(conversationId),
   });
 }
@@ -21,7 +29,7 @@ export function useBuyerConversation(conversationId: string | undefined) {
 export function useResetBuyerConversation() {
   const queryClient = useQueryClient();
   return useMutation({
-    mutationFn: (conversationId: string) => apiPost<void>(`/buyer-agent/conversations/${conversationId}/reset`),
+    mutationFn: (conversationId: string) => apiPost<void>(`/buyer/conversations/${conversationId}/reset`),
     onSuccess: (_data, conversationId) => {
       void queryClient.invalidateQueries({ queryKey: ["buyer-agent", "conversation", conversationId] });
     },

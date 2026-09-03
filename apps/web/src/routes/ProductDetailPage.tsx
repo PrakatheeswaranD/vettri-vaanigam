@@ -18,7 +18,7 @@ export default function ProductDetailPage() {
   // to `/catalog` is a shopper bounced out of their own session by the
   // route guard.
   const role = useExperienceRole();
-  const backTo = role === "customer" ? "/customer/discover" : "/catalog";
+  const backTo = role === "customer" ? "/customer/discover" : "/merchant/commerce/products";
   const backLabel = role === "customer" ? "Back to discovery" : "Back to catalog";
   const { data: product, isLoading, isError, error, refetch } = useProduct(productId);
   const [selectedVariantId, setSelectedVariantId] = useState<string | null>(null);

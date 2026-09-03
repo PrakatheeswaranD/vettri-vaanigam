@@ -91,7 +91,18 @@ beforeAll(async () => {
   });
 
   const variant = await prisma.productVariant.findFirstOrThrow({
-    where: { active: true, product: { merchantId, category: "Running Shoes", status: "ACTIVE" } },
+    where: {
+      active: true,
+      product: { merchantId, category: "Running Shoes", status: "ACTIVE" },
+      // Stock, because an intent for an out-of-stock variant is
+      // refused on inventory — which would make a decline test pass
+      // for the wrong reason and an approval test fail for one.
+      inventory: { availableQuantity: { gte: 5 } },
+    },
+    // Deterministic: without it the fixture is whatever the planner
+    // returns today, so identical code can pass and fail on
+    // different days.
+    orderBy: { sku: "asc" },
   });
   sku = variant.sku;
   priceMinor = variant.priceMinor;

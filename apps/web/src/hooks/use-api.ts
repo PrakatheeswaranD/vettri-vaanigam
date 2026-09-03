@@ -4,11 +4,9 @@ import type {
   AgentReadableProductDTO,
   CatalogQualitySummaryDTO,
   ConnectedSystemsDTO,
-  GrowthOpportunityDTO,
   GrowthSummaryDTO,
   MerchantDTO,
   MerchantPolicyDTO,
-  MerchantStatsDTO,
   MarketplaceDiscoveryResponseDTO,
   BuyerSpendingPolicyDTO,
   BuyerSpendingPolicyUpdateDTO,
@@ -39,13 +37,6 @@ export function useMerchantPolicy() {
   return useQuery({
     queryKey: ["merchant", "policy"],
     queryFn: () => apiGet<MerchantPolicyDTO>("/merchant/policy"),
-  });
-}
-
-export function useMerchantStats() {
-  return useQuery({
-    queryKey: ["merchant", "stats"],
-    queryFn: () => apiGet<MerchantStatsDTO>("/merchant/stats"),
   });
 }
 
@@ -169,13 +160,6 @@ export function useLedger(
     queryKey: ["ledger", params],
     queryFn: () => apiGet<Paginated<AgentActionDTO>>("/ledger", params as QueryParams),
     placeholderData: (prev) => prev,
-  });
-}
-
-export function useGrowthOpportunities() {
-  return useQuery({
-    queryKey: ["growth", "opportunities"],
-    queryFn: () => apiGet<{ items: GrowthOpportunityDTO[] }>("/growth/opportunities"),
   });
 }
 

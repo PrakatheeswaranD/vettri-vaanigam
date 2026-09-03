@@ -594,10 +594,11 @@ export function registerAgentGatewayRoutes(app: FastifyInstance, prefix: string)
     getAuthenticatedMerchantId(request);
 
     const scriptPath = fileURLToPath(new URL("../../../scripts/demo-agent-swarm.ts", import.meta.url));
+    const runtimeCompatUrl = new URL("../../../scripts/node-runtime-compat.mjs", import.meta.url).href;
     const started = Date.now();
 
     const output = await new Promise<{ code: number | null; stdout: string; stderr: string }>((resolve) => {
-      const child = spawn(process.execPath, ["--import", "tsx", scriptPath], {
+      const child = spawn(process.execPath, ["--import", runtimeCompatUrl, "--import", "tsx", scriptPath], {
         env: { ...process.env, API_BASE: process.env.PUBLIC_API_BASE ?? `http://127.0.0.1:${process.env.PORT ?? 4000}/api/v1` },
         cwd: fileURLToPath(new URL("../../..", import.meta.url)),
       });

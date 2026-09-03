@@ -50,7 +50,27 @@ interface FormState {
   proposalValidityMinutes: string;
   approvalValidityMinutes: string;
   authorizationValidityMinutes: string;
+  // PART 08 boundaries. Every one is enforced by the Policy Engine on the
+  // server; the controls below are how a merchant SETS them, never how
+  // they are applied.
+  minMarginPercent: string;
+  maxAutonomousActionsPerDay: string;
+  recoveryEnabled: boolean;
+  prohibitedActions: string[];
+  eligibleCategories: string;
+  minCustomerPaidOrders: string;
 }
+
+/** The action types a merchant can forbid outright. Matches the
+ * `GrowthActionType` enum the Policy Engine compares against — a name that
+ * does not appear there would be a prohibition that silently never fires. */
+const PROHIBITABLE_ACTIONS = [
+  { value: "CROSS_SELL", label: "Cross-sell", effect: "Recommending a complementary product alongside one a buyer chose." },
+  { value: "UPSELL", label: "Upsell", effect: "Offering a dearer variant of the product a buyer chose." },
+  { value: "BUNDLE", label: "Bundles", effect: "Offering two or more products together at a bounded price." },
+  { value: "BOUNDED_OFFER", label: "Bounded offers", effect: "Any discount, even one inside your ceiling." },
+  { value: "RECOVERY", label: "Payment recovery", effect: "Retrying a failed payment through a new authorized checkout." },
+] as const;
 
 function bpsToPercentString(bps: number): string {
   return (bps / 100).toString();
@@ -77,6 +97,15 @@ export default function SettingsPage() {
       proposalValidityMinutes: String(policy.proposalValidityMinutes),
       approvalValidityMinutes: String(policy.approvalValidityMinutes),
       authorizationValidityMinutes: String(policy.authorizationValidityMinutes),
+      minMarginPercent: bpsToPercentString(policy.minMarginBps),
+      maxAutonomousActionsPerDay: String(policy.maxAutonomousActionsPerDay),
+      recoveryEnabled: policy.recoveryEnabled,
+      prohibitedActions: policy.prohibitedActions,
+      // A comma-separated list rather than a picker: the merchant's own
+      // category names are free text in this catalogue, so a fixed list
+      // would be wrong the moment they add a category.
+      eligibleCategories: policy.eligibleCategories.join(", "),
+      minCustomerPaidOrders: String(policy.minCustomerPaidOrders),
     });
   }, [policy]);
 
@@ -92,6 +121,15 @@ export default function SettingsPage() {
       proposalValidityMinutes: Math.round(Number(form.proposalValidityMinutes)),
       approvalValidityMinutes: Math.round(Number(form.approvalValidityMinutes)),
       authorizationValidityMinutes: Math.round(Number(form.authorizationValidityMinutes)),
+      minMarginBps: Math.round(Number(form.minMarginPercent) * 100),
+      maxAutonomousActionsPerDay: Math.round(Number(form.maxAutonomousActionsPerDay)),
+      recoveryEnabled: form.recoveryEnabled,
+      prohibitedActions: form.prohibitedActions,
+      eligibleCategories: form.eligibleCategories
+        .split(",")
+        .map((entry) => entry.trim())
+        .filter((entry) => entry.length > 0),
+      minCustomerPaidOrders: Math.round(Number(form.minCustomerPaidOrders)),
     });
   }
 
@@ -106,7 +144,7 @@ export default function SettingsPage() {
           These govern this merchant&rsquo;s <span className="font-medium text-ink">own</span> agents. What{" "}
           <span className="font-medium text-ink">outside</span> buyer agents may do — ceilings, blocked categories, the
           negotiator envelope, velocity — is a separate policy in the{" "}
-          <Link to="/agent-gateway" className="font-medium text-brand-600 hover:underline">
+          <Link to="/merchant/governance/decisions" className="font-medium text-brand-600 hover:underline">
             Agent Gateway
           </Link>
           . Two audiences, two policies, deliberately not merged.
@@ -267,6 +305,21 @@ export default function SettingsPage() {
                 value={form.maxRecoveryAttempts}
                 onChange={(v) => setForm({ ...form, maxRecoveryAttempts: v })}
               />
+              <NumberField
+                label="Minimum margin (%)"
+                value={form.minMarginPercent}
+                onChange={(v) => setForm({ ...form, minMarginPercent: v })}
+              />
+              <NumberField
+                label="Maximum unattended actions per day"
+                value={form.maxAutonomousActionsPerDay}
+                onChange={(v) => setForm({ ...form, maxAutonomousActionsPerDay: v })}
+              />
+              <NumberField
+                label="Minimum paid orders before targeting a customer"
+                value={form.minCustomerPaidOrders}
+                onChange={(v) => setForm({ ...form, minCustomerPaidOrders: v })}
+              />
               <div>
                 <dt className="text-xs text-ink-faint">Currency</dt>
                 <dd className="mt-0.5 text-sm font-medium text-ink">{policy.currency}</dd>
@@ -274,6 +327,78 @@ export default function SettingsPage() {
               <div>
                 <dt className="text-xs text-ink-faint">Last updated</dt>
                 <dd className="mt-0.5 text-sm font-medium text-ink">{formatDateTime(policy.updatedAt)}</dd>
+              </div>
+            </CardBody>
+          </Card>
+
+          <Card>
+            <CardHeader>
+              <CardTitle>What the agent may never do</CardTitle>
+            </CardHeader>
+            <CardBody className="space-y-4">
+              <p className="text-xs leading-relaxed text-ink-muted">
+                A prohibition is not a threshold. Anything listed here is refused outright by the policy engine — it is
+                never sent to you for approval, and enabling the same feature elsewhere cannot re-permit it.
+              </p>
+              <div className="divide-y divide-border-hair">
+                {PROHIBITABLE_ACTIONS.map((action) => {
+                  const prohibited = form.prohibitedActions.includes(action.value);
+                  return (
+                    <label key={action.value} className="flex cursor-pointer items-start gap-3 py-3 first:pt-0 last:pb-0">
+                      <input
+                        type="checkbox"
+                        checked={prohibited}
+                        onChange={(event) =>
+                          setForm({
+                            ...form,
+                            prohibitedActions: event.target.checked
+                              ? [...form.prohibitedActions, action.value]
+                              : form.prohibitedActions.filter((entry) => entry !== action.value),
+                          })
+                        }
+                        className="mt-0.5 h-4 w-4 shrink-0 rounded border-border text-danger"
+                      />
+                      <span className="min-w-0">
+                        <span className="block text-sm font-medium text-ink">Never {action.label.toLowerCase()}</span>
+                        <span className="mt-0.5 block text-xs leading-snug text-ink-muted">{action.effect}</span>
+                      </span>
+                    </label>
+                  );
+                })}
+              </div>
+
+              <label className="flex cursor-pointer items-start gap-3 border-t border-border-hair pt-4">
+                <input
+                  type="checkbox"
+                  checked={form.recoveryEnabled}
+                  onChange={(event) => setForm({ ...form, recoveryEnabled: event.target.checked })}
+                  className="mt-0.5 h-4 w-4 shrink-0 rounded border-border text-brand-600"
+                />
+                <span className="min-w-0">
+                  <span className="block text-sm font-medium text-ink">Allow automated payment recovery</span>
+                  <span className="mt-0.5 block text-xs leading-snug text-ink-muted">
+                    Separate from the retry limit above. Off means no automated retry ever happens, without you having to
+                    set a limit of zero and leave the intention ambiguous.
+                  </span>
+                </span>
+              </label>
+
+              <div className="border-t border-border-hair pt-4">
+                <label className="block text-sm font-medium text-ink" htmlFor="eligible-categories">
+                  Categories the agent may act on
+                </label>
+                <input
+                  id="eligible-categories"
+                  type="text"
+                  value={form.eligibleCategories}
+                  onChange={(event) => setForm({ ...form, eligibleCategories: event.target.value })}
+                  placeholder="Leave empty to permit every category"
+                  className="mt-1.5 w-full rounded-md border border-border-hair bg-surface px-2.5 py-2 text-sm text-ink"
+                />
+                <p className="mt-1 text-xs leading-snug text-ink-faint">
+                  Comma-separated, and matched exactly against your product categories. Empty means all — naming even one
+                  excludes every category you did not name.
+                </p>
               </div>
             </CardBody>
           </Card>

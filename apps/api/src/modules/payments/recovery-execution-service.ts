@@ -82,7 +82,14 @@ export async function executeRecovery(
   // (self-consistency / tamper detection) immediately before creating a
   // new attempt against it. The order is immutable by design, so this
   // should always match; a mismatch is a genuine integrity failure.
-  if (!order.orderFingerprint || !order.authorizationId) {
+  // The fingerprint is the integrity anchor; `authorizationId` is
+  // provenance, not integrity. Requiring both here rejected every
+  // DIRECT-buyer order — which carries no agent authorization and never
+  // will — while reporting it as a missing fingerprint, so the most
+  // common recoverable payment failed with a message about a field that
+  // was actually present. Tamper detection is unaffected: any change to
+  // the amount or line items still breaks the hash below.
+  if (!order.orderFingerprint) {
     throw new AppError("FINANCIAL_INTEGRITY_ERROR", "The order underlying this recovery has no recorded financial fingerprint.");
   }
   const recomputedFingerprint = computeOrderFingerprint({
@@ -90,7 +97,9 @@ export async function executeRecovery(
     merchantId: order.merchantId,
     currency: order.currency,
     totalAmountMinor: order.totalAmountMinor,
-    authorizationId: order.authorizationId,
+    // Empty string is the canonical "no agent authorization" value, and
+    // is what the fingerprint was computed with at order creation.
+    authorizationId: order.authorizationId ?? "",
     lines: order.items,
   });
   if (recomputedFingerprint !== order.orderFingerprint) {

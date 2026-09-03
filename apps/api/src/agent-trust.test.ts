@@ -93,13 +93,35 @@ beforeAll(async () => {
   });
 
   const variant = await prisma.productVariant.findFirstOrThrow({
-    where: { active: true, product: { merchantId, category: "Running Shoes", status: "ACTIVE" } },
+    where: {
+      active: true,
+      product: { merchantId, category: "Running Shoes", status: "ACTIVE" },
+      // Stock, because an intent for an out-of-stock variant is
+      // refused on inventory — which would make a decline test pass
+      // for the wrong reason and an approval test fail for one.
+      inventory: { availableQuantity: { gte: 5 } },
+    },
+    // Deterministic: without it the fixture is whatever the planner
+    // returns today, so identical code can pass and fail on
+    // different days.
+    orderBy: { sku: "asc" },
   });
   sku = variant.sku;
   priceMinor = variant.priceMinor;
 
   const blocked = await prisma.productVariant.findFirstOrThrow({
-    where: { active: true, product: { merchantId, category: "Hydration", status: "ACTIVE" } },
+    where: {
+      active: true,
+      product: { merchantId, category: "Hydration", status: "ACTIVE" },
+      // Stock, because an intent for an out-of-stock variant is
+      // refused on inventory — which would make a decline test pass
+      // for the wrong reason and an approval test fail for one.
+      inventory: { availableQuantity: { gte: 5 } },
+    },
+    // Deterministic: without it the fixture is whatever the planner
+    // returns today, so identical code can pass and fail on
+    // different days.
+    orderBy: { sku: "asc" },
   });
   blockedSku = blocked.sku;
   blockedPriceMinor = blocked.priceMinor;
@@ -175,7 +197,22 @@ describe("agent trust — collapsing on being caught", () => {
     const turncoat = await enrolAgent(prisma, merchantId);
     await creditSettledOrders(turncoat, 5);
 
-    const quantity = Math.ceil((UNKNOWN_CEILING * 1.5) / priceMinor);
+    // The basket has to sit strictly between the two ceilings this agent
+    // gets before and after the forgery, or the test proves nothing.
+    //
+    // Five settled orders is the earned maximum, so BEFORE it is at score
+    // 100 and gets the full known-agent ceiling (₹50,000). One flagged
+    // attack costs 40, so AFTER it sits at 60 and its ceiling collapses to
+    // roughly ₹18,000. ₹30,000 is comfortably inside that gap at both
+    // ends.
+    //
+    // This used to ask for `UNKNOWN_CEILING * 1.5` (₹15,000), which lands
+    // just BELOW the collapsed ceiling — so whether the test passed came
+    // down to how far `Math.ceil` overshot on whatever price the seeded
+    // "first Running Shoes variant" happened to have. When that variant
+    // got cheaper, the rounding stopped covering the gap and a real
+    // step-up read as an auto-approval.
+    const quantity = Math.ceil((UNKNOWN_CEILING * 3) / priceMinor);
 
     const before = await buy(turncoat, quantity);
     expect(before.json().outcome).toBe("AUTO_APPROVE");

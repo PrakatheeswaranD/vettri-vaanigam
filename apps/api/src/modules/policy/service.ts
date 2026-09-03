@@ -49,6 +49,17 @@ interface CommerceFacts {
   currency: string | null;
 }
 
+/**
+ * A JSON column is `unknown` until something checks it. Parsed once here
+ * rather than cast at each use site: a malformed row should degrade to "no
+ * restriction configured" in one obvious place, not throw from inside the
+ * policy engine.
+ */
+function asStringArray(value: unknown): string[] {
+  if (!Array.isArray(value)) return [];
+  return value.filter((entry): entry is string => typeof entry === "string");
+}
+
 export async function revalidateCommerceFacts(prisma: PrismaClient, merchantId: string, productId: string): Promise<CommerceFacts> {
   try {
     const product = await getAgentCatalogProduct(prisma, merchantId, productId);
@@ -62,6 +73,78 @@ export async function revalidateCommerceFacts(prisma: PrismaClient, merchantId: 
     // reason to throw here, just a fact the Policy Engine must see.
     return { eligible: false, available: false, currency: null };
   }
+}
+
+/**
+ * The margin a discounted line would leave, in basis points.
+ *
+ * COMPUTED FROM THE MERCHANT'S OWN COST, OR NOT AT ALL.
+ *
+ * `(price - cost) / price`, using the CHEAPEST active variant — the one a
+ * discount is most likely to push under the floor. Returns null when no
+ * active variant records a cost, because a margin nobody recorded the
+ * inputs for is not a number this may invent. The engine treats a null
+ * margin as a breach when a floor is set, which is the conservative
+ * reading and the one a floor implies.
+ */
+export async function computeMarginBps(
+  prisma: PrismaClient,
+  merchantId: string,
+  productId: string,
+  discountBps: number | null,
+): Promise<number | null> {
+  const variant = await prisma.productVariant.findFirst({
+    where: { productId, active: true, costMinor: { not: null }, product: { merchantId } },
+    orderBy: { priceMinor: "asc" },
+    select: { priceMinor: true, costMinor: true },
+  });
+  if (!variant || variant.costMinor === null || variant.priceMinor <= 0) return null;
+
+  // The price AFTER the proposed discount — the floor is about what the
+  // merchant would actually receive, not the list price.
+  const effectivePriceMinor = Math.round(variant.priceMinor * (1 - (discountBps ?? 0) / 10_000));
+  if (effectivePriceMinor <= 0) return 0;
+  return Math.round(((effectivePriceMinor - variant.costMinor) / effectivePriceMinor) * 10_000);
+}
+
+/**
+ * How many unattended actions this merchant's agent has already taken
+ * today (UTC).
+ *
+ * Counted from `ExecutionAuthorization` rows ISSUED, not proposals
+ * raised: a proposal the policy engine denied consumed none of the
+ * merchant's autonomy budget, and counting it would let a run of denials
+ * exhaust a limit that exists to bound what actually happens.
+ */
+export async function countAutonomousActionsToday(prisma: PrismaClient, merchantId: string): Promise<number> {
+  const startOfDay = new Date();
+  startOfDay.setUTCHours(0, 0, 0, 0);
+  return prisma.executionAuthorization.count({
+    where: { merchantId, createdAt: { gte: startOfDay } },
+  });
+}
+
+/**
+ * Paid orders the customer this proposal targets already has, or null when
+ * it targets nobody in particular.
+ *
+ * Null is not zero. A catalogue-wide cross-sell has no customer to be
+ * ineligible, and treating "nobody" as "somebody with no history" would
+ * deny every untargeted action the moment a merchant required one prior
+ * order.
+ */
+export async function countTargetCustomerPaidOrders(
+  prisma: PrismaClient,
+  merchantId: string,
+  sourceOrderId: string | null,
+): Promise<number | null> {
+  if (!sourceOrderId) return null;
+  const order = await prisma.order.findFirst({
+    where: { id: sourceOrderId, merchantId },
+    select: { customerId: true },
+  });
+  if (!order?.customerId) return null;
+  return prisma.order.count({ where: { merchantId, customerId: order.customerId, status: "PAID" } });
 }
 
 export function proposalOpportunity(proposal: GrowthActionProposal): { potentialBasketMinor?: number; currency?: string } | null {
@@ -118,7 +201,22 @@ function nextStatusForOutcome(outcome: "ALLOW" | "DENY" | "REQUIRE_APPROVAL"): G
  * service's stale-policy re-evaluation path) both go through this, never
  * duplicate the assembly logic.
  */
-export async function evaluateProposalPolicy(prisma: PrismaClient, merchantId: string, proposalId: string): Promise<PolicyDecisionDTO> {
+/**
+ * `unattended` is the caller telling the engine whether a human is
+ * present. It defaults to FALSE — the safe direction, because the daily
+ * ceiling it gates only ever restricts, and a caller that forgets to pass
+ * it gets the supervised behaviour rather than accidentally exempting a
+ * scheduled run from a limit set for exactly that case.
+ *
+ * The scheduler passes true. Every merchant-triggered path leaves it
+ * alone.
+ */
+export async function evaluateProposalPolicy(
+  prisma: PrismaClient,
+  merchantId: string,
+  proposalId: string,
+  options: { unattended?: boolean } = {},
+): Promise<PolicyDecisionDTO> {
   const proposal = await findProposalForGovernance(prisma, merchantId, proposalId);
   if (!proposal) throw AppError.notFound(`Growth action proposal not found: ${proposalId}`);
 
@@ -140,6 +238,19 @@ export async function evaluateProposalPolicy(prisma: PrismaClient, merchantId: s
 
   const actionTypeEnabled = allowedActionTypes(growthConfig).includes(proposal.actionType);
   const { discountBps, discountMinor } = deriveDiscountBps(proposal);
+
+  // PART 08 facts. All revalidated HERE, at evaluation time, from the
+  // merchant's own rows — never read off the proposal, which is a document
+  // an agent authored.
+  const [marginBps, customerPaidOrderCount, autonomousActionsToday, product] = await Promise.all([
+    computeMarginBps(prisma, merchantId, proposal.primaryProductId, discountBps),
+    countTargetCustomerPaidOrders(prisma, merchantId, proposal.sourceOrderId),
+    countAutonomousActionsToday(prisma, merchantId),
+    prisma.product.findFirst({
+      where: { id: proposal.primaryProductId, merchantId },
+      select: { category: true },
+    }),
+  ]);
   const orderAmountMinor = proposalOpportunity(proposal)?.potentialBasketMinor ?? null;
   const recoveryAttemptCount =
     proposal.actionType === "RECOVERY"
@@ -157,6 +268,12 @@ export async function evaluateProposalPolicy(prisma: PrismaClient, merchantId: s
       autoApprovalOrderAmountMinor: policy.autoApprovalOrderAmountMinor,
       maxRecoveryAttempts: policy.maxRecoveryAttempts,
       proposalValidityMinutes: policy.proposalValidityMinutes,
+      minMarginBps: policy.minMarginBps,
+      maxAutonomousActionsPerDay: policy.maxAutonomousActionsPerDay,
+      recoveryEnabled: policy.recoveryEnabled,
+      prohibitedActions: asStringArray(policy.prohibitedActions),
+      eligibleCategories: asStringArray(policy.eligibleCategories),
+      minCustomerPaidOrders: policy.minCustomerPaidOrders,
     },
     proposal: {
       createdAt: proposal.createdAt,
@@ -169,6 +286,11 @@ export async function evaluateProposalPolicy(prisma: PrismaClient, merchantId: s
       productEligible: commerceFacts.eligible,
       productAvailable: commerceFacts.available,
       recoveryAttemptCount,
+      marginBps,
+      productCategory: product?.category ?? null,
+      customerPaidOrderCount,
+      autonomousActionsToday,
+      unattended: options.unattended ?? false,
     },
   };
 

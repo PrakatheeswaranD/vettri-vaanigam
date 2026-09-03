@@ -64,7 +64,18 @@ beforeAll(async () => {
   });
 
   const variant = await prisma.productVariant.findFirstOrThrow({
-    where: { active: true, product: { merchantId, category: "Running Shoes", status: "ACTIVE" } },
+    where: {
+      active: true,
+      product: { merchantId, category: "Running Shoes", status: "ACTIVE" },
+      // Stock, because an intent for an out-of-stock variant is
+      // refused on inventory — which would make a decline test pass
+      // for the wrong reason and an approval test fail for one.
+      inventory: { availableQuantity: { gte: 5 } },
+    },
+    // Deterministic: without it the fixture is whatever the planner
+    // returns today, so identical code can pass and fail on
+    // different days.
+    orderBy: { sku: "asc" },
   });
   sku = variant.sku;
   priceMinor = variant.priceMinor;
@@ -160,7 +171,18 @@ describe("Vaanigam gateway — mandate is the gate", () => {
     const solo = await enrolAgent(prisma, merchantId);
     const mandate = solo.mandate(merchantId);
     const blocked = await prisma.productVariant.findFirstOrThrow({
-      where: { active: true, product: { merchantId, category: "Hydration", status: "ACTIVE" } },
+      where: {
+        active: true,
+        product: { merchantId, category: "Hydration", status: "ACTIVE" },
+        // Stock, because an intent for an out-of-stock variant is
+        // refused on inventory — which would make a decline test pass
+        // for the wrong reason and an approval test fail for one.
+        inventory: { availableQuantity: { gte: 5 } },
+      },
+      // Deterministic: without it the fixture is whatever the planner
+      // returns today, so identical code can pass and fail on
+      // different days.
+      orderBy: { sku: "asc" },
     });
 
     const declined = await postIntentAs(solo, {
@@ -260,7 +282,18 @@ describe("Vaanigam gateway — an approval becomes payable", () => {
 
   it("never creates a provider order for a declined intent", async () => {
     const blocked = await prisma.productVariant.findFirstOrThrow({
-      where: { active: true, product: { merchantId, category: "Hydration", status: "ACTIVE" } },
+      where: {
+        active: true,
+        product: { merchantId, category: "Hydration", status: "ACTIVE" },
+        // Stock, because an intent for an out-of-stock variant is
+        // refused on inventory — which would make a decline test pass
+        // for the wrong reason and an approval test fail for one.
+        inventory: { availableQuantity: { gte: 5 } },
+      },
+      // Deterministic: without it the fixture is whatever the planner
+      // returns today, so identical code can pass and fail on
+      // different days.
+      orderBy: { sku: "asc" },
     });
     const res = await postIntent({
       items: [{ id: blocked.sku, quantity: 1 }],

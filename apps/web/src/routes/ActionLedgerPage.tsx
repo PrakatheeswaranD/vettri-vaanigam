@@ -10,13 +10,14 @@ import { useState } from "react";
 import { ScrollText, ShieldCheck, ShieldX } from "lucide-react";
 import { useLedger } from "../hooks/use-api";
 import { useWorkflowLedgerVerification, useWorkflowTrace } from "../hooks/use-policy";
-import { Card } from "../components/ui/Card";
 import { EmptyState, ErrorState, Skeleton } from "../components/ui/States";
 import { AgentActionStatusBadge, PolicyDecisionBadge } from "../components/ui/StatusBadge";
 import { DemoDataBadge } from "../components/ui/DemoDataBadge";
 import { formatDateTime } from "../lib/format";
 import { ApiError } from "../lib/api-client";
 import { PageHeader } from "../components/layout/PageHeader";
+import { ActivityFeed } from "../features/activity/ActivityFeed";
+import { Card, CardBody, CardHeader, CardTitle } from "../components/ui/Card";
 
 const ACTOR_LABEL: Record<string, string> = {
   BUYER_AGENT: "Buyer Agent",
@@ -123,7 +124,7 @@ export default function ActionLedgerPage() {
         <div>
           <PageHeader
           title={"Audit Log"}
-          lead={"The tamper-evident record, for an auditor. Every entry is chained to the one before it, so a changed or deleted row is detectable."}
+          lead={"What your own systems did, in plain language, over the tamper-evident record that proves it. Every entry is chained to the one before it, so a changed or deleted row is detectable."}
         />
         </div>
         <div className="flex gap-2">
@@ -159,6 +160,21 @@ export default function ActionLedgerPage() {
           </select>
         </div>
       </div>
+
+      {/* The plain-language account of the same events, which used to be a
+          separate "Agent Activity" destination. Its other half — the
+          gateway decision feed — is the Decisions tab, so showing it here
+          too was the console telling a merchant the same thing twice under
+          two names. Narrative first, raw chain below: an auditor scrolls
+          past this, a merchant rarely needs to. */}
+      <Card>
+        <CardHeader>
+          <CardTitle>What your own systems did</CardTitle>
+        </CardHeader>
+        <CardBody>
+          <ActivityFeed limit={40} />
+        </CardBody>
+      </Card>
 
       {selectedWorkflowId ? (
         <WorkflowTimeline workflowId={selectedWorkflowId} onClose={() => setSelectedWorkflowId(null)} />

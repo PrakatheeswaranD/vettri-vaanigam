@@ -23,7 +23,16 @@ beforeEach(async () => {
   vi.clearAllMocks();
   role = "OWNER";
   app = Fastify();
-  app.addHook("preHandler", async (request) => { request.merchantId = "buyer"; request.merchantUserRole = role; });
+  // Stands in for the real auth middleware, so it must populate what the
+  // real one populates: a shopper reaches these routes with a customer
+  // account, and `getBuyerContextId` reads that rather than the merchant
+  // id it used to be filed under.
+  app.addHook("preHandler", async (request) => {
+    request.merchantId = "seller-of-record";
+    request.merchantUserId = "buyer-user";
+    request.customerAccountId = "buyer";
+    request.merchantUserRole = role;
+  });
   app.setErrorHandler((error, _request, reply) => reply.code(error instanceof AppError ? error.statusCode : 500).send({ message: error instanceof Error ? error.message : "Unknown error" }));
   registerBuyerPurchaseRoutes(app, "/api/v1");
   await app.ready();

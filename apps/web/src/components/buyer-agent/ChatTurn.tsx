@@ -18,8 +18,20 @@ import { Bot, ChevronDown, ChevronRight } from "lucide-react";
 import type { BuyerAgentResponseDTO } from "@razorgrowth/contracts";
 import { RecommendationCard } from "./RecommendationCard";
 import { BuyerReasoningPipeline } from "./BuyerReasoningPipeline";
+import { AgentTurnResult } from "./AgentTurnResult";
 
-/** One sentence a person would actually say. */
+/**
+ * One sentence a person would actually say.
+ *
+ * Four cases were missing here — COMPARISON_READY, PURCHASE_PROPOSED,
+ * PURCHASE_DECLINED, ACTION_UNRESOLVED — which meant every one of them
+ * fell through to `default` and narrated by `response.recommendations
+ * .length`. That array is always empty on these turns, so a buyer who
+ * said "buy it" was told **"Found 0 that fit."** — the exact turn Part 9
+ * exists to support, silently broken in the view real buyers actually
+ * see. The trace view had full support the whole time; nobody looks at
+ * the trace view by default.
+ */
 function narrate(response: BuyerAgentResponseDTO): string {
   const count = response.recommendations.length;
 
@@ -35,6 +47,20 @@ function narrate(response: BuyerAgentResponseDTO): string {
       return count > 0
         ? `Nothing matched every detail, but ${count === 1 ? "here's one that's close" : `here are ${count} that come close`}.`
         : "Nothing came close enough on that one — shall we relax the budget or the size?";
+    case "COMPARISON_READY":
+      return "Here they are side by side.";
+    case "PURCHASE_PROPOSED":
+      return response.purchase?.requiresAuthorization
+        ? "Priced it up — nothing's been charged yet, this just needs your go-ahead."
+        : "Priced it up and it's within your own limits. Nothing's charged until you authorize it.";
+    case "PURCHASE_DECLINED":
+      return "Your spending policy said no to that one.";
+    case "ACTION_UNRESOLVED":
+      // Server-composed, the same way `clarification.question` already is
+      // — the client cannot reconstruct WHY a buy or compare was
+      // ambiguous (wrong ordinal? nothing on the table? too few to
+      // compare?) from `status` alone, so it is not asked to.
+      return response.unresolvedReason ?? "Could you say which one you mean?";
     default:
       return count === 1 ? "Found one that fits." : `Found ${count} that fit.`;
   }
@@ -108,6 +134,13 @@ export function AgentBubble({
             ))}
           </div>
         ) : null}
+
+        {/* The comparison table, the merchant's authorized offers, and the
+            priced purchase card — the same component the trace view uses,
+            so a buyer who never opens the trace still sees exactly what
+            the agent actually did on a COMPARE or BUY turn, not just a
+            narrated sentence about it. */}
+        <AgentTurnResult response={response} />
 
         {/* The bridge to the trace view, per turn and inline — never a
             navigation that would lose the conversation. */}

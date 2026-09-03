@@ -2,6 +2,7 @@ import type { FastifyInstance } from "fastify";
 import { Prisma } from "@prisma/client";
 import { z } from "zod";
 import { prisma } from "../../db/client.js";
+import { computeCampaignLift } from "@razorgrowth/domain";
 import { AppError } from "../../http/errors.js";
 import { getAuthenticatedMerchantId } from "../authorization/demo-context.js";
 import { requireApprovalRole, requireOwnerRole } from "../auth/middleware.js";
@@ -303,6 +304,11 @@ export function registerCampaignRoutes(app: FastifyInstance, prefix: string): vo
         observedRevenueMinor: rows.reduce((sum, row) => sum + row.observedRevenueMinor, 0),
       };
     };
-    return { campaign, treatment: summarize("TREATMENT"), control: summarize("CONTROL") };
+    const treatment = summarize("TREATMENT");
+    const control = summarize("CONTROL");
+    // The holdout was always assigned and never compared. Computing the
+    // difference here — in the one place a real control group exists —
+    // is what turns "we ran a campaign" into "the offer caused this".
+    return { campaign, treatment, control, lift: computeCampaignLift(treatment, control) };
   });
 }

@@ -25,7 +25,7 @@ export function GatewayPulse() {
           <Radio size={15} className="text-brand-600" />
           <p className="text-sm font-semibold text-ink">Agent gateway</p>
           <Link
-            to="/agent-gateway"
+            to="/merchant/governance/decisions"
             className="ml-auto inline-flex items-center gap-1 text-xs font-medium text-brand-600 hover:underline"
           >
             Decision log
@@ -61,7 +61,7 @@ export function GatewayPulse() {
         ) : (
           <p className="text-sm text-ink-muted">
             No AI buyer agent has called your gateway yet.{" "}
-            <Link to="/agent-gateway" className="font-medium text-brand-600 hover:underline">
+            <Link to="/merchant/governance/decisions" className="font-medium text-brand-600 hover:underline">
               Run the demo
             </Link>{" "}
             to send five across ACP, AP2 and x402.

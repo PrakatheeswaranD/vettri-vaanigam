@@ -5,7 +5,8 @@
   "type": "module",
   "description": "Vaanigam backend \u2014 Fastify API, agent gateway, Prisma/PostgreSQL.",
   "scripts": {
-    "dev": "tsx watch src/server.ts",
+    "//dev": "Runs through node with the runtime-compat shim rather than the bare `tsx` binary: on Windows/Node 24 tsx can fail uv_os_get_passwd with ENOMEM while locating its temp dir, which made `pnpm dev` unusable and pushed people to start the API by hand — without --watch, so edits silently never reloaded.",
+    "dev": "node --env-file=../../.env --import ./scripts/node-runtime-compat.mjs --import tsx --watch src/server.ts",
     "build": "tsc -p tsconfig.json",
     "start": "node dist/server.js",
     "typecheck": "tsc --noEmit",
@@ -19,13 +20,15 @@
     "//db:seed:env": "Container variant of db:seed, same reasoning as db:deploy.",
     "db:seed:env": "node --import tsx prisma/seed.ts",
     "db:seed": "node --env-file=../../.env --import tsx prisma/seed.ts",
+    "//db:identities": "The shopper and platform-admin logins. Separate from db:seed because it provisions IDENTITIES against existing merchant data rather than creating a catalogue, and is safe to re-run.",
+    "db:identities": "node --env-file=../../.env --import tsx scripts/provision-demo-identities.ts",
     "db:reset": "dotenv -e ../../.env -- prisma migrate reset --schema prisma/schema.prisma --force --skip-generate",
     "eval:intent": "node --env-file=../../.env --import tsx scripts/eval-intent.ts",
     "eval:recommendation": "node --env-file=../../.env --import tsx scripts/eval-recommendation.ts",
     "demo:simulate": "node --env-file=../../.env --import tsx scripts/demo-simulate.ts",
     "demo:golden-path": "node --env-file=../../.env --import tsx scripts/demo-golden-path.ts",
-    "demo:agent-swarm": "node --env-file=../../.env --import tsx scripts/demo-agent-swarm.ts",
-    "redteam": "node --env-file=../../.env --import tsx scripts/redteam-buyers.ts"
+    "demo:agent-swarm": "node --env-file=../../.env --import ./scripts/node-runtime-compat.mjs --import tsx scripts/demo-agent-swarm.ts",
+    "redteam": "node --env-file=../../.env --import ./scripts/node-runtime-compat.mjs --import tsx scripts/redteam-buyers.ts"
   },
   "prisma": {
     "seed": "node --env-file=../../.env --import tsx prisma/seed.ts"

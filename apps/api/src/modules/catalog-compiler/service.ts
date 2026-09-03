@@ -28,7 +28,6 @@ import {
 } from "@razorgrowth/domain";
 import { getAIProvider } from "../agents/provider-factory.js";
 import { logger } from "../../observability/logger.js";
-import { runOpportunityScan } from "../growth/opportunity-scan-service.js";
 
 export interface CompileIssue {
   rowNumber: number;
@@ -308,12 +307,6 @@ export async function publishCatalogCompilation(
   // non-fatal. The publish has already committed and is the thing the
   // merchant asked for; a scan failure must never roll it back or surface
   // as a failed publish.
-  void runOpportunityScan(prisma, merchantId).catch((err) => {
-    logger.warn(
-      { event: "vaanigam.opportunity_scan_failed", merchantId, err: err instanceof Error ? err.message : String(err) },
-      "Catalogue published, but the follow-up opportunity scan failed",
-    );
-  });
 
   return published;
 }
@@ -349,16 +342,6 @@ export async function rollbackCatalogCompilation(prisma: PrismaClient, merchantI
     return rolledBack;
   });
 
-  // A rollback changes what agents can see exactly as much as a publish
-  // does, so the same scan runs — otherwise the opportunity feed would
-  // describe a catalogue that no longer exists. Non-fatal for the same
-  // reason: the rollback has already committed.
-  void runOpportunityScan(prisma, merchantId).catch((err) => {
-    logger.warn(
-      { event: "vaanigam.opportunity_scan_failed", merchantId, err: err instanceof Error ? err.message : String(err) },
-      "Catalogue rolled back, but the follow-up opportunity scan failed",
-    );
-  });
 
   return rolledBackCompilation;
 }
@@ -380,6 +363,9 @@ export async function buildPublishedAgentCatalog(
     where: { merchantId: merchant.id, status: "ACTIVE" },
     include: {
       variants: { where: { active: true }, include: { inventory: true } },
+      relationshipsAsSource: {
+        include: { targetProduct: { select: { id: true, name: true, status: true } } },
+      },
     },
     orderBy: { name: "asc" },
   });
@@ -399,6 +385,23 @@ export async function buildPublishedAgentCatalog(
       inStock: variant.inventory ? variant.inventory.availableQuantity > 0 : null,
       attributes: (variant.attributes as Record<string, string> | null) ?? {},
     })),
+    /**
+     * Only relationships whose target is itself published.
+     *
+     * The compiled document is what an outside crawler reads, so a link
+     * to a draft product would advertise something that does not exist as
+     * far as any buyer is concerned — and would leak that it exists at
+     * all. Filtered here rather than at read time because a published
+     * document is a snapshot: it has to be correct when it is written.
+     */
+    relationships: product.relationshipsAsSource
+      .filter((relationship) => relationship.targetProduct.status === "ACTIVE")
+      .map((relationship) => ({
+        targetProductId: relationship.targetProduct.id,
+        targetName: relationship.targetProduct.name,
+        relationshipType: relationship.relationshipType,
+        provenance: relationship.provenance,
+      })),
   }));
 
   const baseUrl = process.env.PUBLIC_BASE_URL ?? "http://localhost:4000";

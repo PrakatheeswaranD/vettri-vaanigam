@@ -12,12 +12,19 @@ const password = "AccessTest!2026";
 let customerToken: string;
 let adminToken: string;
 let customerId: string;
+let customerAccountId: string;
 let adminId: string;
 beforeAll(async () => {
   app = buildApp(); await app.ready();
   const merchantId = await getTestMerchantId(prisma);
   const passwordHash = await hashPassword(password);
-  customerId = (await prisma.merchantUser.create({ data: { merchantId, email: `customer-${suffix}@example.test`, passwordHash, role: "CUSTOMER" } })).id;
+  // A shopper needs a CustomerAccount, not just a role. This used to
+  // create a CUSTOMER user inside the SELLER's merchant and nothing else —
+  // an identity that shopped and sold under one id, which is the exact
+  // conflation the CustomerAccount table removed. Without the account the
+  // buyer surface has no partition key and answers 500.
+  customerAccountId = (await prisma.customerAccount.create({ data: { displayName: `Access Test Shopper ${suffix}` } })).id;
+  customerId = (await prisma.merchantUser.create({ data: { merchantId, customerAccountId, email: `customer-${suffix}@example.test`, passwordHash, role: "CUSTOMER" } })).id;
   adminId = (await prisma.merchantUser.create({ data: { merchantId, email: `admin-${suffix}@example.test`, passwordHash, role: "PLATFORM_ADMIN" } })).id;
   const customer = await app.inject({ method: "POST", url: "/api/v1/auth/login", payload: { email: `customer-${suffix}@example.test`, password, experience: "customer" } });
   const admin = await app.inject({ method: "POST", url: "/api/v1/auth/login", payload: { email: `admin-${suffix}@example.test`, password, experience: "admin" } });
@@ -26,6 +33,8 @@ beforeAll(async () => {
 });
 afterAll(async () => {
   if (customerId && adminId) await prisma.merchantUser.deleteMany({ where: { id: { in: [customerId, adminId] } } });
+  // After the user, because the account cascades to it.
+  if (customerAccountId) await prisma.customerAccount.deleteMany({ where: { id: customerAccountId } });
   await app?.close(); await prisma.$disconnect();
 });
 describe("server-enforced experience roles", () => {

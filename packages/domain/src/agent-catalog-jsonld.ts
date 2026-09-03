@@ -30,6 +30,24 @@ export interface CompiledOffer {
   attributes: Record<string, string>;
 }
 
+/**
+ * A relationship as it will be published.
+ *
+ * `provenance` travels with it for the same reason it does on the API:
+ * a crawler must be able to tell a pairing a person asserted from one a
+ * system inferred. schema.org has no field for that, so it is emitted as
+ * an `additionalProperty` rather than dropped — losing it at the
+ * publishing boundary would make the published catalogue a weaker claim
+ * than the API it was compiled from.
+ */
+export interface CompiledRelationship {
+  targetProductId: string;
+  targetName: string;
+  /** COMPLEMENTARY | UPSELL_ALTERNATIVE | SIMILAR | BUNDLE_COMPATIBLE */
+  relationshipType: string;
+  provenance: string;
+}
+
 export interface CompiledProduct {
   productId: string;
   name: string;
@@ -37,6 +55,38 @@ export interface CompiledProduct {
   category: string | null;
   brand: string | null;
   offers: CompiledOffer[];
+  /** Optional so an older caller compiles unchanged and publishes none. */
+  relationships?: CompiledRelationship[];
+}
+
+/**
+ * schema.org distinguishes only two kinds of product link:
+ * `isSimilarTo` for substitutes and `isRelatedTo` for everything else.
+ * An upsell alternative IS a substitute; a complementary or bundle
+ * product is not. Mapping four internal types onto the two the vocabulary
+ * actually has keeps the document valid schema.org rather than inventing
+ * a predicate no crawler understands — and the precise internal type is
+ * still emitted alongside, so nothing is lost.
+ */
+function relationshipPredicate(relationshipType: string): "isSimilarTo" | "isRelatedTo" {
+  return relationshipType === "UPSELL_ALTERNATIVE" || relationshipType === "SIMILAR" ? "isSimilarTo" : "isRelatedTo";
+}
+
+function buildRelationshipNodes(relationships: readonly CompiledRelationship[]): Record<string, unknown> {
+  const grouped: Record<string, unknown[]> = {};
+  for (const relationship of relationships) {
+    const predicate = relationshipPredicate(relationship.relationshipType);
+    (grouped[predicate] ??= []).push({
+      "@type": "Product",
+      "@id": relationship.targetProductId,
+      name: relationship.targetName,
+      additionalProperty: [
+        { "@type": "PropertyValue", name: "relationshipType", value: relationship.relationshipType },
+        { "@type": "PropertyValue", name: "relationshipProvenance", value: relationship.provenance },
+      ],
+    });
+  }
+  return grouped;
 }
 
 export interface AgentCatalogDocument {
@@ -64,6 +114,9 @@ export function buildProductJsonLd(product: CompiledProduct, merchantName: strin
     ...(product.description ? { description: product.description } : {}),
     ...(product.category ? { category: product.category } : {}),
     ...(product.brand ? { brand: { "@type": "Brand", name: product.brand } } : {}),
+    ...(product.relationships && product.relationships.length > 0
+      ? buildRelationshipNodes(product.relationships)
+      : {}),
     offers: product.offers.map((offer) => {
       const availability = availabilityUrl(offer.inStock);
       return {

@@ -14,6 +14,7 @@ import { ErrorState, Skeleton } from "../components/ui/States";
 import { ApiError } from "../lib/api-client";
 import { SANDBOX_STAGE_STATUS_SPEC, ATTACK_CATEGORY_LABEL } from "../features/break-the-agent/sandbox-stage-status";
 import type { SandboxAttackId, SandboxRunResultDTO } from "@razorgrowth/contracts";
+import { RedTeamPanel } from "../components/gateway/RedTeamPanel";
 
 function ResultTimeline({ result }: { result: SandboxRunResultDTO }) {
   return (
@@ -127,6 +128,14 @@ export default function BreakTheAgentPage() {
           })}
         </div>
       )}
+
+      {/* The scripted red-team run used to sit at the bottom of the
+          decision log, which put "here is what happened" and "here is me
+          attacking myself" on the same screen under the same heading. Both
+          adversarial tools are here now, so a merchant testing their
+          policy is in one place and a merchant reading real traffic is not
+          looking at synthetic attacks. */}
+      <RedTeamPanel />
     </div>
   );
 }

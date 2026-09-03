@@ -28,6 +28,7 @@ function product(overrides: Partial<AgentReadableProductDTO> = {}, variants: Age
     freshness: { productUpdatedAt: new Date().toISOString(), oldestPriceUpdateAt: null, oldestInventoryUpdateAt: null },
     readiness: { state: "AGENT_READY", missingCritical: [], missingImportant: [] },
     provenance: { source: "MERCHANT_AUTHORED", derivedFields: "SYSTEM_DERIVED", dataset: "SYNTHETIC_DEMO" },
+    relationships: { crossSell: [], upsell: [], similar: [], bundle: [] },
     ...overrides,
   };
 }

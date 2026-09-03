@@ -5,6 +5,7 @@ import { prisma } from "../../db/client.js";
 import { getAuthenticatedMerchantId } from "../authorization/demo-context.js";
 import { AppError } from "../../http/errors.js";
 import { createCatalogProduct, getCatalogProduct, getCatalogQualitySummary, listCatalogCategories, listCatalogProducts } from "./service.js";
+import { getCatalogGapReport } from "./gap-service.js";
 import { requireApprovalRole } from "../auth/middleware.js";
 import { appendLedgerEvent } from "../audit/ledger.js";
 import { randomUUID } from "node:crypto";
@@ -64,6 +65,16 @@ export function registerCatalogRoutes(app: FastifyInstance, prefix: string): voi
   app.get(`${prefix}/catalog/quality-summary`, async (request) => {
     const merchantId = getAuthenticatedMerchantId(request);
     return getCatalogQualitySummary(prisma, merchantId);
+  });
+
+  /**
+   * Catalogue gaps, per product, with the merchant's own attribute
+   * vocabulary as the suggested shape. See `gap-service.ts` for why the
+   * suggestion is never generated.
+   */
+  app.get(`${prefix}/catalog/gaps`, async (request) => {
+    const merchantId = getAuthenticatedMerchantId(request);
+    return getCatalogGapReport(prisma, merchantId);
   });
 
   app.get(`${prefix}/catalog/products/:id`, async (request) => {

@@ -72,7 +72,7 @@ export function ActivityFeed({ limit = 12 }: { limit?: number }) {
             <p className="mt-0.5 text-sm font-medium text-ink">{entry.title}</p>
             <p className="mt-0.5 text-sm text-ink-muted">{entry.detail}</p>
             <Link
-              to={`/trust-trace?workflowId=${entry.workflowId}`}
+              to={`/merchant/governance/trace?workflowId=${entry.workflowId}`}
               className="mt-1 inline-block font-mono text-[11px] text-brand-600 hover:underline"
             >
               {entry.workflowId.slice(0, 8)}…

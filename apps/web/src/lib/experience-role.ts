@@ -1,13 +1,21 @@
 import { useSyncExternalStore } from "react";
 
 /**
- * Two roles, deliberately.
+ * Two experiences carry the story — an agent buying, and a merchant
+ * governing — and a third that exists only because the platform operator
+ * has to land somewhere.
  *
- * A platform-admin experience existed and was removed: it was a third door
- * onto a console nobody demoing this product needs, and it diluted the two
- * that carry the actual story — an agent buying, and a merchant governing.
+ * A full platform-admin EXPERIENCE was removed once, correctly: a parallel
+ * nav tree nobody demos diluted the two that matter. What survived that
+ * removal was a `PLATFORM_ADMIN` role that can still be provisioned and
+ * still log in, against nine implemented and RBAC-gated `/admin/*`
+ * endpoints with nothing rendering them — so the operator signed in and
+ * landed on a merchant console where every request was refused.
+ *
+ * `admin` here is one page, not a third console. It is the smallest thing
+ * that makes an existing role honest.
  */
-export type ExperienceRole = "customer" | "merchant";
+export type ExperienceRole = "customer" | "merchant" | "admin";
 const STORAGE_KEY = "razorgrowth.experience.role";
 const listeners = new Set<() => void>();
 const notify = () => listeners.forEach((listener) => listener());
@@ -15,7 +23,7 @@ const notify = () => listeners.forEach((listener) => listener());
 export function getExperienceRole(): ExperienceRole {
   try {
     const value = localStorage.getItem(STORAGE_KEY);
-    if (value === "customer" || value === "merchant") return value;
+    if (value === "customer" || value === "merchant" || value === "admin") return value;
   } catch { /* storage can be unavailable */ }
   return "merchant";
 }
@@ -42,4 +50,5 @@ export function useExperienceRole(): ExperienceRole {
 export const ROLE_HOME: Record<ExperienceRole, string> = {
   customer: "/customer/buyer-agent",
   merchant: "/merchant/overview",
+  admin: "/admin/platform",
 };

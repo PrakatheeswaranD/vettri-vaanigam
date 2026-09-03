@@ -14,12 +14,18 @@ import { mergeIntentSignal, needsClarification, type BuyerIntent } from "@razorg
 import { AppError } from "../../http/errors.js";
 import { formatMoney } from "../../lib/format.js";
 import { logger } from "../../observability/logger.js";
+import { classifyBuyerTurn } from "@razorgrowth/domain";
+import { findBuyerVisibleOffers } from "./offers-service.js";
+import { buildComparison, loadConversationCandidates, resolveBuyTarget, toPurchaseOutcome } from "./turn-actions.js";
+import { createPurchaseProposal } from "../buyer-policy/purchase-proposal-service.js";
+import { CUSTOMER_AGENT_ID } from "../buyer-policy/negotiation-service.js";
 import type { AIProvider } from "../agents/ai-provider.js";
 import { getAIProvider } from "../agents/provider-factory.js";
+import { createDemoRuleBasedProvider } from "../agents/providers/demo-rule-based-provider.js";
 import { appendLedgerEvent } from "../audit/ledger.js";
 import { discoverMarketplace } from "../marketplace/service.js";
 import { extractAndNormalizeIntent } from "./intent-extraction.js";
-import { getKnownCategories, getMarketplaceCategories, getKnownAttributes, searchCandidateProducts } from "./catalog-gateway.js";
+import { CATALOG_SEARCH_LIMIT, getKnownCategories, getMarketplaceCategories, getKnownAttributes, searchCandidateProducts } from "./catalog-gateway.js";
 import { evaluateCandidates } from "./candidate-evaluation.js";
 import { buildRecommendations, type RecommendationOutcome } from "./recommendation-service.js";
 import { toDomainIntent, toIntentDTO } from "./intent-mapper.js";
@@ -83,6 +89,25 @@ async function recordLedgerEvent(
 }
 
 export interface HandleBuyerMessageParams {
+  /**
+   * The SHOPPER, and the owner of the conversation.
+   *
+   * This was one field with `merchantId` below, and it did two jobs: it
+   * owned the conversation AND scoped the catalogue. That only worked
+   * because a shopper was filed under a synthetic merchant, so the same
+   * id was a legal value for both. It is not one field any more, and the
+   * foreign key on `BuyerConversation` now refuses to let it become one
+   * again.
+   */
+  customerAccountId: string;
+  /**
+   * The merchant context this exchange is recorded under: the catalogue a
+   * non-marketplace search is scoped to, and the tenant the ledger events
+   * are written against. In marketplace mode the search spans every
+   * active merchant and this is the buyer's own identity context — the
+   * ledger is merchant-scoped by design and a marketplace conversation
+   * has no single seller to attribute to.
+   */
   merchantId: string;
   conversationId?: string;
   message: string;
@@ -102,13 +127,13 @@ export async function handleBuyerMessage(
 ): Promise<BuyerAgentResponseDTO> {
   const traceId = randomUUID();
   const trace: { stage: string; detail: string }[] = [];
-  const provider = providerOverride ?? getAIProvider();
+  let provider = providerOverride ?? getAIProvider();
 
   let conversationRow = params.conversationId
-    ? await findConversation(prisma, params.merchantId, params.conversationId)
+    ? await findConversation(prisma, params.customerAccountId, params.conversationId)
     : null;
   if (!conversationRow) {
-    const created = await createConversation(prisma, params.merchantId);
+    const created = await createConversation(prisma, params.customerAccountId);
     conversationRow = { ...created, messages: [] };
   }
   const conversationId = conversationRow.id;
@@ -137,9 +162,161 @@ export async function handleBuyerMessage(
   const [knownCategories, knownAttributes] = params.marketplace
     ? await Promise.all([getMarketplaceCategories(prisma), getKnownAttributes(prisma, null)])
     : await Promise.all([getKnownCategories(prisma, params.merchantId), getKnownAttributes(prisma, params.merchantId)]);
+  /**
+   * WHAT DID THE BUYER JUST ASK FOR?
+   *
+   * Deterministic, never a model call — see `classifyBuyerTurn`. Deciding
+   * whether a message can move money is not an understanding, and a model
+   * that could be talked into reading "show me cheaper ones" as BUY would
+   * be a prompt-injection surface wired to a payment path.
+   *
+   * `hasContext` is whether anything is on the table. A purchase phrase
+   * with nothing recommended is a search, not an error.
+   */
+  const candidates = await loadConversationCandidates(prisma, conversationId);
+  const turn = classifyBuyerTurn(params.message, candidates.productIds.length > 0);
+  if (turn.matched) {
+    trace.push({ stage: "TURN_CLASSIFIED", detail: `Read as ${turn.action} from the phrase "${turn.matched}".` });
+  }
+
+  // ── COMPARE ─────────────────────────────────────────────────────────
+  //
+  // Answered entirely from catalogue rows the agent already recommended.
+  // No model call, because a comparison is a table of facts — and one the
+  // model wrote would be a second recommendation wearing a table's
+  // clothes.
+  if (turn.action === "COMPARE") {
+    const comparison = await buildComparison(prisma, candidates.productIds);
+    const offers = await findBuyerVisibleOffers(prisma, candidates.productIds);
+    const message = comparison
+      ? `Here they are side by side. ${comparison.rows.filter((r) => r.differs).length} of ${comparison.rows.length} things actually differ.`
+      : "I need at least two options on the table to compare. Tell me what you are looking for and I will find some.";
+    await appendMessage(prisma, conversationId, "AGENT", message);
+    trace.push({ stage: "COMPARISON_BUILT", detail: comparison ? `Compared ${comparison.productIds.length} products on ${comparison.rows.length} catalogue fields.` : "Fewer than two comparable products." });
+
+    return {
+      conversationId,
+      messageId: userMessage.id,
+      status: comparison ? ("COMPARISON_READY" as const) : ("ACTION_UNRESOLVED" as const),
+      intent: (conversationRow.currentIntent as unknown as BuyerIntentDTO | null) ?? null,
+      recommendations: [],
+      recommendationMode: null,
+      recommendationId: candidates.recommendationId,
+      clarification: null,
+      appliedConstraints: [],
+      candidateCount: candidates.productIds.length,
+      aiProviderMode: provider.mode,
+      dataFreshness: new Date().toISOString(),
+      traceId,
+      trace,
+      turnAction: turn.action,
+      offers,
+      comparison,
+      purchase: null,
+      // The same sentence just persisted as the AGENT message, exposed as
+      // a typed field rather than left for the client to reconstruct —
+      // see the field's own doc comment for why that matters here.
+      unresolvedReason: comparison ? null : message,
+    };
+  }
+
+  // ── BUY ─────────────────────────────────────────────────────────────
+  //
+  // Resolves against what the agent ITSELF recommended, by position —
+  // never a product id or name from the message, and never something the
+  // model produced. Then straight into `createPurchaseProposal`, the same
+  // function the REST route calls, so the buyer's spending policy decides
+  // exactly as it would have. No money moves here either way.
+  if (turn.action === "BUY") {
+    const decisionStartedAt = performance.now();
+    const target = await resolveBuyTarget(prisma, candidates.candidates, turn.ordinal);
+
+    if (!target.resolved) {
+      // Ambiguity is ASKED about, never resolved by picking the first
+      // result. An agent that guesses here eventually buys the wrong
+      // thing, and the buyer finds out from their bank.
+      await appendMessage(prisma, conversationId, "AGENT", target.reason);
+      trace.push({ stage: "PURCHASE_UNRESOLVED", detail: target.reason });
+      return {
+        conversationId,
+        messageId: userMessage.id,
+        status: "ACTION_UNRESOLVED" as const,
+        intent: (conversationRow.currentIntent as unknown as BuyerIntentDTO | null) ?? null,
+        recommendations: [],
+        recommendationMode: null,
+        recommendationId: candidates.recommendationId,
+        clarification: null,
+        appliedConstraints: [],
+        candidateCount: candidates.productIds.length,
+        aiProviderMode: provider.mode,
+        dataFreshness: new Date().toISOString(),
+        traceId,
+        trace,
+        turnAction: turn.action,
+        offers: [],
+        comparison: null,
+        purchase: null,
+        unresolvedReason: target.reason,
+      };
+    }
+
+    const proposal = await createPurchaseProposal(prisma, {
+      buyerContext: params.customerAccountId,
+      variantId: target.variantId,
+      quantity: 1,
+      agentId: CUSTOMER_AGENT_ID,
+      decisionLatencyMs: Math.max(0, Math.round(performance.now() - decisionStartedAt)),
+    });
+    const purchase = toPurchaseOutcome(proposal, target.productId, target.variantId, 1);
+    const offers = await findBuyerVisibleOffers(prisma, [target.productId]);
+
+    // The policy's own words, never a restatement — a softened decline is
+    // a decline the buyer might not notice.
+    const message =
+      purchase.outcome === "DECLINE"
+        ? `Your spending policy declined this: ${purchase.explanation}`
+        : purchase.requiresAuthorization
+          ? `Priced and proposed. ${purchase.explanation} Nothing has been charged — authorize it and I will complete the checkout.`
+          : `Priced and proposed, and it sits inside your own limits. Nothing has been charged yet; authorize it to complete the checkout.`;
+    await appendMessage(prisma, conversationId, "AGENT", message);
+    trace.push({ stage: "PURCHASE_PROPOSED", detail: `Buyer policy returned ${purchase.outcome}. No money has moved.` });
+
+    return {
+      conversationId,
+      messageId: userMessage.id,
+      status: purchase.outcome === "DECLINE" ? ("PURCHASE_DECLINED" as const) : ("PURCHASE_PROPOSED" as const),
+      intent: (conversationRow.currentIntent as unknown as BuyerIntentDTO | null) ?? null,
+      recommendations: [],
+      recommendationMode: null,
+      recommendationId: candidates.recommendationId,
+      clarification: null,
+      appliedConstraints: [],
+      candidateCount: candidates.productIds.length,
+      aiProviderMode: provider.mode,
+      dataFreshness: new Date().toISOString(),
+      traceId,
+      trace,
+      turnAction: turn.action,
+      offers,
+      comparison: null,
+      purchase,
+      unresolvedReason: null,
+    };
+  }
+
   const priorIntent = toDomainIntent((conversationRow.currentIntent as unknown as BuyerIntentDTO | null) ?? null);
 
-  const extraction = await extractAndNormalizeIntent(provider, params.message, knownCategories, knownAttributes);
+  let extraction = await extractAndNormalizeIntent(provider, params.message, knownCategories, knownAttributes);
+
+  // A configured cloud model can be temporarily unreachable. Shopping must
+  // remain usable, but the fallback must never masquerade as the live model.
+  // Retry with the explicitly-labelled deterministic extractor and report
+  // DEMO_RULE_BASED in the response so the customer can see what happened.
+  if (!extraction.ok && provider.mode !== "DEMO_RULE_BASED" && !providerOverride) {
+    logger.warn({ event: "buyer_agent.live_provider_fallback", failedMode: provider.mode, errorCode: extraction.errorCode }, "Live provider unavailable; using labelled deterministic fallback");
+    provider = createDemoRuleBasedProvider();
+    extraction = await extractAndNormalizeIntent(provider, params.message, knownCategories, knownAttributes);
+  }
 
   if (!extraction.ok) {
     logger.warn({ event: "buyer_agent.intent_extraction_unavailable", conversationId, traceId, errorCode: extraction.errorCode }, "Intent extraction unavailable");
@@ -153,6 +330,13 @@ export async function handleBuyerMessage(
       recommendations: [],
       recommendationMode: null,
       recommendationId: null,
+      // Part 9 defaults. An early return means SEARCH with nothing to
+      // show, so these are the honest values rather than placeholders.
+      turnAction: "SEARCH" as const,
+      offers: [],
+      comparison: null,
+      purchase: null,
+      unresolvedReason: null,
       clarification: null,
       appliedConstraints: [],
       candidateCount: 0,
@@ -172,8 +356,22 @@ export async function handleBuyerMessage(
   // Once intent is known, perform category-aware merchant selection. This
   // prevents unrelated catalogs from consuming the five-merchant comparison
   // window and hiding a valid seller.
+  // THE COMPARISON WINDOW IS MERCHANTS, NOT PRODUCTS.
+  //
+  // `discoverMarketplace`'s default per-merchant page is a BROWSE bound —
+  // how many tiles a shopper sees on a discovery screen. Reusing it here
+  // made the agent's candidate set narrower than the merchant-scoped
+  // search it replaced: this catalogue has 46 active Running Shoes and the
+  // agent was only ever offered the first 20, so a deterministic filter on
+  // colour + size + budget could refuse a product the merchant genuinely
+  // sells. Bounding the number of SELLERS compared is a product decision
+  // and stays; bounding how much of a chosen seller's catalogue the filter
+  // may see is just an accidental blind spot.
   const marketplace = params.marketplace
-    ? await discoverMarketplace(prisma, { category: mergedIntent.category ?? undefined, limitPerMerchant: 20 })
+    ? await discoverMarketplace(prisma, {
+        category: mergedIntent.category ?? undefined,
+        limitPerMerchant: CATALOG_SEARCH_LIMIT,
+      })
     : null;
   const marketplaceProducts = marketplace?.merchants.flatMap((merchant) => merchant.products);
 
@@ -191,6 +389,13 @@ export async function handleBuyerMessage(
       recommendations: [],
       recommendationMode: null,
       recommendationId: null,
+      // Part 9 defaults. An early return means SEARCH with nothing to
+      // show, so these are the honest values rather than placeholders.
+      turnAction: "SEARCH" as const,
+      offers: [],
+      comparison: null,
+      purchase: null,
+      unresolvedReason: null,
       clarification: { required: true, reasonCode: "MISSING_CATEGORY", question: CLARIFICATION_QUESTION },
       appliedConstraints: buildAppliedConstraints(mergedIntent),
       candidateCount: 0,
@@ -240,6 +445,13 @@ export async function handleBuyerMessage(
       recommendations: [],
       recommendationMode: null,
       recommendationId: null,
+      // Part 9 defaults. An early return means SEARCH with nothing to
+      // show, so these are the honest values rather than placeholders.
+      turnAction: "SEARCH" as const,
+      offers: [],
+      comparison: null,
+      purchase: null,
+      unresolvedReason: null,
       clarification: null,
       appliedConstraints: buildAppliedConstraints(mergedIntent),
       candidateCount: 0,
@@ -282,6 +494,7 @@ export async function handleBuyerMessage(
     intentSnapshot: intentDTO,
     candidateProductIds: outcome.candidateProductIds,
     recommendedProductIds: outcome.recommendations.map((r) => r.productId),
+    recommendedVariantIds: outcome.recommendations.map((r) => r.variantId),
     mode: outcome.mode,
     aiProviderMode: provider.mode,
     traceId,
@@ -300,12 +513,31 @@ export async function handleBuyerMessage(
   await appendMessage(prisma, conversationId, "AGENT", agentMessage);
   logger.info({ event: "buyer_agent.response_completed", conversationId, traceId, status }, "Buyer Agent response completed");
 
+  // OFFER EVALUATION — the stage that was missing entirely.
+  //
+  // Merchant agents author real, governed offers; 125 of them sat
+  // AUTHORIZED on the demo merchant while the Buyer Agent recommended the
+  // same products at list price. Only offers a merchant's own policy
+  // engine actually authorized appear here.
+  const offers = await findBuyerVisibleOffers(
+    prisma,
+    outcome.recommendations.map((r) => r.productId),
+  );
+  if (offers.length > 0) {
+    trace.push({ stage: "OFFERS_EVALUATED", detail: `${offers.length} merchant-authorized offer(s) apply to these products.` });
+  }
+
   return {
     conversationId,
     messageId: userMessage.id,
     status,
     intent: intentDTO,
     recommendations: outcome.recommendations,
+    turnAction: turn.action,
+    offers,
+    comparison: null,
+    purchase: null,
+    unresolvedReason: null,
     recommendationMode: outcome.mode,
     recommendationId: recommendationRecord.id,
     clarification: null,

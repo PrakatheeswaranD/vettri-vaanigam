@@ -31,6 +31,24 @@ export const POLICY_REASON_CODES = [
   "PRODUCT_NOT_AVAILABLE",
   "POLICY_CONFIGURATION_INVALID",
   "RECOVERY_LIMIT_EXCEEDED",
+
+  // ── PART 08 — the boundaries that had no reason code ──────────────
+  /** The discount would sell below the merchant's margin floor. DENY, not
+   * REQUIRE_APPROVAL: a floor is set precisely so nobody has to decide
+   * case by case. */
+  "MARGIN_FLOOR_BREACHED",
+  /** The agent has already taken its permitted number of unattended
+   * actions today. */
+  "DAILY_ACTION_LIMIT_REACHED",
+  /** The merchant has switched automated payment recovery off entirely. */
+  "RECOVERY_NOT_PERMITTED",
+  /** This action type is on the merchant's prohibited list. */
+  "ACTION_TYPE_PROHIBITED",
+  /** The product's category is outside the merchant's eligible set. */
+  "CATEGORY_NOT_ELIGIBLE",
+  /** The customer has fewer paid orders than the merchant requires before
+   * the agent may target them. */
+  "CUSTOMER_NOT_ELIGIBLE",
 ] as const;
 export type PolicyReasonCode = (typeof POLICY_REASON_CODES)[number];
 
@@ -62,6 +80,20 @@ export interface MerchantPolicyConfig {
   autoApprovalOrderAmountMinor: number;
   maxRecoveryAttempts: number;
   proposalValidityMinutes: number;
+
+  // ── PART 08 boundaries ────────────────────────────────────────────
+  /** Minimum gross margin, in bps, a discounted line must leave. */
+  minMarginBps: number;
+  /** Ceiling on unattended actions per UTC day. */
+  maxAutonomousActionsPerDay: number;
+  /** Whether automated payment recovery is permitted at all. */
+  recoveryEnabled: boolean;
+  /** Action types the agent may never take. */
+  prohibitedActions: readonly string[];
+  /** Categories the agent may act on. EMPTY MEANS ALL. */
+  eligibleCategories: readonly string[];
+  /** Paid orders a customer needs before the agent may target them. */
+  minCustomerPaidOrders: number;
 }
 
 export interface PolicyEvaluationProposalFacts {
@@ -87,6 +119,41 @@ export interface PolicyEvaluationProposalFacts {
   productAvailable: boolean;
   /** Only meaningful for `RECOVERY` proposals. */
   recoveryAttemptCount: number;
+
+  // ── PART 08 facts, all revalidated by the caller at evaluation time ──
+  /**
+   * Gross margin this action would leave, in basis points, or `null` when
+   * cost is not known for the product.
+   *
+   * Null is not "fine" and not "zero" — it means the merchant has not
+   * recorded a cost, so no margin claim is possible. The engine treats an
+   * unknowable margin as a DENY when a floor is configured, because
+   * "discount something whose cost I do not know" is exactly what a floor
+   * exists to prevent.
+   */
+  marginBps: number | null;
+  /** The product's category, for the eligible-category boundary. */
+  productCategory: string | null;
+  /**
+   * Paid orders the target customer already has, or `null` when the action
+   * targets no specific customer (a catalogue-wide cross-sell). A null
+   * skips the customer boundary rather than failing it — the boundary is
+   * about WHO is targeted, and nobody is.
+   */
+  customerPaidOrderCount: number | null;
+  /**
+   * Unattended actions already authorized for this merchant today (UTC).
+   *
+   * Counted from authorizations ISSUED, not proposals raised: a proposal
+   * policy denied consumed none of the merchant's autonomy budget.
+   */
+  autonomousActionsToday: number;
+  /**
+   * Whether THIS evaluation is for an unattended run. A merchant sitting
+   * in the console pressing "run a cycle" is present and supervising, so
+   * the daily unattended ceiling does not apply to them.
+   */
+  unattended: boolean;
 }
 
 export interface PolicyEvaluationInput {

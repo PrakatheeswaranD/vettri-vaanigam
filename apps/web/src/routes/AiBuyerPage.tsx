@@ -16,22 +16,16 @@ import { AgentBubble, BuyerBubble, ErrorBubble, TypingBubble } from "../componen
 import { RawResponseToggle } from "../components/buyer-agent/RawResponseToggle";
 import { useBuyerViewMode } from "../lib/buyer-view-mode";
 import { BuyerReasoningPipeline } from "../components/buyer-agent/BuyerReasoningPipeline";
+import { AgentTurnResult } from "../components/buyer-agent/AgentTurnResult";
 import { useResetBuyerConversation, useSendBuyerMessage } from "../hooks/use-buyer-agent";
 import { ApiError } from "../lib/api-client";
+import { SpendingEnvelopeStrip } from "../components/buyer-agent/SpendingEnvelopeStrip";
+import { CustomerProposalsSection } from "./CustomerHistoryPage";
 
-/**
- * Framed as DIAGNOSTICS, not shopping.
- *
- * A human with a filter sidebar does not need this, and claiming
- * otherwise would be a weak pitch that a judge would rightly poke. The
- * question this page answers is the merchant's: can an autonomous agent —
- * which has no screen and cannot ask a follow-up question — understand and
- * buy from my catalogue?
- */
 const CAPABILITIES = [
-  { icon: MessageSquare, title: "See what an agent understands", description: "Shows the structured constraints a machine extracts from a request — filters are for people who can read a screen; this is what an agent has to work from." },
-  { icon: Search, title: "Test your catalogue's legibility", description: "Applies those constraints against your agent-readable catalogue exactly as the gateway does, deterministically and in code." },
-  { icon: ShoppingCart, title: "Find what agents cannot buy", description: "Flags products a shopper could buy from a filtered list but an agent cannot — no recorded price, unrecorded stock, or nothing structured to match on." },
+  { icon: MessageSquare, title: "Describe the outcome", description: "Say what you need in normal language. The agent turns budget, use, preferences, and must-haves into reviewable constraints." },
+  { icon: Search, title: "Then keep talking", description: "“Show cheaper ones.” “Compare these.” “I prefer waterproof.” Follow-ups refine the search you already started rather than beginning a new one." },
+  { icon: ShoppingCart, title: "Buy without leaving the chat", description: "Say “buy the second one” and the agent prices it from the catalogue and puts it to your spending policy. Nothing is charged until you authorize it." },
 ];
 
 const PROVIDER_MODE_LABEL: Record<BuyerAgentResponseDTO["aiProviderMode"], string> = {
@@ -84,6 +78,41 @@ function AgentStatusMessage({ response }: { response: BuyerAgentResponseDTO }) {
         {response.recommendations.length > 0
           ? `No exact match was found for every requirement, but here ${response.recommendations.length === 1 ? "is" : "are"} ${response.recommendations.length} close alternative${response.recommendations.length === 1 ? "" : "s"}.`
           : "No exact match, and no close alternative either — every option violates a required specification."}
+      </div>
+    );
+  }
+  // Part 9 — these four statuses never carry `recommendations`, so falling
+  // through to the default banner below would say "Found 0 products that
+  // match your request" on a COMPARE or BUY turn. The actual result
+  // renders separately via `AgentTurnResult`; this banner only needs to
+  // say what KIND of turn this was.
+  if (response.status === "COMPARISON_READY") {
+    return (
+      <div className="rounded-card bg-success-subtle px-4 py-3 text-sm text-success-text">
+        Compared {response.comparison?.productIds.length ?? 0} products on catalogue facts — see the table below.
+      </div>
+    );
+  }
+  if (response.status === "PURCHASE_PROPOSED") {
+    return (
+      <div className="rounded-card bg-success-subtle px-4 py-3 text-sm text-success-text">
+        Priced and proposed to your spending policy. Nothing has been charged.
+      </div>
+    );
+  }
+  if (response.status === "PURCHASE_DECLINED") {
+    return (
+      <div className="flex items-start gap-2 rounded-card bg-danger-subtle px-4 py-3 text-sm text-danger-text">
+        <AlertTriangle size={16} className="mt-0.5 shrink-0" />
+        Your spending policy declined this purchase.
+      </div>
+    );
+  }
+  if (response.status === "ACTION_UNRESOLVED") {
+    return (
+      <div className="flex items-start gap-2 rounded-card bg-info-subtle px-4 py-3 text-sm text-info-text">
+        <HelpCircle size={16} className="mt-0.5 shrink-0" />
+        {response.unresolvedReason ?? "Could you say which one you mean?"}
       </div>
     );
   }
@@ -140,7 +169,7 @@ export default function AiBuyerPage() {
         <div>
           <PageHeader
             title={"AI Buyer Agent"}
-            lead={"Let an AI agent discover, compare, and propose bounded purchases from the merchant's authoritative catalog."}
+            lead={"Describe the outcome you want. Your agent clarifies, compares grounded options, and proposes a purchase inside your spending policy."}
           />
         </div>
         <div className="flex shrink-0 items-center gap-2">
@@ -179,6 +208,12 @@ export default function AiBuyerPage() {
         </div>
       </div>
 
+      {/* What the agent may spend, next to the box you type into. This was
+          a separate "Home" screen whose other three cards only restated
+          the navigation; the envelope is the part that changes what you
+          can ask for, so it sits with the asking. */}
+      <SpendingEnvelopeStrip />
+
       {turns.length === 0 ? (
         <>
           <Card className="border-brand-200/80 bg-gradient-to-br from-brand-50/60 to-surface">
@@ -186,12 +221,17 @@ export default function AiBuyerPage() {
               <div className="flex h-14 w-14 items-center justify-center rounded-2xl bg-brand-600 text-white shadow-md">
                 <Bot size={28} />
               </div>
-              <h2 className="text-xl font-bold tracking-tight text-ink">Good afternoon 👋 What can I help you buy?</h2>
+              <h2 className="text-xl font-bold tracking-tight text-ink">What should your Buyer Agent solve for?</h2>
               <p className="max-w-lg text-sm text-ink-muted leading-relaxed">
                 Recommendations are grounded in structured price, inventory, variant, and policy data from the
-                Agent-Readable Catalog — the AI interprets your language, but strictly obeys merchant floor margins and spending limits.
+                Agent-Readable Catalog. The model interprets your language; deterministic filters, your spending policy,
+                and explicit authorization keep the recommendation and purchase bounded.
               </p>
-              <StarterQueries onSelect={handleSend} />
+              {/* Follow-ups shown here too: a buyer reading the empty
+                  state is exactly who needs to learn the vocabulary,
+                  and one who never learns it keeps operating the site
+                  by hand. */}
+              <StarterQueries onSelect={handleSend} showFollowUps />
             </CardBody>
           </Card>
 
@@ -240,7 +280,12 @@ export default function AiBuyerPage() {
             return (
               <div key={turn.id} className="space-y-3">
                 <AgentStatusMessage response={response} />
+                {/* The reasoning pipeline explains a SEARCH. A comparison,
+                    an offer or a purchase proposal is what the agent
+                    produced when asked to DO something, and renders in
+                    its own right. */}
                 <BuyerReasoningPipeline buyerMessage={precedingMessage} response={response} />
+                <AgentTurnResult response={response} />
                 <div className="flex flex-wrap items-center gap-2 pl-1 text-xs text-ink-faint">
                   <span className="rounded-full bg-surface-sunken px-2 py-0.5">{PROVIDER_MODE_LABEL[response.aiProviderMode]}</span>
                   {response.recommendationMode ? (
@@ -285,6 +330,13 @@ export default function AiBuyerPage() {
           {sendMessage.isPending ? "Thinking…" : "Send"}
         </button>
       </form>
+
+      {/* Baskets this agent prepared and nobody has authorized yet. This
+          was "Cart & Offers", its own nav destination — but a proposal is
+          the output of the conversation above it, not somewhere a shopper
+          navigates to, and splitting the two meant authorizing a purchase
+          happened on a different screen from asking for it. */}
+      <CustomerProposalsSection />
     </div>
   );
 }

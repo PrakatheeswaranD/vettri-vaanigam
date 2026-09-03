@@ -21,12 +21,13 @@
 import { afterAll, beforeAll, describe, expect, it } from "vitest";
 import { randomUUID } from "node:crypto";
 import type { FastifyInstance } from "fastify";
-import { buildAuthedTestApp, getTestMerchantId } from "./test-helpers/test-app.js";
+import { buildAuthedTestApp, buildCustomerTestApp, getTestBuyerContextId, getTestMerchantId } from "./test-helpers/test-app.js";
 import { prisma } from "./db/client.js";
 import { proposeGrowthAction } from "./modules/merchant-agent/service.js";
 import { createFixtureProvider } from "./modules/agents/providers/fixture-provider.js";
 
 let app: FastifyInstance;
+let customerApp: FastifyInstance;
 
 async function productId(name: string): Promise<string> {
   const product = await prisma.product.findFirstOrThrow({ where: { name } });
@@ -35,10 +36,15 @@ async function productId(name: string): Promise<string> {
 
 beforeAll(async () => {
   app = await buildAuthedTestApp();
+  // The NEAR_MATCH that triggers a recovery offer is produced by a
+  // SHOPPER asking the Buyer Agent; the offer itself is a merchant
+  // action. This flow genuinely spans both roles.
+  customerApp = await buildCustomerTestApp();
 });
 
 afterAll(async () => {
   await app.close();
+  await customerApp?.close();
   await prisma.$disconnect();
 });
 
@@ -251,13 +257,13 @@ describe("proposeGrowthAction — deterministic bounds enforced by validation (�
 describe("recovery offer — a real NEAR_MATCH Buyer Agent outcome (PART 04 §15)", () => {
   it("proposes a bounded discount that closes exactly the buyer's disclosed budget gap", async () => {
     // Real end-to-end trigger: ask the Buyer Agent for black size-9
-    // running shoes under ₹5,000 — the real seeded catalog has no exact
-    // match under that budget, only a near match (Meridian Summit Trail,
-    // over budget by a known amount — see buyer-agent.test.ts).
-    const buyerRes = await app.inject({
+    // running shoes under ₹3,000 — below the cheapest such shoe in the
+    // seeded catalogue (₹3,490), so the honest outcome is a near match
+    // over budget by a known amount (see buyer-agent.test.ts).
+    const buyerRes = await customerApp.inject({
       method: "POST",
-      url: "/api/v1/buyer-agent/messages",
-      payload: { message: "Find black running shoes in size 9 under ₹5,000" },
+      url: "/api/v1/buyer/messages",
+      payload: { message: "Find black running shoes in size 9 under ₹3,000" },
     });
     const buyerBody = buyerRes.json();
     expect(buyerBody.recommendationMode).toBe("NEAR_MATCH");
@@ -268,9 +274,12 @@ describe("recovery offer — a real NEAR_MATCH Buyer Agent outcome (PART 04 §15
     // The Buyer Agent response doesn't carry a recommendationId directly,
     // but persists one RecommendationRecord per response — look it up by
     // conversationId to get the id this test needs.
-    const merchantId = await getTestMerchantId(prisma);
+    // The recommendation was recorded against the SHOPPER's context (the
+    // conversation is theirs), not against the seller whose product it
+    // recommended.
+    const buyerContextId = await getTestBuyerContextId(prisma);
     const record = await prisma.recommendationRecord.findFirstOrThrow({
-      where: { conversationId: buyerBody.conversationId, merchantId },
+      where: { conversationId: buyerBody.conversationId, merchantId: buyerContextId },
       orderBy: { createdAt: "desc" },
     });
 

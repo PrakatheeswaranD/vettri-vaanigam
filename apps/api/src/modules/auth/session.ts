@@ -32,6 +32,17 @@ export async function createSession(prisma: PrismaClient, merchantUserId: string
 export interface AuthenticatedSession {
   merchantUserId: string;
   merchantId: string;
+  /**
+   * The shopper's own account, set for CUSTOMER sessions and null for
+   * every other role.
+   *
+   * This is the field `/buyer/*` partitions by. It used to be
+   * `merchantId` — the id of a synthetic merchant a shopper was filed
+   * under — so one value meant "the seller" on merchant routes and "the
+   * shopper" on customer routes, and telling which required knowing the
+   * route rather than reading it.
+   */
+  customerAccountId: string | null;
   role: string;
   email: string;
 }
@@ -49,6 +60,7 @@ export async function resolveSession(prisma: PrismaClient, token: string): Promi
   return {
     merchantUserId: session.merchantUser.id,
     merchantId: session.merchantUser.merchantId,
+    customerAccountId: session.merchantUser.customerAccountId,
     role: session.merchantUser.role,
     email: session.merchantUser.email,
   };

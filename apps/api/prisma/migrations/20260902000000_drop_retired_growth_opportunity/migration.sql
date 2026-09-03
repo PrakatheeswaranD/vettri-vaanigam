@@ -1,0 +1,16 @@
+-- Drops the retired GrowthOpportunity feed.
+--
+-- The catalogue scanner that wrote this table, its `/growth/opportunities`
+-- route, its read path and its console section were all removed in Part 4:
+-- every one of its four categories is covered by the Revenue Opportunity
+-- Engine, which computes from live orders, payments and products on read
+-- rather than from a table something had to remember to write.
+--
+-- What remained afterwards was a table the seed still populated and nothing
+-- read — the worst state for a schema to sit in, because a future reader
+-- cannot tell a retired feature from a broken one.
+--
+-- Safe to drop: no application code references it, and the rows were
+-- either demo seed data or scanner output for a scanner that no longer
+-- exists. Nothing in Order, Payment or the ledger points at it.
+DROP TABLE IF EXISTS "GrowthOpportunity";

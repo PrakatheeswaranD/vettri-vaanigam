@@ -62,7 +62,7 @@ export function AgentDrivenGrowth() {
         {!decisions.isPending && approved.length === 0 ? (
           <p className="rounded-card border border-border bg-surface-subtle px-3 py-2.5 text-sm text-ink-muted">
             No AI-buyer request has been approved yet, so there is nothing to report.{" "}
-            <Link to="/agent-gateway" className="font-medium text-brand-600 hover:underline">
+            <Link to="/merchant/governance/decisions" className="font-medium text-brand-600 hover:underline">
               Run the demo from the Agent Gateway
             </Link>{" "}
             to send five.

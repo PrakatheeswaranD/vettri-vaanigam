@@ -1,4 +1,4 @@
-import { Activity, Bot, Gauge, Home, LayoutDashboard, Package, Receipt, RotateCcw, ScrollText, Settings, ShieldCheck, ShoppingBag, Sparkles, TrendingUp, type LucideIcon } from "lucide-react";
+import { Bot, Compass, Gauge, LayoutDashboard, Package, Receipt, Search, ShieldCheck, ShoppingBag, TrendingUp, type LucideIcon } from "lucide-react";
 import type { ExperienceRole } from "../../lib/experience-role";
 
 export interface NavItem { to: string; label: string; icon: LucideIcon; hint: string }
@@ -7,33 +7,59 @@ export interface NavSection { id: string; label: string; items: NavItem[] }
 export const ROLE_LABELS: Record<ExperienceRole, string> = {
   customer: "Customer · Buy with AI",
   merchant: "Merchant · Grow with AI",
+  admin: "Platform · Operate",
 };
 
+/**
+ * The whole product, in eleven links.
+ *
+ * WHAT THIS REPLACED
+ *
+ * Nineteen merchant entries in two groups, and seven customer ones. Each
+ * pointed at a real screen, so nothing was broken — but "Growth
+ * Opportunities", "Offers & Actions", "Agent Ledger" and "Agent Activity"
+ * are four labels for two ideas, and a merchant could not tell from the
+ * list which one answered the question they had. A navigation that long
+ * stops being navigation and becomes a directory.
+ *
+ * Track 01 is two capabilities: a merchant growing revenue with AI, and AI
+ * buyers completing real commerce. So the merchant sees five destinations
+ * and the shopper sees six, each named for what it is FOR rather than
+ * which subsystem produced it. Where a destination has genuinely distinct
+ * views — Products vs Orders vs Payments — those are tabs inside it, which
+ * keeps them one click away without putting them in this list.
+ *
+ * NO SECTION GROUPING ANYMORE
+ *
+ * Five items do not need to be split into "Revenue Growth" and "Merchant
+ * Automation". That split was itself a symptom: it existed to make
+ * nineteen items scannable, and it put policy, approvals and decisions in
+ * different halves of a list even though they are the same subject.
+ */
 export const NAV_BY_ROLE: Record<ExperienceRole, NavSection[]> = {
-  customer: [{ id: "customer", label: "Customer", items: [
-    { to: "/customer/home", label: "Home", icon: Home, hint: "Your AI shopping overview" },
-    { to: "/customer/buyer-agent", label: "Buyer Agent", icon: Bot, hint: "Describe intent, compare, and authorize" },
-    { to: "/customer/discover", label: "Discover", icon: ShoppingBag, hint: "Explore AI-readable merchant catalogs" },
-    { to: "/customer/orders", label: "Orders", icon: Package, hint: "Proposals, orders, and fulfillment" },
-    { to: "/customer/payments", label: "Payments", icon: Receipt, hint: "Payment state and safe recovery" },
-    { to: "/customer/activity", label: "Activity", icon: Activity, hint: "Transparent record of your AI actions" },
-    { to: "/customer/policy", label: "Spending Policy", icon: ShieldCheck, hint: "Autonomous and daily purchase limits" },
+  customer: [{ id: "customer", label: "Buy with AI", items: [
+    { to: "/customer/buyer-agent", label: "Buyer Agent", icon: Bot, hint: "Describe what you need, review what it proposes" },
+    { to: "/customer/discover", label: "Discover", icon: Search, hint: "Shop products across AI-ready merchants" },
+    { to: "/customer/orders", label: "Orders", icon: Package, hint: "Purchases your agent carried through" },
+    { to: "/customer/payments", label: "Payments", icon: Receipt, hint: "Where the money actually is" },
+    { to: "/customer/activity", label: "Agent Activity", icon: Compass, hint: "Every proposal, refusal, and the reason" },
+    { to: "/customer/policy", label: "Spending Policy", icon: ShieldCheck, hint: "What your agent may spend without asking" },
   ] }],
+
   merchant: [{ id: "merchant", label: "Grow with AI", items: [
-    { to: "/merchant/overview", label: "Overview", icon: LayoutDashboard, hint: "Captured payments and growth signals" },
-    { to: "/merchant/growth", label: "Growth", icon: TrendingUp, hint: "Revenue opportunities and bounded campaigns" },
-    { to: "/merchant/ai-buyers", label: "AI Buyers", icon: Bot, hint: "Buyer intent and governed agent requests" },
-    { to: "/merchant/catalog", label: "Catalog", icon: Package, hint: "AI-readable products and availability" },
-    { to: "/merchant/offers", label: "Opportunities & Offers", icon: Sparkles, hint: "Upsell, cross-sell, and controlled offers" },
-    { to: "/merchant/payments", label: "Payments", icon: Receipt, hint: "Transactions and payment operations" },
-    { to: "/merchant/post-purchase", label: "Post-Purchase", icon: RotateCcw, hint: "Refunds, returns, shipping, and chargebacks" },
-    { to: "/merchant/policies", label: "Policies", icon: Settings, hint: "Discount and autonomy boundaries" },
-    { to: "/merchant/readiness", label: "AI Readiness", icon: Gauge, hint: "Discoverability and transactability score" },
-    { to: "/merchant/ledger", label: "Agent Ledger", icon: ScrollText, hint: "Tamper-evident agent action record" },
+    { to: "/merchant/overview", label: "Overview", icon: LayoutDashboard, hint: "Captured revenue, readiness, and what agents did" },
+    { to: "/merchant/agent", label: "Merchant Agent", icon: Bot, hint: "What your agent offers, and whether it can act" },
+    { to: "/merchant/growth", label: "Growth", icon: TrendingUp, hint: "Opportunities, offers, measured results, and your limits" },
+    { to: "/merchant/commerce", label: "Commerce", icon: ShoppingBag, hint: "Products, orders, customers, payments, returns" },
+    { to: "/merchant/governance", label: "Governance", icon: ShieldCheck, hint: "Decisions, approvals, policy, and the audit trail" },
+  ] }],
+
+  // Deliberately one entry. The platform operator needs a place to land
+  // and a way to reach the `/admin/*` surface; they do not need a parallel
+  // console, and the last attempt at one was removed for good reason.
+  admin: [{ id: "platform", label: "Platform", items: [
+    { to: "/admin/platform", label: "Platform Operations", icon: Gauge, hint: "Merchants, payment risk, and the platform audit trail" },
   ] }],
 };
 
 export const getNavSections = (role: ExperienceRole): NavSection[] => NAV_BY_ROLE[role];
-export const NAV_LOOKUP: Record<string, NavItem> = Object.fromEntries(
-  Object.values(NAV_BY_ROLE).flatMap((sections) => sections.flatMap((section) => section.items)).map((item) => [item.to, item]),
-);

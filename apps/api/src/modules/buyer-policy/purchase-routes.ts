@@ -1,17 +1,17 @@
-import { randomUUID } from "node:crypto";
 import type { FastifyInstance } from "fastify";
 import { z } from "zod";
 import { paymentClientVerificationRequestSchema } from "@razorgrowth/contracts";
 import { prisma } from "../../db/client.js";
 import { AppError } from "../../http/errors.js";
-import { getAuthenticatedMerchantId } from "../authorization/demo-context.js";
+import { getBuyerContextId } from "../authorization/demo-context.js";
+import { createPurchaseProposal } from "./purchase-proposal-service.js";
+import { categoryPermitted } from "./resolve-policy.js";
 import { requireApprovalRole } from "../auth/middleware.js";
 import { appendLedgerEvent, withLedgerConcurrencyRetry } from "../audit/ledger.js";
 import { executeExternalAgentPurchase, ExternalPurchaseExecutionError } from "../gateway/execution-service.js";
 import { getPayment, verifyClientCompletion } from "../payments/payment-service.js";
 import { getPaymentGateway } from "../payments/gateway-factory.js";
 import { negotiateProposal, loadCustomerHistory, loadNegotiationPolicy } from "./negotiation-service.js";
-import { resolveBuyerPolicy } from "./resolve-policy.js";
 import { computeCustomerStanding } from "@razorgrowth/domain";
 
 /**
@@ -33,15 +33,11 @@ const agentId = "customer-buyer-agent";
  * re-check at authorization time. Two copies of an authorization rule is
  * how one of them ends up stale, and this one decides whether an agent
  * may spend money.
+ *
+ * `categoryPermitted` moved to `resolve-policy.ts` in Part 9: the Buyer
+ * Agent conversation needs the same check, and two copies would be two
+ * answers to "may this shopper buy this".
  */
-function categoryPermitted(
-  policy: { allowAllCategories: boolean },
-  category: string,
-  allowedCategories: string[],
-): boolean {
-  if (policy.allowAllCategories) return true;
-  return allowedCategories.includes(category);
-}
 
 async function ownedProposal(id: string, buyerContext: string) {
   const row = await prisma.decisionRecord.findFirst({ where: { id, externalAgentId: agentId, protocolActorRef: buyerContext } });
@@ -65,7 +61,7 @@ export function registerBuyerPurchaseRoutes(app: FastifyInstance, prefix: string
    * Every authoritative amount still comes from the decision record.
    */
   app.get(`${prefix}/buyer/purchase-proposals`, async (request) => {
-    const buyerContext = getAuthenticatedMerchantId(request);
+    const buyerContext = getBuyerContextId(request);
     const rows = await prisma.decisionRecord.findMany({ where: { externalAgentId: agentId, protocolActorRef: buyerContext }, orderBy: { createdAt: "desc" }, take: 100, select: { id: true, explanation: true, outcome: true, reasonCode: true, settlementStatus: true, computedTotalMinor: true, preNegotiationTotalMinor: true, negotiationStatus: true, negotiatedDiscountBps: true, currency: true, internalOrderId: true, internalPaymentId: true, normalizedBasket: true, createdAt: true, authorizationExpiresAt: true, merchant: { select: { name: true } } } });
 
     const lineSchema = z.array(z.object({ variantId: z.string().uuid(), quantity: z.number().int().positive(), unitPriceMinor: z.number().int().nonnegative(), lineDiscountMinor: z.number().int().nonnegative().optional() }));
@@ -101,47 +97,43 @@ export function registerBuyerPurchaseRoutes(app: FastifyInstance, prefix: string
     // Measured, not assumed. This was hardcoded to 0, so the merchant
     // console reported "0ms median decision" for every buyer purchase —
     // a fabricated number in a console whose whole value is honest
-    // reporting. Timed the same way the agent gateway times its own
-    // decisions: from intake to the moment the outcome is known, and
-    // deliberately NOT including the ledger write or checkout execution
-    // that follow, so the figure measures the gate rather than the work
-    // done after it.
+    // reporting. Timed from intake to the moment the outcome is known,
+    // and deliberately NOT including the ledger write or checkout
+    // execution that follow, so the figure measures the gate rather than
+    // the work done after it.
     const decisionStartedAt = performance.now();
-    const buyerContext = getAuthenticatedMerchantId(request);
-    const body = z.object({ variantId: z.string().uuid(), quantity: z.number().int().min(1).max(10), budgetMinor: z.number().int().nonnegative().optional() }).parse(request.body);
-    const variant = await prisma.productVariant.findFirst({ where: { id: body.variantId, active: true, product: { status: "ACTIVE", merchant: { status: "ACTIVE" } } }, include: { product: true, inventory: true } });
-    if (!variant) throw AppError.notFound("Active product variant not found.");
-    const policy = await resolveBuyerPolicy(buyerContext);
-    const amountMinor = variant.priceMinor * body.quantity;
-    const categories = z.array(z.string()).parse(policy.allowedCategories);
-    const reasons: string[] = [];
-    if (variant.currency !== policy.currency) reasons.push("POLICY_CURRENCY_MISMATCH");
-    // `allowAllCategories` is a real column the shopper set deliberately —
-    // never a magic word matched out of `allowedCategories`. A wildcard
-    // hidden in user-supplied text is what an injection would aim for, and
-    // it makes a deliberate choice indistinguishable from a typo.
-    if (!categoryPermitted(policy, variant.product.category, categories)) reasons.push("CATEGORY_NOT_ALLOWED");
-    if ((variant.inventory?.availableQuantity ?? 0) < body.quantity) reasons.push("INSUFFICIENT_INVENTORY");
-    if (amountMinor > policy.dailyLimitMinor) reasons.push("DAILY_LIMIT_EXCEEDED");
-    if (body.budgetMinor !== undefined && amountMinor > body.budgetMinor) reasons.push("BUYER_BUDGET_EXCEEDED");
-    const requiresApproval = amountMinor > policy.autonomousPurchaseLimitMinor;
-    if (requiresApproval && !policy.approvalRequiredAboveLimit) reasons.push("AUTONOMOUS_LIMIT_EXCEEDED");
-    const outcome = reasons.length ? "DECLINE" : requiresApproval ? "STEP_UP" : "AUTO_APPROVE";
-    const explanation = reasons.length ? reasons.join(", ") : requiresApproval ? "Explicit buyer approval is required above the autonomous limit." : "Within the saved buyer policy; ready for authorization.";
-    const decisionLatencyMs = Math.max(0, Math.round(performance.now() - decisionStartedAt));
-    const row = await withLedgerConcurrencyRetry(prisma, async (tx) => {
-      const proposal = await tx.decisionRecord.create({ data: {
-        merchantId: variant.product.merchantId, externalAgentId: agentId, protocolActorRef: buyerContext,
-        outcome, reasonCode: reasons[0] ?? (requiresApproval ? "BUYER_APPROVAL_REQUIRED" : "BUYER_POLICY_PASSED"), explanation,
-        computedTotalMinor: amountMinor, currency: variant.currency, appliedCeilingMinor: policy.autonomousPurchaseLimitMinor,
-        permissionType: "NONE", authorizationExpiresAt: new Date(Date.now() + 15 * 60_000),
-        normalizedBasket: [{ productId: variant.productId, variantId: variant.id, quantity: body.quantity, unitPriceMinor: variant.priceMinor }],
-        workflowId: randomUUID(), settlementStatus: "PROPOSED", decisionLatencyMs,
-      } });
-      await appendLedgerEvent(tx, { merchantId: proposal.merchantId, workflowId: proposal.workflowId!, actorType: "COMMERCE", actionType: "BUYER_PURCHASE_PROPOSED", status: "EXECUTED", conciseReason: explanation, relatedEntityType: "DecisionRecord", relatedEntityId: proposal.id });
-      return proposal;
+    const buyerContext = getBuyerContextId(request);
+    const body = z
+      .object({
+        variantId: z.string().uuid(),
+        quantity: z.number().int().min(1).max(10),
+        budgetMinor: z.number().int().nonnegative().optional(),
+      })
+      .parse(request.body);
+
+    // The whole decision lives in `createPurchaseProposal` now. The Buyer
+    // Agent conversation calls the SAME function when a shopper says "buy
+    // the second one" — a conversation that built its own proposal would
+    // be a second implementation of spending policy, and the one nobody
+    // tests is the one that quietly diverges.
+    const result = await createPurchaseProposal(prisma, {
+      buyerContext,
+      variantId: body.variantId,
+      quantity: body.quantity,
+      budgetMinor: body.budgetMinor,
+      agentId,
+      decisionLatencyMs: Math.max(0, Math.round(performance.now() - decisionStartedAt)),
     });
-    return { id: row.id, amountMinor, currency: row.currency, outcome, explanation, requiresApproval, expiresAt: row.authorizationExpiresAt!.toISOString() };
+
+    return {
+      id: result.id,
+      amountMinor: result.amountMinor,
+      currency: result.currency,
+      outcome: result.outcome,
+      explanation: result.explanation,
+      requiresApproval: result.requiresApproval,
+      expiresAt: result.expiresAt,
+    };
   });
 
   /**
@@ -153,8 +145,15 @@ export function registerBuyerPurchaseRoutes(app: FastifyInstance, prefix: string
    * and there is no field in which to try.
    */
   app.get(`${prefix}/buyer/standing`, async (request) => {
-    const buyerContext = getAuthenticatedMerchantId(request);
-    const merchantId = z.object({ merchantId: z.string().uuid().optional() }).parse(request.query).merchantId ?? buyerContext;
+    const buyerContext = getBuyerContextId(request);
+    // Standing is always standing WITH A SELLER — it is derived from
+    // settled orders placed at that merchant, against that merchant's
+    // negotiation envelope. This used to fall back to the buyer's own
+    // context id, which is a merchant row that sells nothing: the query
+    // then matched no orders and every shopper read as NEW no matter how
+    // much they had bought. A missing seller is a malformed request, not
+    // a shopper with no history.
+    const { merchantId } = z.object({ merchantId: z.string().uuid() }).parse(request.query);
 
     const [history, policy] = await Promise.all([
       loadCustomerHistory(prisma, buyerContext, merchantId),
@@ -195,7 +194,7 @@ export function registerBuyerPurchaseRoutes(app: FastifyInstance, prefix: string
    * what was asked for is how a negotiation loses a customer's trust.
    */
   app.post(`${prefix}/buyer/purchase-proposals/:id/negotiate`, async (request) => {
-    const buyerContext = getAuthenticatedMerchantId(request);
+    const buyerContext = getBuyerContextId(request);
     const { id } = idSchema.parse(request.params);
     const body = z
       .object({
@@ -215,7 +214,7 @@ export function registerBuyerPurchaseRoutes(app: FastifyInstance, prefix: string
 
   app.post(`${prefix}/buyer/purchase-proposals/:id/authorize`, async (request) => {
     if (request.merchantUserRole !== "CUSTOMER") requireApprovalRole(request);
-    const buyerContext = getAuthenticatedMerchantId(request);
+    const buyerContext = getBuyerContextId(request);
     const { id } = idSchema.parse(request.params);
     const row = await ownedProposal(id, buyerContext);
     if (row.internalPaymentId) return getPayment(prisma, row.merchantId, row.internalPaymentId);
@@ -223,7 +222,7 @@ export function registerBuyerPurchaseRoutes(app: FastifyInstance, prefix: string
     await withLedgerConcurrencyRetry(prisma, async (tx) => {
       // This row update serializes all purchases for one buyer context before
       // reserving daily allowance, including simultaneous cross-merchant buys.
-      const policy = await tx.buyerSpendingPolicy.update({ where: { merchantId: buyerContext }, data: { updatedAt: new Date() } });
+      const policy = await tx.buyerSpendingPolicy.update({ where: { customerAccountId: buyerContext }, data: { updatedAt: new Date() } });
       const current = await tx.decisionRecord.findUniqueOrThrow({ where: { id } });
       if (current.settlementStatus !== "PROPOSED") throw AppError.conflict("This proposal was already attempted. Check payment status; do not retry.");
       if (current.outcome === "DECLINE") throw new AppError("POLICY_DENIED", current.explanation);
@@ -267,12 +266,12 @@ export function registerBuyerPurchaseRoutes(app: FastifyInstance, prefix: string
   });
 
   app.get(`${prefix}/buyer/purchase-proposals/:id/payment`, async (request) => {
-    const row = await ownedProposal(idSchema.parse(request.params).id, getAuthenticatedMerchantId(request));
+    const row = await ownedProposal(idSchema.parse(request.params).id, getBuyerContextId(request));
     if (!row.internalPaymentId) throw AppError.conflict("No payment evidence is available yet. Do not retry an in-flight purchase.");
     return getPayment(prisma, row.merchantId, row.internalPaymentId);
   });
   app.get(`${prefix}/buyer/purchase-proposals/:id/payment/checkout`, async (request) => {
-    const row = await ownedProposal(idSchema.parse(request.params).id, getAuthenticatedMerchantId(request));
+    const row = await ownedProposal(idSchema.parse(request.params).id, getBuyerContextId(request));
     if (!row.internalPaymentId) throw AppError.conflict("No payment order has been created.");
     const payment = await getPayment(prisma, row.merchantId, row.internalPaymentId);
     const gateway = getPaymentGateway();
@@ -282,7 +281,7 @@ export function registerBuyerPurchaseRoutes(app: FastifyInstance, prefix: string
     return { paymentId: payment.id, providerOrderId: payment.providerOrderId, amountMinor: payment.amountMinor, currency: payment.currency, keyId: config.keyId };
   });
   app.post(`${prefix}/buyer/purchase-proposals/:id/payment/verify`, async (request) => {
-    const row = await ownedProposal(idSchema.parse(request.params).id, getAuthenticatedMerchantId(request));
+    const row = await ownedProposal(idSchema.parse(request.params).id, getBuyerContextId(request));
     const body = paymentClientVerificationRequestSchema.parse(request.body);
     if (body.paymentId !== row.internalPaymentId) throw AppError.forbidden("Payment does not belong to this proposal.");
     return verifyClientCompletion(prisma, row.merchantId, body);

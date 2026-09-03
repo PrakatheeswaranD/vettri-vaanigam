@@ -61,6 +61,24 @@ export async function getGrowthSummary(prisma: PrismaClient, merchantId: string)
     }),
   ]);
 
+  const [pendingApprovals, agentEvents] = await Promise.all([
+    // The proposals a human still has to decide. Same status the
+    // approvals queue itself lists, so the Overview and that queue can
+    // never disagree about how much is waiting.
+    prisma.growthActionProposal.count({ where: { merchantId, status: "PENDING_APPROVAL" } }),
+
+    // What the agent did on its own initiative. Scoped to
+    // `actorType: MERCHANT_AGENT`, so a deterministic readiness
+    // recalculation — written as SYSTEM — is correctly not counted as
+    // something the agent decided to do.
+    prisma.agentAction.groupBy({
+      by: ["actionType"],
+      where: { merchantId, actorType: "MERCHANT_AGENT" },
+      _count: { _all: true },
+      _max: { createdAt: true },
+    }),
+  ]);
+
   const opportunityValueMinor = openProposals.reduce((sum, p) => {
     const opp = p.opportunity as OpportunityJson | null;
     // Only same-currency deltas are summed — a mixed-currency total would
@@ -81,7 +99,12 @@ export async function getGrowthSummary(prisma: PrismaClient, merchantId: string)
 
   // A "recovered" order is one whose money only arrived on a later
   // bounded retry — the failure-first path actually working.
-  const recoveredOrders = capturedAgenticPayments.filter((p) => p.attemptNumber > 1).length;
+  const recovered = capturedAgenticPayments.filter((p) => p.attemptNumber > 1);
+  const recoveredOrders = recovered.length;
+  // The same provider-verified rows, summed. A count alone tells a
+  // merchant that recovery happened without telling them whether it was
+  // worth doing.
+  const recoveredValueMinor = recovered.reduce((sum, p) => sum + p.amountMinor, 0);
 
   return {
     growthOpportunities,
@@ -92,5 +115,17 @@ export async function getGrowthSummary(prisma: PrismaClient, merchantId: string)
     opportunityValue: { amountMinor: opportunityValueMinor, currency },
     observedCapturedValue: { amountMinor: observedCapturedMinor, currency },
     blockedByGovernance,
+    recoveredValue: { amountMinor: recoveredValueMinor, currency },
+    pendingApprovals,
+    automatedActions: agentEvents
+      .map((row) => ({
+        actionType: row.actionType,
+        count: row._count._all,
+        // `_max.createdAt` is only null for an empty group, which groupBy
+        // does not return; the fallback keeps the type honest without
+        // inventing a date the console would render.
+        lastAt: (row._max.createdAt ?? new Date()).toISOString(),
+      }))
+      .sort((a, b) => b.count - a.count),
   };
 }

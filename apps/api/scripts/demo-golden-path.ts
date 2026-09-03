@@ -279,7 +279,7 @@ async function main() {
       `/action-ledger/workflows/${workflowId}/verify`,
     );
     log("ledger integrity", `${verify.valid ? "VERIFIED" : "BROKEN"} across ${verify.eventCount} events`);
-    console.log(`\nOpen this workflow in Trust Trace:\n  http://localhost:5173/trust-trace?workflowId=${workflowId}\n`);
+    console.log(`\nOpen this workflow in Trust Trace:\n  http://localhost:5173/merchant/governance/trace?workflowId=${workflowId}\n`);
   }
 
   console.log("Reminder: the two payment outcomes above were webhooks this script signed with your own");

@@ -202,3 +202,51 @@ export function useDraftPolicy() {
     mutationFn: (instruction: string) => apiPost<PolicyDraft>("/agent-gateway/policy/draft", { instruction }),
   });
 }
+
+/**
+ * The queue of orders the gateway refused to auto-approve and handed to a
+ * human, and the act of deciding one.
+ *
+ * `GET /agent-gateway/step-ups` and `POST /agent-gateway/decisions/:id/decide`
+ * were both implemented, RBAC-gated and tested, and neither was reachable
+ * from anywhere in the console. The single most important moment in a
+ * governed agentic purchase — a person deciding an order an agent was not
+ * trusted to place alone — could only be performed with curl.
+ */
+export interface PendingStepUp {
+  id: string;
+  externalAgentId: string | null;
+  protocol: string | null;
+  computedTotalMinor: number | null;
+  currency: string | null;
+  appliedCeilingMinor: number | null;
+  reasonCode: string;
+  explanation: string;
+  createdAt: string;
+}
+
+export function usePendingStepUps() {
+  return useQuery({
+    queryKey: ["agent-gateway", "step-ups"],
+    queryFn: () => apiGet<{ items: PendingStepUp[] }>("/agent-gateway/step-ups"),
+  });
+}
+
+export function useDecideStepUp() {
+  const queryClient = useQueryClient();
+  return useMutation({
+    mutationFn: (params: { decisionId: string; decision: "APPROVED" | "REJECTED"; note?: string }) =>
+      apiPost<{ id: string; stepUpStatus: string }>(`/agent-gateway/decisions/${params.decisionId}/decide`, {
+        decision: params.decision,
+        ...(params.note ? { note: params.note } : {}),
+      }),
+    onSuccess: () => {
+      // The decision changes both the queue and the decision log beneath
+      // it, so both are refetched rather than leaving the log showing a
+      // step-up that has just been resolved.
+      void queryClient.invalidateQueries({ queryKey: ["agent-gateway", "step-ups"] });
+      void queryClient.invalidateQueries({ queryKey: ["agent-gateway", "decisions"] });
+      void queryClient.invalidateQueries({ queryKey: ["agent-gateway", "metrics"] });
+    },
+  });
+}

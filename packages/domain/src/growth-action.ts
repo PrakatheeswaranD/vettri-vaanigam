@@ -23,10 +23,23 @@ export type GrowthActionType = (typeof GROWTH_ACTION_TYPES)[number];
  *   on issuance failure)
  *
  * `POLICY_DENIED`, `REJECTED_VALIDATION`, and `APPROVAL_REJECTED` are
- * terminal — none of them can ever reach `AUTHORIZED`. There is
- * deliberately no `EXECUTED`/`VERIFIED` value yet: PART 05 stops at
- * authorization, and adding states for a stage that doesn't exist yet
- * would misrepresent what is actually implemented (PART 00 §50).
+ * terminal — none of them can ever reach `AUTHORIZED`.
+ *
+ * PART 08 — WHY `EXECUTED`/`VERIFIED`/`FAILED` ARE HERE NOW
+ *
+ * They were deliberately absent while PART 05 stopped at authorization:
+ * naming a stage that did not exist would have misrepresented what was
+ * implemented. Execution does exist now, and their absence had become the
+ * misrepresentation instead — an authorization that was issued and then
+ * failed was indistinguishable from one still waiting to run, so "what did
+ * the agent actually do" could not be answered from the governance rows
+ * alone. It had to be reassembled by joining out to whatever each action
+ * type happened to write.
+ *
+ * These record WHAT HAPPENED, never how much money moved. `VERIFIED` means
+ * the row execution claimed to write was read back and exists — not that
+ * revenue arrived. Amounts stay on the payment rows, which remain the only
+ * financial truth.
  */
 export const GROWTH_PROPOSAL_STATUSES = [
   "PROPOSED",
@@ -37,6 +50,9 @@ export const GROWTH_PROPOSAL_STATUSES = [
   "APPROVED",
   "APPROVAL_REJECTED",
   "AUTHORIZED",
+  "EXECUTED",
+  "VERIFIED",
+  "FAILED",
 ] as const;
 export type GrowthProposalStatus = (typeof GROWTH_PROPOSAL_STATUSES)[number];
 
@@ -51,7 +67,17 @@ export const GROWTH_PROPOSAL_TRANSITIONS: Record<GrowthProposalStatus, readonly 
   PENDING_APPROVAL: ["APPROVED", "APPROVAL_REJECTED"],
   APPROVED: ["AUTHORIZED"],
   APPROVAL_REJECTED: [],
-  AUTHORIZED: [],
+  // Execution may only follow authorization. There is no path from
+  // ALLOWED or APPROVED straight to EXECUTED: an action that skipped
+  // issuing an authorization skipped the one row that proves it was
+  // permitted at the moment it ran.
+  AUTHORIZED: ["EXECUTED", "FAILED"],
+  EXECUTED: ["VERIFIED", "FAILED"],
+  // Terminal. A verified action is finished, and a failed one is
+  // re-proposed as NEW work rather than silently retried under an
+  // authorization that has already been consumed.
+  VERIFIED: [],
+  FAILED: [],
 };
 
 export function isValidProposalTransition(from: GrowthProposalStatus, to: GrowthProposalStatus): boolean {

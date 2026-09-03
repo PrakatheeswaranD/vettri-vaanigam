@@ -9,12 +9,23 @@
  */
 import { describe, it, expect, beforeAll, afterAll, beforeEach } from "vitest";
 import type { FastifyInstance } from "fastify";
-import { buildAuthedTestApp, getTestMerchantId } from "./test-helpers/test-app.js";
+import { buildAuthedTestApp, buildCustomerTestApp, getTestBuyerContextId, getTestMerchantId } from "./test-helpers/test-app.js";
 import { prisma } from "./db/client.js";
 import { CUSTOMER_AGENT_ID } from "./modules/buyer-policy/negotiation-service.js";
 
+/** The shopper's session — everything under `/buyer/*`. */
 let app: FastifyInstance;
+/** The merchant's session. A negotiation that escalates is decided by the
+ * SELLER, on the merchant surface; driving both halves from one session
+ * was only possible while the two roles were indistinguishable. */
+let merchantApp: FastifyInstance;
+/** The SELLER — whose catalogue, policy and margin floor are under test. */
 let merchantId: string;
+/** The SHOPPER's own context — what `/buyer/*` partitions rows by. These
+ * are two different things, and the suite used to pass the seller's id for
+ * both, which is why it could drive customer routes with a merchant
+ * session and never notice. */
+let buyerContextId: string;
 let variantId: string;
 let priceMinor: number;
 
@@ -41,7 +52,8 @@ function negotiate(id: string, discountBps?: number | null) {
 }
 
 function standing() {
-  return app.inject({ method: "GET", url: "/api/v1/buyer/standing" });
+  // Standing is always standing WITH a seller, so the seller is named.
+  return app.inject({ method: "GET", url: `/api/v1/buyer/standing?merchantId=${merchantId}` });
 }
 
 /**
@@ -50,14 +62,14 @@ function standing() {
  */
 async function giveCustomerSettledOrders(count: number, disputed = 0) {
   await prisma.decisionRecord.deleteMany({
-    where: { externalAgentId: CUSTOMER_AGENT_ID, protocolActorRef: merchantId, settlementStatus: { in: ["SETTLED", "REFUNDED"] } },
+    where: { externalAgentId: CUSTOMER_AGENT_ID, protocolActorRef: buyerContextId, settlementStatus: { in: ["SETTLED", "REFUNDED"] } },
   });
   for (let i = 0; i < count; i += 1) {
     await prisma.decisionRecord.create({
       data: {
         merchantId,
         externalAgentId: CUSTOMER_AGENT_ID,
-        protocolActorRef: merchantId,
+        protocolActorRef: buyerContextId,
         outcome: "AUTO_APPROVE",
         reasonCode: "BUYER_POLICY_PASSED",
         explanation: "Seeded settled order for negotiation history.",
@@ -73,7 +85,7 @@ async function giveCustomerSettledOrders(count: number, disputed = 0) {
       data: {
         merchantId,
         externalAgentId: CUSTOMER_AGENT_ID,
-        protocolActorRef: merchantId,
+        protocolActorRef: buyerContextId,
         outcome: "AUTO_APPROVE",
         reasonCode: "BUYER_POLICY_PASSED",
         explanation: "Seeded refunded order for negotiation history.",
@@ -87,8 +99,10 @@ async function giveCustomerSettledOrders(count: number, disputed = 0) {
 }
 
 beforeAll(async () => {
-  app = await buildAuthedTestApp();
+  app = await buildCustomerTestApp();
+  merchantApp = await buildAuthedTestApp();
   merchantId = await getTestMerchantId(prisma);
+  buyerContextId = await getTestBuyerContextId(prisma);
 
   await prisma.agentGatewayPolicy.upsert({
     where: { merchantId },
@@ -111,9 +125,25 @@ beforeAll(async () => {
   });
 
   // A variant with a KNOWN cost, so the margin check has something to
-  // work with rather than failing closed on every test.
+  // work with rather than failing closed on every test — AND with stock,
+  // because a proposal for an out-of-stock variant is declined outright
+  // and there is then no price to negotiate. The stock clause was missing,
+  // so which variant this picked was decided by physical row order: on a
+  // freshly reseeded database it landed on a zero-inventory variant and
+  // all thirteen assertions in this file failed with POLICY_DENIED, for a
+  // reason that had nothing to do with negotiation.
+  //
+  // `orderBy` is not decoration either. Without it the fixture is whatever
+  // the planner returns today, so identical code can pass one day and
+  // fail the next.
   const variant = await prisma.productVariant.findFirstOrThrow({
-    where: { active: true, costMinor: { not: null }, product: { merchantId, status: "ACTIVE" } },
+    where: {
+      active: true,
+      costMinor: { not: null },
+      product: { merchantId, status: "ACTIVE" },
+      inventory: { availableQuantity: { gte: 10 } },
+    },
+    orderBy: { sku: "asc" },
   });
   variantId = variant.id;
   priceMinor = variant.priceMinor;
@@ -121,9 +151,9 @@ beforeAll(async () => {
   // The buyer policy has to permit this category, or every proposal is a
   // DECLINE and there is no price to negotiate.
   await prisma.buyerSpendingPolicy.upsert({
-    where: { merchantId },
+    where: { customerAccountId: buyerContextId },
     create: {
-      merchantId,
+      customerAccountId: buyerContextId,
       allowedCategories: [(await prisma.product.findUniqueOrThrow({ where: { id: variant.productId } })).category],
       autonomousPurchaseLimitMinor: 100_000_000,
       dailyLimitMinor: 1_000_000_000,
@@ -142,9 +172,10 @@ beforeEach(async () => {
 
 afterAll(async () => {
   await prisma.decisionRecord.deleteMany({
-    where: { externalAgentId: CUSTOMER_AGENT_ID, protocolActorRef: merchantId, settlementStatus: { in: ["SETTLED", "REFUNDED"] } },
+    where: { externalAgentId: CUSTOMER_AGENT_ID, protocolActorRef: buyerContextId, settlementStatus: { in: ["SETTLED", "REFUNDED"] } },
   });
   await app.close();
+  await merchantApp.close();
   await prisma.$disconnect();
 });
 
@@ -248,7 +279,7 @@ describe("negotiation — past the line, the merchant decides", () => {
     const proposal = await createProposal();
     await negotiate(proposal.id, 1200);
 
-    const list = await app.inject({ method: "GET", url: "/api/v1/agent-gateway/negotiations" });
+    const list = await merchantApp.inject({ method: "GET", url: "/api/v1/agent-gateway/negotiations" });
     const item = (list.json().items as { id: string; requestedDiscountMinor: number; wouldBecomeMinor: number; customerTier: string }[]).find(
       (row) => row.id === proposal.id,
     );
@@ -264,7 +295,7 @@ describe("negotiation — past the line, the merchant decides", () => {
     const proposal = await createProposal();
     await negotiate(proposal.id, 1200);
 
-    const decided = await app.inject({
+    const decided = await merchantApp.inject({
       method: "POST",
       url: `/api/v1/agent-gateway/negotiations/${proposal.id}/decide`,
       payload: { approve: true },
@@ -282,7 +313,7 @@ describe("negotiation — past the line, the merchant decides", () => {
     const proposal = await createProposal();
     await negotiate(proposal.id, 1200);
 
-    await app.inject({
+    await merchantApp.inject({
       method: "POST",
       url: `/api/v1/agent-gateway/negotiations/${proposal.id}/decide`,
       payload: { approve: false },
@@ -298,13 +329,13 @@ describe("negotiation — past the line, the merchant decides", () => {
     await giveCustomerSettledOrders(3);
     const proposal = await createProposal();
     await negotiate(proposal.id, 1200);
-    await app.inject({
+    await merchantApp.inject({
       method: "POST",
       url: `/api/v1/agent-gateway/negotiations/${proposal.id}/decide`,
       payload: { approve: false },
     });
 
-    const list = await app.inject({ method: "GET", url: "/api/v1/agent-gateway/negotiations" });
+    const list = await merchantApp.inject({ method: "GET", url: "/api/v1/agent-gateway/negotiations" });
     expect((list.json().items as { id: string }[]).some((row) => row.id === proposal.id)).toBe(false);
   });
 });
@@ -334,7 +365,7 @@ describe("negotiation — what a client cannot do", () => {
     expect(body.outcome).toBe("DECLINED");
     expect(body.reasonCode).toBe("ABOVE_NEGOTIABLE_MAXIMUM");
 
-    const list = await app.inject({ method: "GET", url: "/api/v1/agent-gateway/negotiations" });
+    const list = await merchantApp.inject({ method: "GET", url: "/api/v1/agent-gateway/negotiations" });
     expect((list.json().items as { id: string }[]).some((row) => row.id === proposal.id)).toBe(false);
   });
 

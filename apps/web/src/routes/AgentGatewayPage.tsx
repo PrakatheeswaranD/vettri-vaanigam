@@ -23,9 +23,9 @@ import {
 } from "../hooks/use-agent-gateway";
 import { formatMoney } from "../lib/format";
 import { AgentTrustPanel } from "../components/gateway/AgentTrustPanel";
-import { RedTeamPanel } from "../components/gateway/RedTeamPanel";
 import { PolicyComposer } from "../components/gateway/PolicyComposer";
 import { NegotiationQueue } from "../components/gateway/NegotiationQueue";
+import { StepUpQueue } from "../components/gateway/StepUpQueue";
 
 const OUTCOME_STYLE: Record<DecisionLogEntry["outcome"], { icon: typeof CheckCircle2; cls: string; label: string }> = {
   AUTO_APPROVE: { icon: CheckCircle2, cls: "bg-success-subtle text-success-text", label: "Auto-approved" },
@@ -142,6 +142,10 @@ export default function AgentGatewayPage() {
         </div>
         {m?.basis ? <p className="mt-2 text-xs text-ink-faint">{m.basis}</p> : null}
       </section>
+
+      {/* Held orders come before everything else on this page: a
+          decision someone is waiting on outranks a metric. */}
+      <StepUpQueue />
 
       <NegotiationQueue />
 
@@ -380,8 +384,6 @@ export default function AgentGatewayPage() {
       </Card>
 
       <AgentTrustPanel policy={policy.data} />
-
-      <RedTeamPanel />
     </div>
   );
 }

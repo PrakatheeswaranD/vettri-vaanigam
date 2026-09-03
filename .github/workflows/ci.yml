@@ -84,6 +84,13 @@ jobs:
       - name: Seed demo data
         run: pnpm db:seed
 
+      # The shopper and platform-admin identities do NOT come from db:seed —
+      # it creates the merchant and its catalogue only. Every customer-surface
+      # test signs in as the demo shopper, so without this step those suites
+      # cannot pass here no matter what the code does.
+      - name: Provision demo identities (shopper, platform admin)
+        run: pnpm db:identities
+
       - name: Test
         run: pnpm test
 

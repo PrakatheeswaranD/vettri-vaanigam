@@ -1,32 +1,14 @@
 import { z } from "zod";
-import { moneySchema, valueClassificationSchema } from "./common.js";
-
-export const opportunityCategorySchema = z.enum([
-  "CROSS_SELL",
-  "UPSELL",
-  "CATALOG_GAP",
-  "READINESS_GAP",
-  "PAYMENT_RECOVERY",
-]);
+import { moneySchema } from "./common.js";
 
 /**
- * Signal → Opportunity → Recommendation (PART 00 §19). PART 01 seeds a
- * small number of these deterministically from real seed-data conditions
- * (PART 01 §79); the full Revenue Opportunity Engine is a later part.
+ * The `GrowthOpportunity` feed and its catalogue scanner were retired in
+ * Part 4: all four of its categories are covered by the Revenue
+ * Opportunity Engine, which computes from live rows rather than from a
+ * table something had to remember to write. Its schema is gone from here,
+ * its route is gone from the API, and its table is dropped by
+ * `20260902000000_drop_retired_growth_opportunity`.
  */
-export const growthOpportunitySchema = z.object({
-  id: z.string().uuid(),
-  merchantId: z.string().uuid(),
-  category: opportunityCategorySchema,
-  signal: z.string(),
-  recommendation: z.string(),
-  estimatedValue: moneySchema.nullable(),
-  valueClassification: valueClassificationSchema,
-  status: z.enum(["IDENTIFIED", "PROPOSED", "ACTED_ON"]),
-  isSyntheticDemo: z.boolean(),
-  createdAt: z.string().datetime(),
-});
-export type GrowthOpportunityDTO = z.infer<typeof growthOpportunitySchema>;
 
 /**
  * Merchant growth outcome summary (Part 11 §22-§23) — a READ MODEL over
@@ -58,5 +40,36 @@ export const growthSummarySchema = z.object({
   /** Proposals blocked by deterministic validation or policy — shown so
    * the summary never reads as "AI succeeded every time". */
   blockedByGovernance: z.number().int().min(0),
+
+  /**
+   * VERIFIED: money that arrived only because a bounded retry was made.
+   *
+   * `recoveredOrders` was already here as a count, which tells a merchant
+   * that recovery happened but not whether it was worth anything. The
+   * amount is the same provider-verified `CAPTURED` payments, summed —
+   * never an estimate of what recovery "could" earn.
+   */
+  recoveredValue: moneySchema,
+
+  /** Proposals the policy engine will not release without a human. This
+   * is the one number on the Overview that is a request for action. */
+  pendingApprovals: z.number().int().min(0),
+
+  /**
+   * What the Merchant Agent did on its own, from the ledger.
+   *
+   * Grouped rather than listed: the Overview answers "what has my agent
+   * been doing" and a raw event feed answers "what happened at 14:32".
+   * The ledger tab already does the second. Only events written with
+   * `actorType: MERCHANT_AGENT` appear here — a deterministic readiness
+   * recalculation is not something the agent decided to do.
+   */
+  automatedActions: z.array(
+    z.object({
+      actionType: z.string(),
+      count: z.number().int().min(0),
+      lastAt: z.string().datetime(),
+    }),
+  ),
 });
 export type GrowthSummaryDTO = z.infer<typeof growthSummarySchema>;

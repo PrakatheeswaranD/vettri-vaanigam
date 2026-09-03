@@ -2,6 +2,8 @@ import { useState } from "react";
 import { Link } from "react-router-dom";
 import { CheckCircle2, AlertTriangle, Package, Search, SlidersHorizontal } from "lucide-react";
 import { useCatalog, useCatalogCategories, useCatalogQualitySummary } from "../hooks/use-api";
+import { useCommerceProducts } from "../hooks/use-commerce";
+import type { CommerceProductDTO } from "@razorgrowth/contracts";
 import { Card, CardBody } from "../components/ui/Card";
 import { EmptyState, ErrorState, Skeleton } from "../components/ui/States";
 import { ProductReadinessBadge } from "../components/readiness/ProductReadinessBadge";
@@ -9,6 +11,7 @@ import { formatMoney } from "../lib/format";
 import { ApiError } from "../lib/api-client";
 import { PageHeader } from "../components/layout/PageHeader";
 import { CatalogCompiler } from "../components/catalog/CatalogCompiler";
+import { CatalogGaps } from "../components/catalog/CatalogGaps";
 import { AddProductModal } from "../components/catalog/AddProductModal";
 
 const AVAILABILITY_OPTIONS = [
@@ -19,6 +22,42 @@ const AVAILABILITY_OPTIONS = [
   { value: "UNAVAILABLE", label: "Unavailable" },
   { value: "UNKNOWN", label: "Unknown inventory" },
 ];
+
+/**
+ * What a product has actually done, under what it costs.
+ *
+ * Sales are PAID-only and whole-history — an abandoned basket contributes
+ * nothing. A product that has never sold says so in words rather than
+ * showing a row of zeroes, because "0 sold" and "no data yet" read the
+ * same and mean different things to a merchant deciding what to fix.
+ */
+function PerformanceLine({
+  overlay,
+  currency,
+}: {
+  overlay: CommerceProductDTO | undefined;
+  currency: string | undefined;
+}) {
+  if (!overlay) return null;
+  const { unitsSold, revenueMinor } = overlay.performance;
+  const needsWork = overlay.aiReadiness.state !== "AGENT_READY";
+
+  return (
+    <div className="mt-1 flex items-center justify-between gap-2 border-t border-border-hair pt-2 text-xs">
+      <span className="text-ink-muted">
+        {unitsSold === 0
+          ? "Not sold yet"
+          : `${unitsSold} sold · ${currency ? formatMoney({ amountMinor: revenueMinor, currency: currency as "INR" | "USD" }) : revenueMinor}`}
+      </span>
+      {needsWork ? (
+        <span className="shrink-0 text-ink-faint">
+          {overlay.aiReadiness.missingCritical.length + overlay.aiReadiness.missingImportant.length} gap
+          {overlay.aiReadiness.missingCritical.length + overlay.aiReadiness.missingImportant.length === 1 ? "" : "s"}
+        </span>
+      ) : null}
+    </div>
+  );
+}
 
 export default function CatalogPage() {
   const [search, setSearch] = useState("");
@@ -31,6 +70,19 @@ export default function CatalogPage() {
 
   const { data: categories } = useCatalogCategories();
   const { data: quality } = useCatalogQualitySummary();
+  /**
+   * The operational overlay: how each product has actually performed, and
+   * which Growth findings attach to it.
+   *
+   * A SEPARATE call on purpose. The catalogue endpoint browses, filters
+   * and paginates; this one carries only what the catalogue does not.
+   * Merging them would put two copies of every product's name and price on
+   * one screen, free to disagree the moment either changes.
+   */
+  const overlay = useCommerceProducts();
+
+  const performanceById = new Map((overlay.data?.products ?? []).map((row) => [row.productId, row]));
+
   const { data, isLoading, isError, error, refetch } = useCatalog({
     page,
     limit: 12,
@@ -51,6 +103,8 @@ export default function CatalogPage() {
           title={"Products"}
           lead={"Your catalogue as an AI agent sees it — the price, stock and details it reads before deciding whether it can buy."}
         />
+
+      <CatalogGaps />
 
       <CatalogCompiler />
         </div>
@@ -190,7 +244,7 @@ export default function CatalogPage() {
         <>
           <div className="grid gap-4 sm:grid-cols-2 lg:grid-cols-3 xl:grid-cols-4">
             {data.items.map((product) => (
-              <Link key={product.id} to={`/catalog/${product.id}`}>
+              <Link key={product.id} to={`/merchant/commerce/products/${product.id}`}>
                 <Card className="h-full transition-shadow hover:shadow-popover">
                   <CardBody className="flex h-full flex-col gap-2">
                     <div className="flex items-start justify-between gap-2">
@@ -211,6 +265,7 @@ export default function CatalogPage() {
                         {product.totalAvailable > 0 ? `${product.totalAvailable} in stock` : "Out of stock"}
                       </span>
                     </div>
+                    <PerformanceLine overlay={performanceById.get(product.id)} currency={overlay.data?.currency} />
                   </CardBody>
                 </Card>
               </Link>

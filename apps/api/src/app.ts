@@ -21,6 +21,7 @@ import { registerLedgerRoutes } from "./modules/audit/routes.js";
 import { registerSandboxRoutes } from "./modules/sandbox/routes.js";
 import { registerGrowthRoutes } from "./modules/growth/routes.js";
 import { registerTransactionRoutes, registerCommerceRoutes } from "./modules/commerce/routes.js";
+import { registerCommerceOperationsRoutes } from "./modules/commerce/operations-routes.js";
 import { registerAgentCommerceRoutes } from "./modules/agent-commerce/routes.js";
 import { registerAgentGatewayRoutes } from "./modules/gateway/routes.js";
 import { registerCatalogCompilerRoutes } from "./modules/catalog-compiler/routes.js";
@@ -68,7 +69,22 @@ export function buildApp(): FastifyInstance {
   });
 
   void app.register(cors, {
-    origin: [env.WEB_ORIGIN],
+    origin: (origin, cb) => {
+      if (!origin) {
+        cb(null, true);
+        return;
+      }
+      if (env.NODE_ENV !== "production") {
+        if (origin === env.WEB_ORIGIN || /^https?:\/\/(localhost|127\.0\.0\.1)(:\d+)?$/.test(origin)) {
+          cb(null, true);
+          return;
+        }
+      } else if (origin === env.WEB_ORIGIN) {
+        cb(null, true);
+        return;
+      }
+      cb(new Error("Not allowed by CORS"), false);
+    },
     credentials: false,
   });
 
@@ -154,6 +170,7 @@ export function buildApp(): FastifyInstance {
   registerMerchantAgentRoutes(app, v1);
   registerPolicyRoutes(app, v1);
   registerCommerceRoutes(app, v1);
+  registerCommerceOperationsRoutes(app, v1);
   registerPaymentRoutes(app, v1);
   registerPaymentWebhookRoutes(app, v1);
   registerCampaignRoutes(app, v1);

@@ -93,6 +93,17 @@ const envSchema = z.object({
   X402_ASSET_CURRENCY: z.enum(["INR", "USD"]).default("USD"),
   X402_ATOMIC_UNITS_PER_MINOR: z.coerce.number().int().positive().optional(),
   DATA_RETENTION_DAYS: z.coerce.number().int().min(1).max(3650).default(30),
+  /**
+   * The operator's half of the unattended-cycle switch. Off by default for
+   * the same reason the retention sweeper is: starting an API against a
+   * connected database must never begin acting on merchant data by
+   * surprise. The merchant's own `autonomousRunsEnabled` must also be
+   * true before anything runs.
+   */
+  AGENT_SCHEDULER_ENABLED: z.enum(["true", "false"]).default("false").transform((value) => value === "true"),
+  /** Floor of one minute — a tighter loop would race its own cycles
+   * without finishing more work. */
+  AGENT_SCHEDULER_INTERVAL_MS: z.coerce.number().int().min(60_000).default(15 * 60 * 1_000),
   RETENTION_SWEEPER_ENABLED: z.enum(["true", "false"]).default("false").transform((value) => value === "true"),
   RETENTION_SWEEP_INTERVAL_MS: z.coerce.number().int().min(60_000).default(24 * 60 * 60 * 1_000),
 });

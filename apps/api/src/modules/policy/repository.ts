@@ -8,6 +8,16 @@ const DEFAULT_MERCHANT_POLICY = {
   maxOrderAmountMinor: 5_000_000,
   autoApprovalOrderAmountMinor: 1_000_000,
   maxRecoveryAttempts: 2,
+  // PART 08 boundaries. Same values as the column defaults, so a merchant
+  // with no policy row is governed identically to one whose row was
+  // created by the migration — two fallbacks that disagree would mean the
+  // agent behaved differently depending on whether a row happened to exist.
+  minMarginBps: 1000,
+  maxAutonomousActionsPerDay: 50,
+  recoveryEnabled: true,
+  prohibitedActions: [] as string[],
+  eligibleCategories: [] as string[],
+  minCustomerPaidOrders: 0,
   proposalValidityMinutes: 30,
   approvalValidityMinutes: 15,
   authorizationValidityMinutes: 10,
@@ -27,6 +37,17 @@ export interface MerchantPolicyUpdateInput {
   maxOrderAmountMinor: number;
   autoApprovalOrderAmountMinor: number;
   maxRecoveryAttempts: number;
+  // PART 08 boundaries — merchant-editable, server-enforced.
+  //
+  // Optional so a caller sending only the fields it knows about stays
+  // valid. Prisma drops `undefined` from an update, so an omitted
+  // boundary is left exactly as it was rather than reset.
+  minMarginBps?: number;
+  maxAutonomousActionsPerDay?: number;
+  recoveryEnabled?: boolean;
+  prohibitedActions?: string[];
+  eligibleCategories?: string[];
+  minCustomerPaidOrders?: number;
   proposalValidityMinutes: number;
   approvalValidityMinutes: number;
   authorizationValidityMinutes: number;
@@ -39,7 +60,15 @@ export async function updateMerchantPolicy(prisma: PrismaClient, merchantId: str
   const current = await getMerchantPolicy(prisma, merchantId);
   return prisma.merchantPolicy.upsert({
     where: { merchantId },
-    create: { merchantId, ...input, policyVersion: 1 },
+    // A CREATE cannot leave a required column undefined, so the merchant's
+    // current effective values (the row's, or the conservative fallback)
+    // fill any boundary this request omitted.
+    create: {
+      merchantId,
+      ...DEFAULT_MERCHANT_POLICY,
+      ...Object.fromEntries(Object.entries(input).filter(([, value]) => value !== undefined)),
+      policyVersion: 1,
+    },
     update: { ...input, policyVersion: current.policyVersion + 1 },
   });
 }

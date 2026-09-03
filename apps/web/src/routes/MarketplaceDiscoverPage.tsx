@@ -287,7 +287,7 @@ export default function MarketplaceDiscoverPage() {
                         <tr key={product.productId} className="border-t border-border-hair align-top hover:bg-surface-subtle/60">
                           <td className="px-4 py-3">
                             <Link
-                              to={`/customer/product/${product.productId}`}
+                              to={`/customer/discover/${product.productId}`}
                               className="rounded font-medium text-ink transition hover:text-brand-700 hover:underline focus-visible:outline focus-visible:outline-2 focus-visible:outline-offset-2 focus-visible:outline-brand-600"
                             >
                               {product.identity.name}

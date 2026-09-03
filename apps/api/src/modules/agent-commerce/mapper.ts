@@ -9,13 +9,67 @@
  * fields an AI buyer specifically needs (freshness, provenance,
  * per-product readiness) that the human UI DTO doesn't need to carry.
  */
-import type { Inventory, Product, ProductVariant } from "@prisma/client";
-import type { AgentReadableProductDTO, AgentVariantDTO } from "@razorgrowth/contracts";
+import type { Inventory, Product, ProductRelationship, ProductVariant } from "@prisma/client";
+import type { AgentReadableProductDTO, AgentRelatedProductDTO, AgentVariantDTO } from "@razorgrowth/contracts";
 import { deriveAvailabilityState, knownStatusOf, systemClock, type Clock } from "@razorgrowth/domain";
 import { analyzeProduct, type ProductWithRelations } from "../catalog/quality-analyzer.js";
 
 type VariantWithInventory = ProductVariant & { inventory: Inventory | null };
-type ProductWithVariants = Product & { variants: VariantWithInventory[] };
+type ProductWithVariants = Product & {
+  variants: VariantWithInventory[];
+  /** Optional so every existing caller that maps a product without its
+   * relationships keeps compiling and simply reports none. */
+  relationshipsAsSource?: Array<ProductRelationship & { targetProduct: Product & { variants: VariantWithInventory[] } }>;
+};
+
+/**
+ * One related product, as an outside buyer agent may read it.
+ *
+ * Returns `null` when the target is not agent-visible. A relationship
+ * pointing at a draft or archived product is dropped rather than exposed:
+ * surfacing it would leak an unpublished product's existence AND offer an
+ * agent something it can never buy — a recommendation that fails at
+ * checkout is worse than no recommendation.
+ */
+function toRelatedProduct(
+  relationship: ProductRelationship & { targetProduct: Product & { variants: VariantWithInventory[] } },
+): AgentRelatedProductDTO | null {
+  const target = relationship.targetProduct;
+  if (target.status !== "ACTIVE") return null;
+
+  const activeVariants = target.variants.filter((v) => v.active);
+  const buyable = activeVariants.filter(
+    (v) => deriveAvailabilityState(v.inventory?.availableQuantity ?? null, v.active) !== "UNAVAILABLE",
+  );
+  const prices = buyable.map((v) => v.priceMinor).filter((p) => p > 0);
+
+  // The strongest availability any active variant can offer. An agent
+  // deciding whether to add this needs the best case, not an average.
+  const states = activeVariants.map((v) => deriveAvailabilityState(v.inventory?.availableQuantity ?? null, v.active));
+  const availability = states.includes("IN_STOCK")
+    ? "IN_STOCK"
+    : states.includes("LOW_STOCK")
+      ? "LOW_STOCK"
+      : states.includes("UNKNOWN")
+        ? "UNKNOWN"
+        : states.includes("OUT_OF_STOCK")
+          ? "OUT_OF_STOCK"
+          : "UNAVAILABLE";
+
+  return {
+    productId: target.id,
+    name: target.name,
+    category: target.category,
+    relationship: relationship.relationshipType,
+    // Never dropped, never defaulted. See the contract for why.
+    provenance: relationship.provenance,
+    priceRange:
+      prices.length > 0
+        ? { minMinor: Math.min(...prices), maxMinor: Math.max(...prices), currency: activeVariants[0]?.currency ?? "INR" }
+        : null,
+    availability,
+  };
+}
 
 function toAgentVariant(variant: VariantWithInventory): AgentVariantDTO {
   return {
@@ -100,5 +154,19 @@ export function toAgentReadableProduct(
       derivedFields: "SYSTEM_DERIVED",
       dataset: "SYNTHETIC_DEMO",
     },
+    relationships: (() => {
+      const related = (product.relationshipsAsSource ?? [])
+        .map(toRelatedProduct)
+        .filter((r): r is AgentRelatedProductDTO => r !== null);
+      // Grouped on the wire so an agent does not re-derive the grouping —
+      // and cannot accidentally treat an upsell (a substitute) as a
+      // cross-sell (an addition).
+      return {
+        crossSell: related.filter((r) => r.relationship === "COMPLEMENTARY"),
+        upsell: related.filter((r) => r.relationship === "UPSELL_ALTERNATIVE"),
+        similar: related.filter((r) => r.relationship === "SIMILAR"),
+        bundle: related.filter((r) => r.relationship === "BUNDLE_COMPATIBLE"),
+      };
+    })(),
   };
 }

@@ -53,7 +53,7 @@ export function LatestWorkflowStrip() {
         ))}
       </div>
       <Link
-        to={`/trust-trace?workflowId=${latestWorkflowId}`}
+        to={`/merchant/governance/trace?workflowId=${latestWorkflowId}`}
         className="inline-flex items-center gap-1 text-xs font-medium text-brand-600 hover:text-brand-700"
       >
         Open Trust Trace <ArrowRight size={12} />

@@ -27,10 +27,10 @@
  * on this screen is computed from what the browser believes.
  */
 import { useState } from "react";
-import { useLocation } from "react-router-dom";
 import { useMutation, useQuery } from "@tanstack/react-query";
 import type { PaymentDTO } from "@razorgrowth/contracts";
-import { Activity, Package, Receipt, RotateCw, ShieldX } from "lucide-react";
+import { Activity, CheckCircle2, Clock3, Package, Receipt, RotateCw, ShieldX, ShoppingCart, WalletCards } from "lucide-react";
+import { Link } from "react-router-dom";
 import { apiGet } from "../lib/api-client";
 import { formatDateTime, formatMoney, formatRelativeTime } from "../lib/format";
 import { completeBuyerCheckout } from "../lib/buyer-checkout";
@@ -67,9 +67,15 @@ interface Purchase {
   items: PurchaseItem[];
 }
 
-type Lens = "orders" | "payments" | "activity";
+type Lens = "cart" | "orders" | "payments" | "activity";
 
 const LENS_COPY: Record<Lens, { title: string; description: string; empty: string; emptyHint: string }> = {
+  cart: {
+    title: "Cart & negotiated offers",
+    description: "Purchase proposals your Buyer Agent prepared for you. Review the basket, savings, and policy outcome before checkout.",
+    empty: "No proposed baskets",
+    emptyHint: "Ask your Buyer Agent what you want to buy. Matching recommendations and negotiated offers will appear here after a proposal is created.",
+  },
   orders: {
     title: "Your orders",
     description: "Purchases your Buyer Agent carried through to a real order. An order is not proof of payment — open Payments for that.",
@@ -121,12 +127,6 @@ const DECLINE_COPY: Record<string, string> = {
   POLICY_CURRENCY_MISMATCH: "The product is priced in a currency your policy does not cover.",
 };
 
-function lensFor(pathname: string): Lens {
-  if (pathname.endsWith("/payments")) return "payments";
-  if (pathname.endsWith("/activity")) return "activity";
-  return "orders";
-}
-
 function purchaseTitle(purchase: Purchase): string {
   const named = purchase.items.filter((item) => item.productName);
   if (named.length === 0) return purchase.merchant.name;
@@ -135,8 +135,18 @@ function purchaseTitle(purchase: Purchase): string {
   return named.length > 1 ? `${label} + ${named.length - 1} more` : label;
 }
 
-export default function CustomerHistoryPage() {
-  const lens = lensFor(useLocation().pathname);
+/**
+ * `embedded` renders the same lens as a SECTION rather than a page.
+ *
+ * The `cart` lens — proposals the agent prepared and nobody has
+ * authorized yet — used to be its own nav destination, "Cart & Offers".
+ * It is not a place a shopper goes; it is the output of the conversation
+ * they are already having, so it belongs on the Buyer Agent screen where
+ * they can act on it. Everything below is identical either way; only the
+ * heading changes, because a section inside a page must not render a
+ * second `<h1>`.
+ */
+function CustomerHistoryPage({ lens, embedded = false }: { lens: Lens; embedded?: boolean }) {
   const copy = LENS_COPY[lens];
   const [selected, setSelected] = useState<string | null>(null);
 
@@ -156,28 +166,73 @@ export default function CustomerHistoryPage() {
 
   const all = history.data?.items ?? [];
   const visible = all.filter((purchase) =>
-    lens === "orders" ? Boolean(purchase.internalOrderId)
+    lens === "cart" ? !purchase.internalOrderId && purchase.outcome !== "DECLINE"
+      : lens === "orders" ? Boolean(purchase.internalOrderId)
       : lens === "payments" ? Boolean(purchase.internalPaymentId)
         : true,
   );
 
+  const settled = all.filter((purchase) => purchase.settlementStatus === "SETTLED").length;
+  const pendingPayments = all.filter((purchase) => purchase.settlementStatus === "PAYMENT_PENDING").length;
+  const uncertainPayments = all.filter((purchase) => ["UNKNOWN", "FAILED"].includes(purchase.settlementStatus ?? "")).length;
+  const declined = all.filter((purchase) => purchase.outcome === "DECLINE").length;
+  const allowed = all.length - declined;
+
+  const refreshButton = (
+    <button
+      type="button"
+      onClick={() => { void history.refetch(); if (selected) void evidence.refetch(); }}
+      disabled={history.isFetching}
+      className="inline-flex items-center gap-1.5 rounded-md border border-border bg-surface px-3 py-2 text-sm font-medium text-ink transition hover:bg-surface-subtle focus-visible:outline focus-visible:outline-2 focus-visible:outline-offset-2 focus-visible:outline-brand-600 disabled:opacity-60"
+    >
+      <RotateCw size={14} className={history.isFetching ? "animate-spin" : undefined} aria-hidden />
+      {history.isFetching ? "Refreshing…" : "Refresh"}
+    </button>
+  );
+
   return (
     <div className="space-y-6">
-      <PageHeader
-        title={copy.title}
-        lead={copy.description}
-        actions={
-          <button
-            type="button"
-            onClick={() => { void history.refetch(); if (selected) void evidence.refetch(); }}
-            disabled={history.isFetching}
-            className="inline-flex items-center gap-1.5 rounded-md border border-border bg-surface px-3 py-2 text-sm font-medium text-ink transition hover:bg-surface-subtle focus-visible:outline focus-visible:outline-2 focus-visible:outline-offset-2 focus-visible:outline-brand-600 disabled:opacity-60"
-          >
-            <RotateCw size={14} className={history.isFetching ? "animate-spin" : undefined} aria-hidden />
-            {history.isFetching ? "Refreshing…" : "Refresh"}
-          </button>
-        }
-      />
+      {embedded ? (
+        <div className="flex flex-wrap items-start justify-between gap-3">
+          <div className="min-w-0">
+            <h2 className="text-lg font-semibold tracking-tight text-ink">{copy.title}</h2>
+            <p className="mt-1 max-w-2xl text-sm leading-relaxed text-ink-muted">{copy.description}</p>
+          </div>
+          {refreshButton}
+        </div>
+      ) : (
+        <PageHeader title={copy.title} lead={copy.description} actions={refreshButton} />
+      )}
+
+      {!history.isPending && !history.isError ? (
+        <div className="grid gap-3 sm:grid-cols-3">
+          {lens === "cart" ? (
+            <>
+              <SummaryMetric icon={<ShoppingCart size={16} />} label="Proposed baskets" value={visible.length} />
+              <SummaryMetric icon={<CheckCircle2 size={16} />} label="Negotiated offers" value={visible.filter((p) => (p.negotiatedDiscountBps ?? 0) > 0).length} tone="success" />
+              <SummaryMetric icon={<Clock3 size={16} />} label="Ready to review" value={visible.filter((p) => p.outcome !== "DECLINE").length} tone="warning" />
+            </>
+          ) : lens === "orders" ? (
+            <>
+              <SummaryMetric icon={<Package size={16} />} label="Orders created" value={visible.length} />
+              <SummaryMetric icon={<CheckCircle2 size={16} />} label="Paid orders" value={settled} tone="success" />
+              <SummaryMetric icon={<Clock3 size={16} />} label="Awaiting payment" value={pendingPayments} tone="warning" />
+            </>
+          ) : lens === "payments" ? (
+            <>
+              <SummaryMetric icon={<WalletCards size={16} />} label="Payment records" value={visible.length} />
+              <SummaryMetric icon={<CheckCircle2 size={16} />} label="Provider-confirmed paid" value={settled} tone="success" />
+              <SummaryMetric icon={<ShieldX size={16} />} label="Need attention" value={uncertainPayments} tone="danger" />
+            </>
+          ) : (
+            <>
+              <SummaryMetric icon={<Activity size={16} />} label="Agent proposals" value={all.length} />
+              <SummaryMetric icon={<CheckCircle2 size={16} />} label="Allowed by policy" value={allowed} tone="success" />
+              <SummaryMetric icon={<ShieldX size={16} />} label="Refused by policy" value={declined} tone="danger" />
+            </>
+          )}
+        </div>
+      ) : null}
 
       {history.isPending ? (
         <div className="space-y-3" role="status" aria-label="Loading your purchases">
@@ -192,8 +247,9 @@ export default function CustomerHistoryPage() {
           <EmptyState
             title={copy.empty}
             description={copy.emptyHint}
-            icon={lens === "orders" ? <Package size={18} /> : lens === "payments" ? <Receipt size={18} /> : <Activity size={18} />}
+            icon={lens === "cart" ? <ShoppingCart size={18} /> : lens === "orders" ? <Package size={18} /> : lens === "payments" ? <Receipt size={18} /> : <Activity size={18} />}
           />
+          {lens === "cart" ? <div className="pb-6 text-center"><Link to="/customer/buyer-agent" className="text-sm font-semibold text-brand-600 hover:underline">Ask the Buyer Agent →</Link></div> : null}
         </Card>
       ) : (
         <ul className="space-y-3">
@@ -279,7 +335,7 @@ function PurchaseRow({
               : status?.detail ?? purchase.explanation}
           </p>
 
-          {purchase.items.length > 0 ? (
+          {(lens === "orders" || lens === "cart") && purchase.items.length > 0 ? (
             <ul className="space-y-1 border-t border-border-hair pt-3">
               {purchase.items.map((item) => (
                 <li key={item.variantId} className="flex items-baseline justify-between gap-4 text-sm">
@@ -293,6 +349,14 @@ function PurchaseRow({
                 </li>
               ))}
             </ul>
+          ) : null}
+
+          {lens === "activity" ? (
+            <dl className="grid gap-3 border-t border-border-hair pt-3 sm:grid-cols-3">
+              <div><dt className="text-micro uppercase tracking-wide text-ink-faint">Policy outcome</dt><dd className="mt-1 text-sm font-medium text-ink">{purchase.outcome.replaceAll("_", " ")}</dd></div>
+              <div><dt className="text-micro uppercase tracking-wide text-ink-faint">Reason code</dt><dd className="mt-1 text-sm text-ink">{purchase.reasonCode?.replaceAll("_", " ") ?? "No refusal"}</dd></div>
+              <div><dt className="text-micro uppercase tracking-wide text-ink-faint">Negotiation</dt><dd className="mt-1 text-sm text-ink">{purchase.negotiationStatus?.replaceAll("_", " ") ?? "Not requested"}</dd></div>
+            </dl>
           ) : null}
 
           {lens !== "orders" && purchase.internalPaymentId ? (
@@ -361,3 +425,16 @@ function PurchaseRow({
     </li>
   );
 }
+
+function SummaryMetric({ icon, label, value, tone }: { icon: React.ReactNode; label: string; value: number; tone?: "success" | "warning" | "danger" }) {
+  const toneClass = tone === "success" ? "text-success-text" : tone === "warning" ? "text-warning-text" : tone === "danger" ? "text-danger-text" : "text-brand-600";
+  return <div className="rounded-card border border-border bg-surface px-4 py-3"><div className={toneClass}>{icon}</div><p className="mt-2 text-2xl font-bold tabular-nums text-ink">{value}</p><p className="text-xs text-ink-muted">{label}</p></div>;
+}
+
+export function CustomerOrdersPage() { return <CustomerHistoryPage lens="orders" />; }
+export function CustomerPaymentsPage() { return <CustomerHistoryPage lens="payments" />; }
+export function CustomerActivityPage() { return <CustomerHistoryPage lens="activity" />; }
+/** The agent's un-authorized proposals, rendered inside the Buyer Agent
+ * screen. See the `embedded` note on `CustomerHistoryPage`. */
+export function CustomerProposalsSection() { return <CustomerHistoryPage lens="cart" embedded />; }
+export default CustomerOrdersPage;

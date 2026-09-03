@@ -4,6 +4,7 @@ import { prisma } from "../../db/client.js";
 import { requireOwnerRole } from "../auth/middleware.js";
 import { getAuthenticatedMerchantId } from "../authorization/demo-context.js";
 import { getMerchantProfile, getMerchantPolicyView, getMerchantStats, updateMerchantPolicyView } from "./service.js";
+import { getMerchantCommerceOverview } from "./commerce-overview-service.js";
 
 export function registerMerchantRoutes(app: FastifyInstance, prefix: string): void {
   app.get(`${prefix}/merchant`, async (request) => {
@@ -30,5 +31,10 @@ export function registerMerchantRoutes(app: FastifyInstance, prefix: string): vo
   app.get(`${prefix}/merchant/stats`, async (request) => {
     const merchantId = getAuthenticatedMerchantId(request);
     return getMerchantStats(prisma, merchantId);
+  });
+
+  app.get(`${prefix}/merchant/commerce-overview`, async (request) => {
+    const merchantId = getAuthenticatedMerchantId(request);
+    return getMerchantCommerceOverview(prisma, merchantId);
   });
 }

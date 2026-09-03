@@ -18,3 +18,5 @@ export * from "./auth.js";
 export * from "./post-purchase.js";
 export * from "./marketplace.js";
 export * from "./buyer-policy.js";
+export * from "./revenue-opportunity.js";
+export * from "./commerce-operations.js";

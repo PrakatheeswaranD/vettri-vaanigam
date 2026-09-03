@@ -1,7 +1,7 @@
 import type { FastifyInstance } from "fastify";
 import { buyerSpendingPolicyUpdateSchema, type BuyerSpendingPolicyDTO } from "@razorgrowth/contracts";
 import { prisma } from "../../db/client.js";
-import { getAuthenticatedMerchantId } from "../authorization/demo-context.js";
+import { getBuyerContextId } from "../authorization/demo-context.js";
 import { requireOwnerRole } from "../auth/middleware.js";
 import { resolveBuyerPolicy } from "./resolve-policy.js";
 
@@ -20,18 +20,18 @@ function toDTO(row: { id: string; currency: string; autonomousPurchaseLimitMinor
 
 export function registerBuyerPolicyRoutes(app: FastifyInstance, prefix: string): void {
   app.get(`${prefix}/buyer/policy`, async (request) => {
-    const merchantId = getAuthenticatedMerchantId(request);
+    const buyerContext = getBuyerContextId(request);
     // Seeded from real purchasable categories, never the old fixed list —
     // see resolve-policy.ts for why a "safe" default that blocks every
     // legitimate purchase is the more dangerous of the two options.
-    const row = await resolveBuyerPolicy(merchantId);
+    const row = await resolveBuyerPolicy(buyerContext);
     return toDTO(row);
   });
   app.put(`${prefix}/buyer/policy`, async (request) => {
     if (request.merchantUserRole !== "CUSTOMER") requireOwnerRole(request);
-    const merchantId = getAuthenticatedMerchantId(request);
+    const buyerContext = getBuyerContextId(request);
     const body = buyerSpendingPolicyUpdateSchema.parse(request.body);
-    const row = await prisma.buyerSpendingPolicy.upsert({ where: { merchantId }, update: body, create: { merchantId, ...body } });
+    const row = await prisma.buyerSpendingPolicy.upsert({ where: { customerAccountId: buyerContext }, update: body, create: { customerAccountId: buyerContext, ...body } });
     return toDTO(row);
   });
 }

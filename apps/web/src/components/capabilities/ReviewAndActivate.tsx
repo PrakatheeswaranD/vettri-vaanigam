@@ -111,7 +111,7 @@ export function ReviewAndActivate() {
         </p>
 
         <Link
-          to="/readiness"
+          to="/merchant/agent/readiness"
           className="inline-flex items-center gap-1 text-xs font-medium text-brand-600 hover:text-brand-700"
         >
           Inspect Agentic Readiness <ArrowRight size={12} />
