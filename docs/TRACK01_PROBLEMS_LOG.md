@@ -1,4 +1,4 @@
-# TRACK01 — every problem hit, Parts 0 through 10 and the closing gap pass
+# TRACK01 — every problem hit, Parts 0 through 11 and the closing gap pass
 
 A complete log, including the small ones and the ones I caused myself. Kept in three categories per part, because they need different responses:
 
@@ -625,11 +625,56 @@ None new. The PGlite cluster survived the whole part.
 
 ---
 
+# PART 11 — intelligent product discovery
+
+## Product bugs
+
+### P11-1 · "Compare 1 and 3" compared four products
+`classifyBuyerTurn` read no positions at all for a comparison — `ordinal` was hardcoded `null` on the COMPARE branch. Neither bare digits ("1 and 3") nor ordinal words ("the first and third") were parsed, so every comparison covered whatever the first four candidates happened to be.
+
+**The buyer asked about two products and was answered about four**, in a table that looked entirely plausible. This is the spec's own worked example, and it was wrong.
+
+Fixed with `ordinals: number[]` on the classification. Bare digits are read **only for COMPARE**: "compare 1 and 3" plainly means positions, but "buy 2" means two of something, and reading that as "buy the second" would purchase the wrong product while looking reasonable. The digit form is available to the path that only reads, and withheld from the paths that spend money.
+
+### P11-2 · The comparison did not know what the buyer had asked for
+`buildComparison` took a list of product ids and nothing else. It laid catalogue fields side by side and left the buyer to remember their own constraints — so it could not answer the spec's "FIT TO BUYER REQUIREMENTS" at all, and a near-match sat in the table looking identical to an exact one.
+
+It now takes the conversation's own normalized intent and reports, per product, which stated requirements it **meets** and which it **misses**. A requirement the catalogue cannot answer counts as a miss: "not recorded" and "satisfied" are opposite claims, and only one of them is safe to round in the buyer's favour.
+
+### P11-3 · Trade-offs had no surface at all
+The table marked which rows *differed* but never which option was ahead on any of them. The spec asks for trade-offs; "these two values are different" is not one.
+
+Added `lowestIndex`, and deliberately only on price — the one row where "lower" is a fact with an order to it. Nothing else is ranked. A "which colour is better" column would be an opinion wearing a table's clothes, and the agent has already made its recommendation elsewhere.
+
+## My own mistakes
+
+### P11-4 · Two component assertions demanded uniqueness the design does not have
+`getByText("Meridian Summit Trail")` threw "found multiple elements" once the product name legitimately appeared twice — in the table row and as its fit-card heading. Same shape as P10-5, one part later: the render was right and the assertion was wrong about it.
+
+## Environment friction
+
+### P11-5 · The port was listening and the database was not answering
+A full run came back with **28 files failed and 268 skipped** — the shape of a total outage, not a regression. `netstat` showed 5432 LISTENING, so by the usual check the database was fine.
+
+It was not. The PGlite process had stalled: accepting connections, answering nothing. Killing and restarting it turned 28 failures into 49 files and 484 tests passing with no code change.
+
+**This is the exact distinction Part 7 recorded and I still nearly mis-read it.** "Listening" and "working" are different facts, and only a real query separates them. The check that settles it is a query, not a port scan — which is why the verification routine now runs one before every full suite.
+
+## What was NOT found
+
+The spec asks to fix duplicate search/recommendation implementations and ensure Discover and the Buyer Agent share a source of truth. **They already did.**
+
+Both funnel through the same chain: `discoverMarketplace` and `searchCandidateProducts` each call `listAgentCatalog` → `listProducts` → `toAgentReadableProduct`. One query, one filter, one mapper. Verified by reading every caller rather than assuming from the module names.
+
+Recorded because reporting a consolidation that did not happen would be worse than reporting nothing.
+
+---
+
 # Patterns worth naming
 
 **1. Two things that must agree will eventually disagree.** P0-1 (two prefix lists), P3-1 (a string compared against an enum), P2-3 (a fixture shaped like a DTO). Every one was invisible to the typechecker. The fixes that stuck replaced agreement with a single source: one access table, one enum comparison, one contract import.
 
-**2. Green tests are not evidence the thing works.** P3-6 is the clearest case — 14 passing tests over a cycle that executed nothing. P0-3 is the mirror image: 35 tests that had never exercised the role they claimed to. P6-5 nearly repeated it: three tests whose early-return guards would have reported green on an empty catalogue. Every time, only probing real data settled it.
+**2. Green tests are not evidence the thing works.** P3-6 is the clearest case — 14 passing tests over a cycle that executed nothing. P0-3 is the mirror image: 35 tests that had never exercised the role they claimed to. P6-5 nearly repeated it: three tests whose early-return guards would have reported green on an empty catalogue. Every time, only probing real data settled it. The inverse bit in P11-5: **red tests are not evidence the thing is broken.** 28 files failed because a database process was accepting connections and answering nothing. A port scan said healthy; one real query said otherwise.
 
 **3. The most damaging bugs printed plausible numbers.** P0-7 (AOV over the wrong rows), P0-4 (every shopper NEW), P3-1 (approval reported as refusal). None threw. All three would have been believed.
 
@@ -651,6 +696,6 @@ None new. The PGlite cluster survived the whole part.
 
 **13. Two working halves are not a working whole, and the seam is invisible from either side.** P9-1: the buyer conversation was correct, the purchase API was correct, every test on both passed, and the product still made a buyer leave the chat to spend money. Nothing was broken — the gap was *between* the things, where no test looks. Same shape as pattern 5, one level up: not "capability shipped, consumption forgotten" but "both ends shipped, join forgotten".
 
-**14. The dangerous bug is the one that silently picks something.** P9-3: "buy the second one" resolving to the first. P9-9: the right product, then a wrong variant of it — the same shape one layer deeper, found only because the fix for P9-3 made the next question ("which variant?") askable at all. Neither throws, neither logs, both look exactly like success. The defence that worked both times was refusing to resolve ambiguity at all — "buy this" with several options asks which one rather than guessing, because an agent that guesses well 90% of the time is an agent that buys the wrong thing every tenth purchase. P10-2 completes the set: the wrong position (P9-3), the wrong variant (P9-9), and now the wrong *conversation* — an affirmation resolving against a basket the buyer was not looking at. Each was found only after the previous one was fixed, because fixing one made the next question askable. **Every layer that resolves a reference is a layer that can resolve it wrongly, and none of them throw.**
+**14. The dangerous bug is the one that silently picks something.** P9-3: "buy the second one" resolving to the first. P9-9: the right product, then a wrong variant of it — the same shape one layer deeper, found only because the fix for P9-3 made the next question ("which variant?") askable at all. Neither throws, neither logs, both look exactly like success. The defence that worked both times was refusing to resolve ambiguity at all — "buy this" with several options asks which one rather than guessing, because an agent that guesses well 90% of the time is an agent that buys the wrong thing every tenth purchase. P10-2 completes the set: the wrong position (P9-3), the wrong variant (P9-9), and now the wrong *conversation* — an affirmation resolving against a basket the buyer was not looking at. Each was found only after the previous one was fixed, because fixing one made the next question askable. **Every layer that resolves a reference is a layer that can resolve it wrongly, and none of them throw.** P11-1 is the read-only member of the family: comparing the wrong products spends nothing, but it answers a question the buyer did not ask and looks exactly like an answer to the one they did.
 
 **6. Shell quoting is where my edits go to die.** P1-3 (backspace bytes), P4-10 (heredoc), P4-11 (CRLF), P9-11 (a NUL byte standing in for a space, in two files, found by nothing but a deliberate byte sweep). The first three broke something — a syntax error, a failed anchor — so they were caught the moment the script ran. P9-11 broke nothing: the corrupted string was still a valid, still-distinct sentinel, so 11/11 tests passed with the corruption sitting inside them. Writing a script file and running it with Node prevents the syntax errors. It does not prevent a byte substitution the language itself is indifferent to — that needs its own check. P10-4 adds a variant that is not about quoting at all: a \`&&\` chain whose failing command short-circuited the real work while an unchained \`echo\` still reported success. **A success message that is not conditional on the success is worse than no message** — it sent me looking for a database problem that did not exist.

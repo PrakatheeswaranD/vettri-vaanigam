@@ -287,13 +287,44 @@ export async function handleBuyerMessage(
   // model wrote would be a second recommendation wearing a table's
   // clothes.
   if (turn.action === "COMPARE") {
-    const comparison = await buildComparison(prisma, candidates.productIds);
-    const offers = await findBuyerVisibleOffers(prisma, candidates.productIds);
+    /**
+     * WHICH ones to compare.
+     *
+     * "Compare 1 and 3" named two products, and this used to compare
+     * whatever the first four candidates happened to be — answering a
+     * question the buyer did not ask. Positions are resolved against the
+     * conversation's own recommendation order, and an out-of-range
+     * position is dropped rather than wrapped around, so "compare 2 and 9"
+     * on a three-item list compares the second against nothing rather
+     * than silently against the third.
+     */
+    const selected =
+      turn.ordinals.length >= 2
+        ? turn.ordinals
+            .map((position) => candidates.productIds[position - 1])
+            .filter((id): id is string => Boolean(id))
+        : candidates.productIds;
+
+    // The buyer's own stated requirements, so the table can say how each
+    // product fits what they asked for rather than laying fields side by
+    // side and leaving them to remember.
+    const statedIntent = toDomainIntent((conversationRow.currentIntent as unknown as BuyerIntentDTO | null) ?? null);
+    const comparison = await buildComparison(prisma, selected, statedIntent);
+    const offers = await findBuyerVisibleOffers(prisma, selected);
+
+    const narrowed = turn.ordinals.length >= 2 && selected.length >= 2;
     const message = comparison
-      ? `Here they are side by side. ${comparison.rows.filter((r) => r.differs).length} of ${comparison.rows.length} things actually differ.`
-      : "I need at least two options on the table to compare. Tell me what you are looking for and I will find some.";
+      ? `Here ${narrowed ? `${comparison.productNames.join(" and ")} are` : "they are"} side by side. ${comparison.rows.filter((r) => r.differs).length} of ${comparison.rows.length} things actually differ.`
+      : turn.ordinals.length >= 2
+        ? "I could not find both of those in what I showed you. Say which positions you mean — for example \"compare 1 and 2\"."
+        : "I need at least two options on the table to compare. Tell me what you are looking for and I will find some.";
     await appendMessage(prisma, conversationId, "AGENT", message);
-    trace.push({ stage: "COMPARISON_BUILT", detail: comparison ? `Compared ${comparison.productIds.length} products on ${comparison.rows.length} catalogue fields.` : "Fewer than two comparable products." });
+    trace.push({
+      stage: "COMPARISON_BUILT",
+      detail: comparison
+        ? `Compared ${comparison.productIds.length} product(s) the buyer named, on ${comparison.rows.length} catalogue fields.`
+        : "Fewer than two comparable products.",
+    });
 
     return {
       conversationId,

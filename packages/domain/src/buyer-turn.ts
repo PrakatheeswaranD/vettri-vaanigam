@@ -61,6 +61,16 @@ export interface BuyerTurnClassification {
    * means — it is only unambiguous when exactly one thing is on the table.
    */
   ordinal: number | null;
+  /**
+   * EVERY position the buyer named, in the order they named them:
+   * "compare 1 and 3" -> [1, 3].
+   *
+   * A comparison can name several; a purchase names at most one. Kept as
+   * its own field rather than overloading `ordinal` because "which one"
+   * and "which ones" are different questions, and a comparison that
+   * silently used only the first would compare the wrong pair.
+   */
+  ordinals: number[];
   /** The matched phrase, quoted back in the trace so a buyer can see why
    * their message was read the way it was. */
   matched: string | null;
@@ -161,6 +171,41 @@ function readOrdinal(message: string): number | null {
 }
 
 /**
+ * Every position named, in the order the buyer named them.
+ *
+ * WHY BARE DIGITS ARE ONLY READ FOR A COMPARISON
+ *
+ * "Compare 1 and 3" plainly means positions. "Buy 2" plainly does not —
+ * it means two of something, and reading it as "buy the second" would
+ * purchase the wrong product while looking entirely reasonable. So the
+ * digit form is available to COMPARE, which only ever reads, and withheld
+ * from the paths that spend money.
+ *
+ * Ordinal WORDS ("the first and third") are unambiguous in either context
+ * and are always read.
+ */
+function readOrdinals(message: string, allowBareDigits: boolean): number[] {
+  const found: { index: number; value: number }[] = [];
+
+  for (const [pattern, value] of ORDINALS) {
+    const match = pattern.exec(message);
+    if (match) found.push({ index: match.index, value });
+  }
+
+  if (allowBareDigits) {
+    // Positions only, capped at five — the same bound the comparison
+    // itself uses. A "7" in "size 7" is not a position in a list of five.
+    const digits = message.matchAll(/\b([1-5])\b/g);
+    for (const match of digits) {
+      const value = Number(match[1]);
+      if (!found.some((f) => f.value === value)) found.push({ index: match.index, value });
+    }
+  }
+
+  return found.sort((a, b) => a.index - b.index).map((f) => f.value);
+}
+
+/**
  * Classify one buyer message.
  *
  * Precedence is AUTHORIZE, then BUY, then COMPARE, then REFINE, then
@@ -188,17 +233,28 @@ export function classifyBuyerTurn(message: string, context: BuyerTurnContext): B
   // through to SEARCH below, which is the outcome that spends nothing.
   if (context.hasPendingProposal) {
     const authorize = firstMatch(trimmed, AUTHORIZE_PATTERNS);
-    if (authorize) return { action: "AUTHORIZE", ordinal: null, matched: authorize };
+    if (authorize) return { action: "AUTHORIZE", ordinal: null, ordinals: [], matched: authorize };
   }
 
   const buy = firstMatch(trimmed, BUY_PATTERNS);
-  if (buy && context.hasCandidates) return { action: "BUY", ordinal: readOrdinal(trimmed), matched: buy };
+  if (buy && context.hasCandidates) {
+    const ordinal = readOrdinal(trimmed);
+    return { action: "BUY", ordinal, ordinals: ordinal === null ? [] : [ordinal], matched: buy };
+  }
 
   const compare = firstMatch(trimmed, COMPARE_PATTERNS);
-  if (compare && context.hasCandidates) return { action: "COMPARE", ordinal: null, matched: compare };
+  if (compare && context.hasCandidates) {
+    // "Compare 1 and 3" must compare exactly those two. Reading no
+    // positions at all is what made every comparison cover whatever the
+    // first few candidates happened to be, regardless of what was asked.
+    return { action: "COMPARE", ordinal: null, ordinals: readOrdinals(trimmed, true), matched: compare };
+  }
 
   const refine = firstMatch(trimmed, REFINE_PATTERNS);
-  if (refine && context.hasCandidates) return { action: "REFINE", ordinal: readOrdinal(trimmed), matched: refine };
+  if (refine && context.hasCandidates) {
+    const ordinal = readOrdinal(trimmed);
+    return { action: "REFINE", ordinal, ordinals: ordinal === null ? [] : [ordinal], matched: refine };
+  }
 
-  return { action: "SEARCH", ordinal: null, matched: null };
+  return { action: "SEARCH", ordinal: null, ordinals: [], matched: null };
 }

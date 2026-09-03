@@ -201,3 +201,57 @@ describe("classifyBuyerTurn — authorization", () => {
     expect(classifyBuyerTurn("go ahead", ctx(true, true)).matched).toMatch(/go ahead/i);
   });
 });
+
+/* ═══════════════════════════════════════════════════════════════════════
+ * PART 11 — which items to compare
+ *
+ * "Compare 1 and 3" read no positions at all, so every comparison covered
+ * whatever the first few candidates happened to be. The buyer asked about
+ * two products and was answered about four.
+ * ══════════════════════════════════════════════════════════════════════ */
+
+describe("classifyBuyerTurn — comparison targets", () => {
+  it("reads bare digits as positions", () => {
+    expect(classifyBuyerTurn("Compare 1 and 3", ctx(true)).ordinals).toEqual([1, 3]);
+    expect(classifyBuyerTurn("compare 2 and 4.", ctx(true)).ordinals).toEqual([2, 4]);
+  });
+
+  it("reads ordinal words as positions", () => {
+    expect(classifyBuyerTurn("compare the first and third", ctx(true)).ordinals).toEqual([1, 3]);
+  });
+
+  it("keeps the order the buyer named them in", () => {
+    // "3 and 1" is not "1 and 3" on screen — the buyer's own ordering is
+    // what makes the columns match what they asked for.
+    expect(classifyBuyerTurn("compare 3 and 1", ctx(true)).ordinals).toEqual([3, 1]);
+  });
+
+  it("reports no targets when the buyer named none", () => {
+    // "Compare these" means everything on the table, and the caller
+    // decides what that is. An empty list says "they did not choose",
+    // which is different from choosing nothing.
+    expect(classifyBuyerTurn("compare these", ctx(true)).ordinals).toEqual([]);
+  });
+
+  it("does not mistake a size or a price for a position", () => {
+    // 9 and 8000 are outside the 1-5 window a five-item list can have.
+    const result = classifyBuyerTurn("compare these in size 9 under 8000", ctx(true));
+    expect(result.action).toBe("COMPARE");
+    expect(result.ordinals).not.toContain(9);
+    expect(result.ordinals).not.toContain(8000);
+  });
+
+  it("never reads a bare digit as a position on a purchase", () => {
+    // "buy 2" means two of something. Reading it as "buy the second"
+    // would purchase the wrong product while looking entirely reasonable,
+    // so the digit form is withheld from every path that spends money.
+    const result = classifyBuyerTurn("buy 2", ctx(true));
+    expect(result.ordinals).toEqual([]);
+    expect(result.ordinal).toBeNull();
+  });
+
+  it("still reads ordinal WORDS on a purchase", () => {
+    // Unambiguous in any context, so it stays available where digits are not.
+    expect(classifyBuyerTurn("buy the third", ctx(true)).ordinal).toBe(3);
+  });
+});

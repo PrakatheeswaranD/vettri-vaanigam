@@ -27,6 +27,8 @@
  */
 import type { PrismaClient } from "@prisma/client";
 import type { BuyerComparisonDTO, BuyerPurchaseOutcomeDTO } from "@razorgrowth/contracts";
+import type { BuyerIntent } from "@razorgrowth/domain";
+import { findBuyerVisibleOffers } from "./offers-service.js";
 
 /**
  * The last set of products the agent put in front of this buyer.
@@ -86,6 +88,62 @@ function attributeValue(attributes: unknown, key: string): string | null {
 }
 
 /**
+ * How this product measures against what the buyer actually asked for.
+ *
+ * Computed from the conversation's own normalized intent, so every line
+ * restates a requirement the buyer really stated — never one inferred to
+ * make a product look better. A requirement the catalogue cannot answer
+ * (an attribute the product does not record) counts as a MISS rather than
+ * a pass: "not recorded" and "satisfied" are opposite claims, and only one
+ * of them is safe to round in the buyer's favour.
+ */
+function fitAgainstIntent(
+  product: { category: string; variants: Array<{ priceMinor: number; attributes: unknown }> },
+  intent: BuyerIntent | null,
+): { meets: string[]; misses: string[] } {
+  const meets: string[] = [];
+  const misses: string[] = [];
+  if (!intent) return { meets, misses };
+
+  const cheapest = product.variants[0] ?? null;
+
+  if (intent.category) {
+    (product.category === intent.category ? meets : misses).push(intent.category);
+  }
+
+  if (intent.budget.maxMinor !== null) {
+    const label = `under ${formatMinor(intent.budget.maxMinor, intent.budget.currency)}`;
+    (cheapest && cheapest.priceMinor <= intent.budget.maxMinor ? meets : misses).push(label);
+  }
+  if (intent.budget.minMinor !== null) {
+    const label = `over ${formatMinor(intent.budget.minMinor, intent.budget.currency)}`;
+    (cheapest && cheapest.priceMinor >= intent.budget.minMinor ? meets : misses).push(label);
+  }
+
+  for (const [key, wanted] of Object.entries(intent.requiredAttributes)) {
+    const satisfied = product.variants.some((v) => attributeValue(v.attributes, key) === wanted);
+    (satisfied ? meets : misses).push(`${key}: ${wanted}`);
+  }
+
+  for (const [key, excluded] of Object.entries(intent.excludedAttributes)) {
+    const violates = product.variants.some((v) => {
+      const value = attributeValue(v.attributes, key);
+      return value !== null && excluded.includes(value);
+    });
+    if (violates) misses.push(`not ${key}: ${excluded.join("/")}`);
+  }
+
+  return { meets, misses };
+}
+
+/** Minor units to a readable amount, for requirement labels only — never
+ * for a figure the buyer is charged. */
+function formatMinor(minor: number, currency: string): string {
+  const symbol = currency === "INR" ? "₹" : currency === "USD" ? "$" : `${currency} `;
+  return `${symbol}${(minor / 100).toLocaleString("en-IN", { maximumFractionDigits: 0 })}`;
+}
+
+/**
  * A deterministic side-by-side of products the agent already recommended.
  *
  * FACTS ONLY. Every row is a catalogue value, and `differs` is computed
@@ -93,12 +151,23 @@ function attributeValue(attributes: unknown, key: string): string | null {
  * that is a recommendation, the agent already made one, and dressing a
  * second one as a comparison table would hide that it is an opinion.
  *
+ * `lowestIndex` is the one exception, and it is narrow on purpose — it
+ * names which product is CHEAPER, which is a fact with an order to it.
+ * Nothing else gets ranked: "which colour is better" has no answer the
+ * catalogue can supply.
+ *
  * A field a product does not record shows as null, never as a plausible
  * default — "no rating recorded" and "rated 0" are opposite claims.
+ *
+ * PART 11: takes the buyer's own intent, so the table can say how each
+ * product fits what they ASKED for. Without it the comparison was blind to
+ * the conversation it was part of — it laid fields side by side and left
+ * the buyer to remember their own constraints.
  */
 export async function buildComparison(
   prisma: PrismaClient,
   productIds: readonly string[],
+  intent: BuyerIntent | null = null,
 ): Promise<BuyerComparisonDTO | null> {
   if (productIds.length < 2) return null;
 
@@ -112,8 +181,11 @@ export async function buildComparison(
     },
   });
 
-  // Preserve the order the agent recommended them in, not the database's.
-  const ordered = ids.map((id) => products.find((p) => p.id === id)).filter((p): p is (typeof products)[number] => Boolean(p));
+  // Preserve the order the BUYER named them in, not the database's. "3 and
+  // 1" is not "1 and 3" on screen.
+  const ordered = ids
+    .map((id) => products.find((p) => p.id === id))
+    .filter((p): p is (typeof products)[number] => Boolean(p));
   if (ordered.length < 2) return null;
 
   const cheapest = ordered.map((product) => product.variants[0] ?? null);
@@ -132,14 +204,19 @@ export async function buildComparison(
     ),
   ].slice(0, 6);
 
+  const priceValues = cheapest.map((variant) => (variant ? variant.priceMinor : null));
+
   const rows: BuyerComparisonDTO["rows"] = [
-    { label: "Product", values: ordered.map((p) => p.name), differs: true },
-    { label: "Sold by", values: ordered.map((p) => p.merchant.name), differs: false },
-    { label: "Category", values: ordered.map((p) => p.category), differs: false },
+    { label: "Product", values: ordered.map((p) => p.name), differs: true, lowestIndex: null },
+    { label: "Sold by", values: ordered.map((p) => p.merchant.name), differs: false, lowestIndex: null },
+    { label: "Category", values: ordered.map((p) => p.category), differs: false, lowestIndex: null },
     {
       label: "Price from",
-      values: cheapest.map((variant) => (variant ? String(variant.priceMinor) : null)),
+      values: priceValues.map((v) => (v === null ? null : String(v))),
       differs: false,
+      // The only ranked row, and the only one where "lower" is a fact
+      // rather than a preference.
+      lowestIndex: lowestIndexOf(priceValues),
     },
     {
       label: "Availability",
@@ -149,16 +226,19 @@ export async function buildComparison(
         return total > 0 ? `${total} in stock` : "Out of stock";
       }),
       differs: false,
+      lowestIndex: null,
     },
     {
       label: "Returns",
       values: ordered.map((p) => p.returnPolicySummary),
       differs: false,
+      lowestIndex: null,
     },
     ...attributeKeys.map((key) => ({
       label: key,
       values: cheapest.map((variant) => (variant ? attributeValue(variant.attributes, key) : null)),
       differs: false,
+      lowestIndex: null,
     })),
   ];
 
@@ -169,7 +249,44 @@ export async function buildComparison(
     row.differs = seen.size > 1;
   }
 
-  return { productIds: ordered.map((p) => p.id), rows };
+  // Merchant-authorized offers on exactly these products, carried verbatim
+  // from the same service the rest of the buyer surface reads.
+  const visibleOffers = await findBuyerVisibleOffers(prisma, ordered.map((p) => p.id));
+  const offers = visibleOffers
+    .map((offer) => {
+      const productIndex = ordered.findIndex((p) => p.id === offer.productId);
+      return productIndex === -1
+        ? null
+        : {
+            productIndex,
+            percentageBps: offer.percentageBps,
+            discountMinor: offer.discountMinor,
+            currency: offer.currency,
+            provenance: offer.provenance,
+          };
+    })
+    .filter((o): o is NonNullable<typeof o> => o !== null);
+
+  return {
+    productIds: ordered.map((p) => p.id),
+    productNames: ordered.map((p) => p.name),
+    rows,
+    fit: ordered.map((product) => fitAgainstIntent(product, intent)),
+    offers,
+  };
+}
+
+/** Index of the lowest value, or null when the values are not all known —
+ * a "cheapest" computed over a missing price would be a guess. */
+function lowestIndexOf(values: readonly (number | null)[]): number | null {
+  if (values.some((v) => v === null)) return null;
+  const numbers = values as readonly number[];
+  if (new Set(numbers).size === 1) return null; // a tie ranks nothing
+  let best = 0;
+  for (let i = 1; i < numbers.length; i += 1) {
+    if (numbers[i]! < numbers[best]!) best = i;
+  }
+  return best;
 }
 
 /* ═══════════════════════════════════════════════════════════════════════

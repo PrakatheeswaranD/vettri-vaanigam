@@ -3,6 +3,8 @@
 Continues [Part 0](TRACK01_PART0_FIXES.md) → [Part 9](TRACK01_PART9_AI_BUYER_CORE.md).
 
 > Problems hit along the way: [TRACK01_PROBLEMS_LOG.md](TRACK01_PROBLEMS_LOG.md).
+>
+> Followed by [Part 11](TRACK01_PART11_PRODUCT_DISCOVERY.md), which taught the comparison which products the buyer actually named.
 
 "Buy this." now runs the whole chain — select, price, validate the offer, check policy, propose, authorize, create a real payment order — without the buyer leaving the conversation.
 

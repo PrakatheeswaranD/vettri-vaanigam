@@ -35,6 +35,8 @@ function Money({ minor, currency }: { minor: number; currency: string }) {
 
 function ComparisonTable({ comparison }: { comparison: NonNullable<BuyerAgentResponseDTO["comparison"]> }) {
   const differing = comparison.rows.filter((row) => row.differs);
+  const offerFor = (index: number) => comparison.offers.find((offer) => offer.productIndex === index) ?? null;
+
   return (
     <Card className="mt-3">
       <CardHeader className="flex flex-wrap items-center justify-between gap-2">
@@ -59,6 +61,14 @@ function ComparisonTable({ comparison }: { comparison: NonNullable<BuyerAgentRes
                           recorded", never as a plausible default — "no
                           rating" and "rated 0" are opposite claims. */}
                       {value ?? <span className="italic text-ink-faint">not recorded</span>}
+                      {/* The one ranked row. It says which is CHEAPER —
+                          a fact with an order to it — and never which is
+                          better, which the catalogue cannot answer. */}
+                      {row.lowestIndex === index ? (
+                        <span className="ml-1.5 rounded-full bg-success-subtle px-1.5 py-0.5 text-micro font-medium text-success-text">
+                          lowest
+                        </span>
+                      ) : null}
                     </td>
                   ))}
                 </tr>
@@ -66,9 +76,64 @@ function ComparisonTable({ comparison }: { comparison: NonNullable<BuyerAgentRes
             </tbody>
           </table>
         </div>
+
+        {/* FIT — how each product measures against what the BUYER asked
+            for, not against the other product. Computed from the
+            conversation's own normalized intent, so every line restates a
+            requirement they really stated. */}
+        {comparison.fit.some((f) => f.meets.length > 0 || f.misses.length > 0) ? (
+          <div className="mt-4 grid gap-3 sm:grid-cols-2">
+            {comparison.fit.map((fit, index) => {
+              const offer = offerFor(index);
+              return (
+                <div key={index} className="rounded-md border border-border-hair px-3 py-2">
+                  <p className="text-xs font-semibold text-ink">
+                    {comparison.productNames[index] ?? `Product ${index + 1}`}
+                  </p>
+
+                  {fit.meets.length > 0 ? (
+                    <ul className="mt-1.5 space-y-0.5">
+                      {fit.meets.map((item) => (
+                        <li key={item} className="flex items-start gap-1.5 text-xs text-success-text">
+                          <CheckCircle2 size={12} className="mt-0.5 shrink-0" aria-hidden />
+                          {item}
+                        </li>
+                      ))}
+                    </ul>
+                  ) : null}
+
+                  {/* Misses are shown, never omitted. A near-match
+                      presented as a match is how a buyer ends up with the
+                      wrong thing. */}
+                  {fit.misses.length > 0 ? (
+                    <ul className="mt-1 space-y-0.5">
+                      {fit.misses.map((item) => (
+                        <li key={item} className="flex items-start gap-1.5 text-xs text-warning-text">
+                          <AlertTriangle size={12} className="mt-0.5 shrink-0" aria-hidden />
+                          {item}
+                        </li>
+                      ))}
+                    </ul>
+                  ) : null}
+
+                  {offer ? (
+                    <p className="mt-1.5 inline-flex items-center gap-1.5 text-xs text-success-text">
+                      <BadgePercent size={12} className="shrink-0" aria-hidden />
+                      {offer.percentageBps !== null
+                        ? `${(offer.percentageBps / 100).toFixed(offer.percentageBps % 100 === 0 ? 0 : 1)}% off`
+                        : "Offer available"}
+                    </p>
+                  ) : null}
+                </div>
+              );
+            })}
+          </div>
+        ) : null}
+
         <p className="mt-3 text-xs leading-relaxed text-ink-faint">
-          Every value is a published catalogue field. There is deliberately no “which is better” row — the agent already
-          made its recommendation, and a second opinion dressed as a table would hide that it is an opinion.
+          Every value is a published catalogue field, and “lowest” marks the cheaper price — the only column where one
+          option is factually ahead. There is deliberately no “which is better” row: the agent already made its
+          recommendation, and a second opinion dressed as a table would hide that it is an opinion.
         </p>
       </CardBody>
     </Card>

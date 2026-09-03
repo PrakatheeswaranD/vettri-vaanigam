@@ -204,8 +204,31 @@ export type BuyerVisibleOfferDTO = z.infer<typeof buyerVisibleOfferSchema>;
  * the buyer draws the conclusion. A comparison that editorialises is a
  * recommendation wearing a table's clothes.
  */
+/**
+ * How one compared product measures against what the BUYER actually asked
+ * for — not against the other products.
+ *
+ * The comparison used to be blind to the buyer's requirements: it laid
+ * catalogue fields side by side and left the reader to remember their own
+ * constraints. "Fit" is the missing half, and it is computed from the
+ * conversation's own normalized intent, so it can only ever restate
+ * requirements the buyer really stated.
+ */
+export const comparisonFitSchema = z.object({
+  /** Requirements this product satisfies, in the buyer's own terms:
+   * "under ₹5,000", "size 9". */
+  meets: z.array(z.string()),
+  /** Requirements it does not. Stated plainly rather than hidden — a
+   * near-match presented as a match is how a buyer ends up with the wrong
+   * thing. */
+  misses: z.array(z.string()),
+});
+
 export const buyerComparisonSchema = z.object({
   productIds: z.array(z.string().uuid()),
+  /** Names, in the same order as `productIds` — so a buyer reading
+   * "Product 1 is lighter" can tell which one that is. */
+  productNames: z.array(z.string()),
   rows: z.array(
     z.object({
       label: z.string(),
@@ -215,6 +238,32 @@ export const buyerComparisonSchema = z.object({
       values: z.array(z.string().nullable()),
       /** Whether the products actually differ on this row. */
       differs: z.boolean(),
+      /**
+       * On a row whose values are ordered and comparable (price), the
+       * index of the product with the LOWEST value. Null on rows where
+       * "better" is not a fact — colour, category, returns policy.
+       *
+       * This is the trade-off surface, and it is deliberately narrow: it
+       * names which is cheaper, never which is *better*. Ranking a colour
+       * would be an opinion wearing a table's clothes.
+       */
+      lowestIndex: z.number().int().min(0).nullable(),
+    }),
+  ),
+  /** Per compared product, in the same order as `productIds`. */
+  fit: z.array(comparisonFitSchema),
+  /**
+   * Merchant-authorized offers on the compared products, keyed by index
+   * into `productIds`. Absent where the product carries none — an empty
+   * entry means list price, not "we did not check".
+   */
+  offers: z.array(
+    z.object({
+      productIndex: z.number().int().min(0),
+      percentageBps: z.number().int().nullable(),
+      discountMinor: z.number().int().nullable(),
+      currency: z.string().nullable(),
+      provenance: z.string(),
     }),
   ),
 });

@@ -73,11 +73,18 @@ describe("AgentBubble — the default view a buyer actually sees", () => {
       checkout: null,
       comparison: {
         productIds: ["aaaaaaaa-aaaa-4aaa-8aaa-aaaaaaaaaaaa", "bbbbbbbb-bbbb-4bbb-8bbb-bbbbbbbbbbbb"],
+        productNames: ["Meridian Summit Trail", "Meridian Cloud Runner"],
         rows: [
-          { label: "Product", values: ["Meridian Summit Trail", "Meridian Cloud Runner"], differs: true },
-          { label: "Price from", values: ["580200", "449900"], differs: true },
-          { label: "Sold by", values: ["Meridian Athletics", "Meridian Athletics"], differs: false },
+          { label: "Product", values: ["Meridian Summit Trail", "Meridian Cloud Runner"], differs: true, lowestIndex: null },
+          // The cheaper of the two is index 1 — the only ranked row.
+          { label: "Price from", values: ["580200", "449900"], differs: true, lowestIndex: 1 },
+          { label: "Sold by", values: ["Meridian Athletics", "Meridian Athletics"], differs: false, lowestIndex: null },
         ],
+        fit: [
+          { meets: ["Running Shoes"], misses: ["under ₹5,000"] },
+          { meets: ["Running Shoes", "under ₹5,000"], misses: [] },
+        ],
+        offers: [],
       },
     };
 
@@ -87,11 +94,55 @@ describe("AgentBubble — the default view a buyer actually sees", () => {
     // narrated sentence rendered for this status — the table simply did
     // not exist in the DOM.
     expect(screen.getByText("Side by side")).toBeInTheDocument();
-    expect(screen.getByText("Meridian Summit Trail")).toBeInTheDocument();
-    expect(screen.getByText("Meridian Cloud Runner")).toBeInTheDocument();
+    // Each name appears twice by design: once in the table row, once as
+    // the heading of its fit card. Presence is the claim, not uniqueness.
+    expect(screen.getAllByText("Meridian Summit Trail").length).toBeGreaterThan(0);
+    expect(screen.getAllByText("Meridian Cloud Runner").length).toBeGreaterThan(0);
     // `differs` came from the server and must not be recomputed here —
     // this just checks the row rendered, not that the client re-derived it.
     expect(screen.getByText("Price from")).toBeInTheDocument();
+
+    // PART 11 — the trade-off marker, on the one row where "lower" is a
+    // fact rather than a preference.
+    expect(screen.getByText("lowest")).toBeInTheDocument();
+
+    // Fit against the buyer's OWN stated requirements, misses included.
+    // A near-match presented as a match is how a buyer ends up with the
+    // wrong thing, so the miss has to be on screen.
+    expect(screen.getAllByText("Running Shoes").length).toBeGreaterThan(0);
+    expect(screen.getAllByText(/under ₹5,000/).length).toBeGreaterThan(0);
+  });
+
+  it("marks the cheaper option once, not every column", () => {
+    const response: BuyerAgentResponseDTO = {
+      ...BASE,
+      status: "COMPARISON_READY",
+      recommendations: [],
+      turnAction: "COMPARE",
+      offers: [],
+      purchase: null,
+      unresolvedReason: null,
+      clarification: null,
+      checkout: null,
+      comparison: {
+        productIds: ["aaaaaaaa-aaaa-4aaa-8aaa-aaaaaaaaaaaa", "bbbbbbbb-bbbb-4bbb-8bbb-bbbbbbbbbbbb"],
+        productNames: ["Cheaper one", "Dearer one"],
+        rows: [
+          { label: "Price from", values: ["100000", "200000"], differs: true, lowestIndex: 0 },
+          // A tie ranks nothing — claiming a winner between equal values
+          // would be inventing a difference.
+          { label: "Category", values: ["Running Shoes", "Running Shoes"], differs: false, lowestIndex: null },
+        ],
+        fit: [
+          { meets: [], misses: [] },
+          { meets: [], misses: [] },
+        ],
+        offers: [],
+      },
+    };
+
+    renderBubble(response);
+    expect(screen.getAllByText("lowest")).toHaveLength(1);
   });
 
   it("renders the priced purchase card and states nothing was charged", () => {
