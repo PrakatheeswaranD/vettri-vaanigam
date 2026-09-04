@@ -1,6 +1,5 @@
 /**
- * Buyer-side spend mandates — the "vaanigam" (consent) the gateway is named
- * for.
+ * Buyer-side spend mandates — signed purchase consent used by Vettri Vaanigam.
  *
  * SECURITY NOTE — READ BEFORE CHANGING ANYTHING HERE
  *

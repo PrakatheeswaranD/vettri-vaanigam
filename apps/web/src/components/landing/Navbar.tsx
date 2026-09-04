@@ -60,7 +60,7 @@ export function Navbar() {
             <span aria-hidden className="h-2.5 w-2.5 rounded-[3px] bg-white/90" />
           </span>
           <span className="flex flex-col leading-none">
-            <span className="text-[15px] font-semibold tracking-[-0.02em] text-[var(--os-text)]">Vaanigam</span>
+            <span className="text-[15px] font-semibold tracking-[-0.02em] text-[var(--os-text)]">Vettri Vaanigam</span>
             <span className="os-label mt-1 text-[9px] text-[var(--os-faint)]">Agentic commerce</span>
           </span>
         </a>

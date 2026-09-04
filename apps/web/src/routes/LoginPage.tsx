@@ -65,7 +65,7 @@ interface SeededAccount {
 }
 
 const SEEDED_ACCOUNTS: SeededAccount[] = [
-  { role: "customer", label: "AI Buyer", icon: Bot, email: "customer@vaanigam.demo", password: "CustomerDemo!2026" },
+  { role: "customer", label: "AI Buyer", icon: Bot, email: "customer@vettrivaanigam.demo", password: "CustomerDemo!2026" },
   {
     role: "merchant",
     label: "Merchant",
@@ -180,7 +180,7 @@ export default function LoginPage() {
             <ShieldCheck className="h-5 w-5" aria-hidden />
           </span>
           <div>
-            <p className="text-sm font-semibold tracking-tight text-white">Vaanigam</p>
+            <p className="text-sm font-semibold tracking-tight text-white">Vettri Vaanigam</p>
             <p className="text-micro text-white/60">Agentic commerce infrastructure</p>
           </div>
         </div>
@@ -209,7 +209,7 @@ export default function LoginPage() {
           </ul>
         </div>
 
-        <p className="relative text-micro text-white/40">Vaanigam · Razorpay Track 01</p>
+        <p className="relative text-micro text-white/40">Vettri Vaanigam · Razorpay Track 01</p>
       </aside>
 
       {/* Right: the form. */}
@@ -219,7 +219,7 @@ export default function LoginPage() {
             <span className="grid h-9 w-9 place-items-center rounded-xl bg-brand-600 text-white shadow-card">
               <ShieldCheck className="h-4 w-4" aria-hidden />
             </span>
-            <p className="text-sm font-semibold tracking-tight text-ink">Vaanigam</p>
+            <p className="text-sm font-semibold tracking-tight text-ink">Vettri Vaanigam</p>
           </div>
           <Link
             to="/"
@@ -233,7 +233,7 @@ export default function LoginPage() {
         <div className="mx-auto flex w-full max-w-sm flex-1 flex-col justify-center py-10">
           <h1 className="text-2xl font-semibold tracking-[-0.02em] text-ink">Sign in</h1>
           <p className="mt-2 text-[13px] leading-relaxed text-ink-muted">
-            Use your Vaanigam account. The server decides what that account may do — signing in does not grant anything
+            Use your Vettri Vaanigam account. The server decides what that account may do — signing in does not grant anything
             on its own.
           </p>
 

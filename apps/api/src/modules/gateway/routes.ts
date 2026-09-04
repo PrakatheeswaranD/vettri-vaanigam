@@ -252,7 +252,7 @@ export function registerAgentGatewayRoutes(app: FastifyInstance, prefix: string)
       });
     } catch (err) {
       logger.warn(
-        { event: "vaanigam.policy_author_failed", err: err instanceof Error ? err.message : String(err) },
+        { event: "vettri_vaanigam.policy_author_failed", err: err instanceof Error ? err.message : String(err) },
         "Policy author failed",
       );
       // Fails CLOSED: an empty draft changes nothing. A model outage must

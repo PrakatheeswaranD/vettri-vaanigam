@@ -1,5 +1,5 @@
 /**
- * Prompts for the two places Vaanigam genuinely needs a language model.
+ * Prompts for the two places Vettri Vaanigam genuinely needs a language model.
  *
  * The brief's own test for this is worth restating: a rules engine can
  * enforce a ceiling, but it cannot normalise a messy free-text catalogue

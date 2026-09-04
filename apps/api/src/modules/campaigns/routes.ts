@@ -138,7 +138,7 @@ export function registerCampaignRoutes(app: FastifyInstance, prefix: string): vo
     ]);
     if (
       !campaign || campaign.merchantId !== merchantId ||
-      !assignment || assignment.campaignId !== campaignId || assignment.cohort !== "TREATMENT" ||
+      !assignment || assignment.campaignId !== campaignId ||
       !order || order.merchantId !== merchantId
     ) {
       throw AppError.notFound("Eligible campaign assignment and order were not found.");
@@ -164,7 +164,7 @@ export function registerCampaignRoutes(app: FastifyInstance, prefix: string): vo
       actorType: "SYSTEM",
       actionType: "CAMPAIGN_ORDER_ATTRIBUTED",
       status: "EXECUTED",
-      conciseReason: `Treatment assignment ${assignment.id} was bound to order ${order.id} before capture.`,
+      conciseReason: `${assignment.cohort === "CONTROL" ? "Holdout observation" : "Treatment assignment"} ${assignment.id} was bound to order ${order.id} before capture.`,
       relatedEntityType: "CampaignOrderAttribution",
       relatedEntityId: attribution.id,
       executedAt: attribution.boundAt,
@@ -199,7 +199,7 @@ export function registerCampaignRoutes(app: FastifyInstance, prefix: string): vo
       const assignment = await tx.campaignAssignment.findUnique({ where: { id: body.assignmentId } });
       const payment = await tx.payment.findUnique({
         where: { id: body.paymentId },
-        include: { order: { select: { id: true, totalAmountMinor: true, merchantId: true, createdAt: true } } },
+        include: { order: { include: { items: { include: { variant: { select: { costMinor: true } } } } } } },
       });
       if (!campaign || campaign.merchantId !== merchantId || !assignment || assignment.campaignId !== campaignId) {
         throw AppError.notFound("Campaign assignment not found.");
@@ -225,12 +225,10 @@ export function registerCampaignRoutes(app: FastifyInstance, prefix: string): vo
         throw AppError.conflict("This captured payment has already been attributed to a campaign conversion.");
       }
       if (!campaignIsRunning(campaign)) throw AppError.conflict("This campaign is not running.");
-      if (assignment.cohort !== "TREATMENT") throw AppError.conflict("A control-group subject cannot consume an offer.");
 
       const assignmentClaim = await tx.campaignAssignment.updateMany({
         where: {
           id: assignment.id,
-          cohort: "TREATMENT",
           conversionCount: { lt: campaign.maxUsesPerSubject },
         },
         data: {
@@ -242,19 +240,34 @@ export function registerCampaignRoutes(app: FastifyInstance, prefix: string): vo
         throw AppError.conflict("This subject has reached the campaign use limit.");
       }
 
-      const budgetClaim = await tx.campaign.updateMany({
-        where: {
-          id: campaignId,
-          status: "ACTIVE",
-          startsAt: { lte: new Date() },
-          endsAt: { gt: new Date() },
-          spentMinor: { lte: campaign.budgetMinor - campaign.incentiveMinorPerConversion },
-        },
-        data: { spentMinor: { increment: campaign.incentiveMinorPerConversion } },
-      });
-      if (budgetClaim.count !== 1) {
-        throw new AppError("POLICY_DENIED", "This conversion would exceed the campaign budget.");
+      const incentiveCostMinor = assignment.cohort === "TREATMENT" ? campaign.incentiveMinorPerConversion : 0;
+      if (incentiveCostMinor > 0) {
+        const budgetClaim = await tx.campaign.updateMany({
+          where: {
+            id: campaignId,
+            status: "ACTIVE",
+            startsAt: { lte: new Date() },
+            endsAt: { gt: new Date() },
+            spentMinor: { lte: campaign.budgetMinor - incentiveCostMinor },
+          },
+          data: { spentMinor: { increment: incentiveCostMinor } },
+        });
+        if (budgetClaim.count !== 1) {
+          throw new AppError("POLICY_DENIED", "This conversion would exceed the campaign budget.");
+        }
       }
+
+      const config = await tx.merchantGrowthConfig.findUnique({ where: { merchantId } });
+      const knownCosts = payment.order.items.length > 0 && payment.order.items.every((item) => item.variant.costMinor !== null);
+      const productCostMinor = knownCosts
+        ? payment.order.items.reduce((sum, item) => sum + (item.variant.costMinor ?? 0) * item.quantity, 0)
+        : null;
+      const shippingMinor = config?.defaultShippingCostMinor ?? 0;
+      const paymentFeeMinor = Math.round(payment.order.totalAmountMinor * (config?.paymentFeeBps ?? 200) / 10_000);
+      const returnCostMinor = Math.round(payment.order.totalAmountMinor * (config?.expectedReturnRateBps ?? 0) / 10_000);
+      const contributionMinor = productCostMinor === null
+        ? null
+        : payment.order.totalAmountMinor - productCostMinor - shippingMinor - paymentFeeMinor - returnCostMinor - incentiveCostMinor;
 
       const conversion = await tx.campaignConversion.create({
         data: {
@@ -263,8 +276,13 @@ export function registerCampaignRoutes(app: FastifyInstance, prefix: string): vo
           paymentId: payment.id,
           orderId: payment.order.id,
           attributionId: attribution.id,
-          incentiveCostMinor: campaign.incentiveMinorPerConversion,
+          incentiveCostMinor,
           observedRevenueMinor: payment.order.totalAmountMinor,
+          observedProductCostMinor: productCostMinor,
+          observedShippingCostMinor: shippingMinor,
+          observedPaymentFeeMinor: paymentFeeMinor,
+          expectedReturnCostMinor: returnCostMinor,
+          observedContributionMinor: contributionMinor,
         },
       });
       return { conversion, assignmentId: assignment.id };
@@ -277,13 +295,89 @@ export function registerCampaignRoutes(app: FastifyInstance, prefix: string): vo
       actorType: "SYSTEM",
       actionType: "CAMPAIGN_CONVERSION_RECORDED",
       status: "EXECUTED",
-      conciseReason: `Recorded one treatment conversion from captured payment ${body.paymentId}; incentive cost ${result.conversion.incentiveCostMinor}, observed revenue ${result.conversion.observedRevenueMinor} minor units.`,
+      conciseReason: `Recorded one campaign conversion from captured payment ${body.paymentId}; incentive cost ${result.conversion.incentiveCostMinor}, observed revenue ${result.conversion.observedRevenueMinor} minor units.`,
       relatedEntityType: "CampaignConversion",
       relatedEntityId: result.conversion.id,
       metadata: { assignmentId: result.assignmentId, paymentId: body.paymentId },
       executedAt: new Date(),
     });
+
+    // Automatic stop-loss is evaluated only from an actual holdout. A
+    // campaign is never paused because of an unmeasured hunch.
+    const [stopConfig, stopCampaign, stopAssignments] = await Promise.all([
+      prisma.merchantGrowthConfig.findUnique({ where: { merchantId } }),
+      prisma.campaign.findUnique({ where: { id: campaignId } }),
+      prisma.campaignAssignment.findMany({ where: { campaignId } }),
+    ]);
+    if (stopCampaign?.status === "ACTIVE" && stopCampaign.budgetMinor > 0) {
+      const cohort = (name: string) => {
+        const rows = stopAssignments.filter((row) => row.cohort === name);
+        return {
+          subjects: rows.length,
+          impressions: rows.reduce((sum, row) => sum + row.impressionCount, 0),
+          conversions: rows.reduce((sum, row) => sum + row.conversionCount, 0),
+          observedRevenueMinor: rows.reduce((sum, row) => sum + row.observedRevenueMinor, 0),
+        };
+      };
+      const lift = computeCampaignLift(cohort("TREATMENT"), cohort("CONTROL"));
+      const spentBps = Math.round(stopCampaign.spentMinor * 10_000 / stopCampaign.budgetMinor);
+      const stopAt = stopConfig?.automaticStopLossBps ?? 2_000;
+      if (lift.basis === "MEASURED_AGAINST_HOLDOUT" && (lift.liftBps ?? 0) < 0 && spentBps >= stopAt) {
+        const paused = await prisma.campaign.updateMany({ where: { id: campaignId, status: "ACTIVE" }, data: { status: "PAUSED" } });
+        if (paused.count === 1) {
+          await appendLedgerEvent(prisma, {
+            workflowId: `campaign-${campaignId}`,
+            merchantId,
+            actorType: "SYSTEM",
+            actionType: "CAMPAIGN_AUTO_PAUSED",
+            status: "REJECTED",
+            conciseReason: `Campaign automatically paused: measured conversion lift was ${lift.liftBps} bps and spend reached ${spentBps} bps of budget.`,
+            relatedEntityType: "Campaign",
+            relatedEntityId: campaignId,
+            metadata: { liftBps: lift.liftBps, statisticalConfidenceBps: lift.statisticalConfidenceBps, spentBps, stopAtBps: stopAt },
+            executedAt: new Date(),
+          });
+        }
+      }
+    }
     return result.conversion;
+  });
+
+  app.get(`${prefix}/campaigns-summary`, async (request) => {
+    const merchantId = getAuthenticatedMerchantId(request);
+    const campaigns = await prisma.campaign.findMany({
+      where: { merchantId },
+      include: { assignments: true, conversions: { select: { assignmentId: true, observedContributionMinor: true, incentiveCostMinor: true } } },
+    });
+    let estimatedIncrementalRevenueMinor = 0;
+    let estimatedIncrementalMarginMinor = 0;
+    let measuredCampaigns = 0;
+    let allMeasuredMarginsKnown = true;
+    let warnings = 0;
+    for (const campaign of campaigns) {
+      const cohort = (name: string) => {
+        const rows = campaign.assignments.filter((row) => row.cohort === name);
+        return { subjects: rows.length, impressions: rows.reduce((sum, row) => sum + row.impressionCount, 0), conversions: rows.reduce((sum, row) => sum + row.conversionCount, 0), observedRevenueMinor: rows.reduce((sum, row) => sum + row.observedRevenueMinor, 0) };
+      };
+      const treatment = cohort("TREATMENT");
+      const control = cohort("CONTROL");
+      const lift = computeCampaignLift(treatment, control);
+      if (lift.basis !== "MEASURED_AGAINST_HOLDOUT") continue;
+      measuredCampaigns += 1;
+      // Compare revenue per assigned subject; repeat impressions are not
+      // independent customers. This is a holdout estimate, not proven causality.
+      estimatedIncrementalRevenueMinor += Math.round(treatment.observedRevenueMinor - control.observedRevenueMinor * treatment.subjects / control.subjects);
+      if ((lift.liftBps ?? 0) <= 0) warnings += 1;
+      const knownMargins = campaign.conversions.length > 0 && campaign.conversions.every((conversion) => conversion.observedContributionMinor !== null);
+      if (!knownMargins) allMeasuredMarginsKnown = false;
+      if (knownMargins && control.subjects > 0) {
+        const contributionFor = (name: string) => campaign.conversions
+          .filter((conversion) => campaign.assignments.some((assignment) => assignment.id === conversion.assignmentId && assignment.cohort === name))
+          .reduce((sum, conversion) => sum + (conversion.observedContributionMinor ?? 0), 0);
+        estimatedIncrementalMarginMinor += Math.round(contributionFor("TREATMENT") - contributionFor("CONTROL") * treatment.subjects / control.subjects);
+      }
+    }
+    return { estimatedIncrementalRevenueMinor: measuredCampaigns > 0 ? estimatedIncrementalRevenueMinor : null, estimatedIncrementalMarginMinor: measuredCampaigns > 0 && allMeasuredMarginsKnown ? estimatedIncrementalMarginMinor : null, measuredCampaigns, warnings, currency: "INR" as const };
   });
 
   app.get(`${prefix}/campaigns/:campaignId/metrics`, async (request) => {
@@ -291,7 +385,10 @@ export function registerCampaignRoutes(app: FastifyInstance, prefix: string): vo
     const { campaignId } = request.params as { campaignId: string };
     const campaign = await prisma.campaign.findUnique({ where: { id: campaignId } });
     if (!campaign || campaign.merchantId !== merchantId) throw AppError.notFound(`No campaign ${campaignId}.`);
-    const assignments = await prisma.campaignAssignment.findMany({ where: { campaignId } });
+    const assignments = await prisma.campaignAssignment.findMany({
+      where: { campaignId },
+      include: { conversions: { select: { observedContributionMinor: true, incentiveCostMinor: true } } },
+    });
     const summarize = (cohort: string) => {
       const rows = assignments.filter((row) => row.cohort === cohort);
       const impressions = rows.reduce((sum, row) => sum + row.impressionCount, 0);
@@ -302,6 +399,10 @@ export function registerCampaignRoutes(app: FastifyInstance, prefix: string): vo
         conversions,
         conversionRateBps: impressions === 0 ? 0 : Math.floor((conversions * 10_000) / impressions),
         observedRevenueMinor: rows.reduce((sum, row) => sum + row.observedRevenueMinor, 0),
+        observedContributionMinor: rows.every((row) => row.conversions.every((conversion) => conversion.observedContributionMinor !== null))
+          ? rows.reduce((sum, row) => sum + row.conversions.reduce((inner, conversion) => inner + (conversion.observedContributionMinor ?? 0), 0), 0)
+          : null,
+        incentiveCostMinor: rows.reduce((sum, row) => sum + row.conversions.reduce((inner, conversion) => inner + conversion.incentiveCostMinor, 0), 0),
       };
     };
     const treatment = summarize("TREATMENT");
@@ -309,6 +410,15 @@ export function registerCampaignRoutes(app: FastifyInstance, prefix: string): vo
     // The holdout was always assigned and never compared. Computing the
     // difference here — in the one place a real control group exists —
     // is what turns "we ran a campaign" into "the offer caused this".
-    return { campaign, treatment, control, lift: computeCampaignLift(treatment, control) };
+    const lift = computeCampaignLift(treatment, control);
+    const incrementalMarginMinor = lift.basis === "MEASURED_AGAINST_HOLDOUT" && treatment.observedContributionMinor !== null && control.observedContributionMinor !== null && control.impressions > 0
+      ? Math.round(treatment.observedContributionMinor - control.observedContributionMinor * treatment.impressions / control.impressions)
+      : null;
+    const cannibalisationRisk = lift.basis !== "MEASURED_AGAINST_HOLDOUT"
+      ? "UNKNOWN"
+      : (lift.liftBps ?? 0) <= 0 || (lift.attributableRevenueMinor ?? 0) <= treatment.incentiveCostMinor
+        ? "HIGH"
+        : "LOW";
+    return { campaign, treatment, control, lift, profit: { incrementalMarginMinor, cannibalisationRisk, costsComplete: treatment.observedContributionMinor !== null && control.observedContributionMinor !== null } };
   });
 }

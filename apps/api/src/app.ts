@@ -35,6 +35,7 @@ import { registerPaymentWebhookRoutes } from "./modules/payments/webhook-routes.
 import { registerAuthRoutes } from "./modules/auth/routes.js";
 import { authenticateRequest } from "./modules/auth/middleware.js";
 import { registerCampaignRoutes } from "./modules/campaigns/routes.js";
+import { registerGrowthPlanRoutes } from "./modules/growth-plans/routes.js";
 import { registerPostPurchaseRoutes } from "./modules/post-purchase/routes.js";
 import { registerMarketplaceRoutes } from "./modules/marketplace/routes.js";
 import { registerBuyerPolicyRoutes } from "./modules/buyer-policy/routes.js";
@@ -174,6 +175,7 @@ export function buildApp(): FastifyInstance {
   registerPaymentRoutes(app, v1);
   registerPaymentWebhookRoutes(app, v1);
   registerCampaignRoutes(app, v1);
+  registerGrowthPlanRoutes(app, v1);
   registerPostPurchaseRoutes(app, v1);
   registerMarketplaceRoutes(app, v1);
   registerBuyerPolicyRoutes(app, v1);

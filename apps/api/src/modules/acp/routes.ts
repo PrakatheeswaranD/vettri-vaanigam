@@ -15,7 +15,7 @@
  * WHERE THE GOVERNANCE HAPPENS
  *
  * `/complete` is the only endpoint that can move money, so that is the one
- * that runs the full Vaanigam gate: mandate, then merchant policy, then a
+ * that runs the full Vettri Vaanigam gate: mandate, then merchant policy, then a
  * Decision Record. Creating or updating a session commits the merchant to
  * nothing, so those are deliberately cheap.
  *
@@ -126,7 +126,7 @@ function toAcpSession(
     messages: (row.messages as AcpMessage[] | null) ?? [],
     created_at: row.createdAt.toISOString(),
     updated_at: row.updatedAt.toISOString(),
-    ...(continuation ? { vaanigam: continuation } : {}),
+    ...(continuation ? { vettri_vaanigam: continuation } : {}),
   };
 }
 
@@ -332,7 +332,7 @@ export function registerAcpRoutes(app: FastifyInstance, prefix: string): void {
 
   /**
    * The only ACP endpoint that can move money — so the only one that runs
-   * the full Vaanigam gate.
+   * the full Vettri Vaanigam gate.
    */
   app.post(`${base}/checkout_sessions/:sessionId/complete`, async (request, reply) => {
     const { merchantSlug, sessionId } = request.params as { merchantSlug: string; sessionId: string };
@@ -494,11 +494,11 @@ export function registerAcpRoutes(app: FastifyInstance, prefix: string): void {
           // ACP's own `messages` array — the protocol field built for
           // exactly this, rather than a private one we invented. An agent
           // that speaks only ACP can act on `approval_required` without
-          // knowing anything about Vaanigam.
+          // knowing anything about Vettri Vaanigam.
           messages: acpMessages,
-          // The machine-readable Vaanigam reason stays in our own
+          // The machine-readable Vettri Vaanigam reason stays in our own
           // namespace, alongside rather than inside the protocol's enum.
-          vaanigam: {
+          vettri_vaanigam: {
             decision: result.outcome,
             reason_code: result.reasonCode,
             reason: result.explanation,
@@ -519,7 +519,7 @@ export function registerAcpRoutes(app: FastifyInstance, prefix: string): void {
   /**
    * `delegate_payment` — tokenises a payment method under an Allowance.
    *
-   * The caller supplies a token from its own PCI/payment vault. Vaanigam
+   * The caller supplies a token from its own PCI/payment vault. Vettri Vaanigam
    * stores only a one-way fingerprint and returns its own signed, bounded
    * token. Raw PAN/CVV fields are not accepted and no instrument secret is
    * persisted in either this table or the idempotency response snapshot.
@@ -581,7 +581,7 @@ export function registerAcpRoutes(app: FastifyInstance, prefix: string): void {
           created: new Date().toISOString(),
           metadata: body.metadata ?? {},
           expiresAt: expiresAt.toISOString(),
-          vaanigam: {
+          vettri_vaanigam: {
             token_kind: "delegated_payment_token",
             payment_instrument_vaulted: false,
             allowance_max_amount: body.allowance.max_amount,
@@ -601,7 +601,7 @@ export function registerAcpRoutes(app: FastifyInstance, prefix: string): void {
       created: outcome.response.created,
       expires_at: outcome.response.expiresAt,
       metadata: outcome.response.metadata,
-      vaanigam: outcome.response.vaanigam,
+      vettri_vaanigam: outcome.response.vettri_vaanigam,
     });
   });
 }

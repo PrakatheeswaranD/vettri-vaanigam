@@ -68,9 +68,33 @@ export interface CampaignLift {
    * whole codebase refuses.
    */
   attributableRevenueMinor: number | null;
+  /** Two-sided normal-approximation confidence that the observed rates
+   * differ. This is evidence strength, not a guarantee of future lift. */
+  statisticalConfidenceBps?: number | null;
   /** Stated verbatim to the merchant. Always explains the basis, including
    * — especially — when there is nothing to report. */
   explanation: string;
+}
+
+function normalCdf(value: number): number {
+  // Abramowitz-Stegun approximation; sufficient for a displayed
+  // confidence band and deterministic across runtimes.
+  const sign = value < 0 ? -1 : 1;
+  const x = Math.abs(value) / Math.sqrt(2);
+  const t = 1 / (1 + 0.3275911 * x);
+  const erf = sign * (1 - (((((1.061405429 * t - 1.453152027) * t + 1.421413741) * t - 0.284496736) * t + 0.254829592) * t) * Math.exp(-x * x));
+  return (1 + erf) / 2;
+}
+
+function confidenceBps(treatment: CohortResult, control: CohortResult): number | null {
+  if (treatment.impressions <= 0 || control.impressions <= 0) return null;
+  const p1 = treatment.conversions / treatment.impressions;
+  const p2 = control.conversions / control.impressions;
+  const pooled = (treatment.conversions + control.conversions) / (treatment.impressions + control.impressions);
+  const standardError = Math.sqrt(pooled * (1 - pooled) * (1 / treatment.impressions + 1 / control.impressions));
+  if (standardError === 0) return p1 === p2 ? 0 : 10_000;
+  const z = Math.abs(p1 - p2) / standardError;
+  return Math.max(0, Math.min(10_000, Math.round((2 * normalCdf(z) - 1) * 10_000)));
 }
 
 function rateBps(conversions: number, impressions: number): number | null {
@@ -89,6 +113,7 @@ export function computeCampaignLift(treatment: CohortResult, control: CohortResu
       controlRateBps: null,
       liftBps: null,
       attributableRevenueMinor: null,
+      statisticalConfidenceBps: null,
       explanation:
         "This campaign was run without a control group, so its results cannot be attributed to the offer. The revenue is real; what it would have been without the offer is unknown.",
     };
@@ -101,6 +126,7 @@ export function computeCampaignLift(treatment: CohortResult, control: CohortResu
       controlRateBps: rateBps(control.conversions, control.impressions),
       liftBps: null,
       attributableRevenueMinor: null,
+      statisticalConfidenceBps: null,
       explanation: `Too few subjects to compare yet — ${treatment.subjects} treated and ${control.subjects} held back, against a floor of ${MIN_COHORT_FOR_LIFT} each. A difference computed from this would be noise wearing a percentage sign.`,
     };
   }
@@ -115,6 +141,7 @@ export function computeCampaignLift(treatment: CohortResult, control: CohortResu
       controlRateBps,
       liftBps: null,
       attributableRevenueMinor: null,
+      statisticalConfidenceBps: null,
       explanation:
         "One of the cohorts has had no impressions yet, so there is no conversion rate to compare. Nothing has been shown to anyone in that group.",
     };
@@ -141,6 +168,7 @@ export function computeCampaignLift(treatment: CohortResult, control: CohortResu
     controlRateBps,
     liftBps,
     attributableRevenueMinor,
+    statisticalConfidenceBps: confidenceBps(treatment, control),
     explanation:
       liftBps > 0
         ? `Treated subjects converted at ${(treatmentRateBps / 100).toFixed(1)}% against ${(controlRateBps / 100).toFixed(1)}% for the ${control.subjects} held back. The difference is measured against a real holdout, not assumed.`

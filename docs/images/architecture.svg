@@ -1,0 +1,91 @@
+<svg xmlns="http://www.w3.org/2000/svg" width="1280" height="1040" viewBox="0 0 1280 1040" role="img" aria-labelledby="title desc">
+  <title id="title">VETTRI VAANIGAM — governed agentic commerce architecture</title>
+  <desc id="desc">Buyers, merchants and external agents enter a Fastify modular monolith. Buyer assistance and merchant growth operate through policy and authorization into commerce. Prisma persists state and audit evidence in PostgreSQL. Optional AI assists language tasks. Razorpay payment processing requires verification. Weekly outbound delivery and unsupported executors remain unfinished.</desc>
+  <defs>
+    <marker id="arrow" markerWidth="8" markerHeight="8" refX="7" refY="4" orient="auto"><path d="M0 0L8 4L0 8" fill="#64748b"/></marker>
+    <style>
+      text { font-family: Arial, Helvetica, sans-serif; fill: #12243b; }
+      .heading { font-size: 23px; font-weight: 700; }
+      .label { font-size: 19px; font-weight: 700; }
+      .body { font-size: 16px; fill: #40536b; }
+      .small { font-size: 14px; fill: #40536b; }
+      .eyebrow { font-size: 13px; font-weight: 700; letter-spacing: 2px; fill: #2563eb; }
+      .box { fill: #fff; stroke: #cbd5e1; stroke-width: 1.5; }
+      .flow { fill: none; stroke: #64748b; stroke-width: 2; marker-end: url(#arrow); }
+    </style>
+  </defs>
+  <rect width="1280" height="1040" rx="20" fill="#f4f7fb"/>
+  <text x="48" y="47" class="eyebrow">INTERNSHIP PORTFOLIO / SYSTEM DESIGN</text>
+  <text x="48" y="90" font-size="36" font-weight="700">VETTRI VAANIGAM</text>
+  <text x="430" y="88" font-size="23" fill="#40536b">Governed agentic commerce</text>
+  <text x="48" y="119" class="body">AI proposes. Merchant policy authorizes. Commerce executes. Provider evidence verifies.</text>
+
+  <rect class="box" x="48" y="151" width="356" height="94" rx="12"/>
+  <text x="70" y="185" class="label">Buyer interface</text>
+  <text x="70" y="214" class="body">Discover · compare · prepare checkout</text>
+  <rect class="box" x="426" y="151" width="356" height="94" rx="12"/>
+  <text x="448" y="185" class="label">Merchant interface</text>
+  <text x="448" y="214" class="body">Opportunities · controls · approvals</text>
+  <rect class="box" x="804" y="151" width="428" height="94" rx="12"/>
+  <text x="826" y="185" class="label">External buyer agents</text>
+  <text x="826" y="214" class="body">Gateway / protocol-specific API requests</text>
+  <path class="flow" d="M226 245V287"/>
+  <path class="flow" d="M604 245V287"/>
+  <path class="flow" d="M1018 245V287"/>
+
+  <rect x="48" y="287" width="1184" height="77" rx="12" fill="#173b6c"/>
+  <text x="70" y="318" style="fill:#fff" class="label">FASTIFY API / REQUEST BOUNDARY</text>
+  <text x="70" y="345" style="fill:#dbeafe" font-size="16">Validation · authentication · tenant and role scope · rate limits · gateway / protocol adapters</text>
+
+  <rect x="48" y="391" width="854" height="397" rx="16" fill="#eaf1fa" stroke="#b8cce4"/>
+  <text x="70" y="422" class="eyebrow">MODULAR MONOLITH / TYPESCRIPT SERVICES</text>
+  <path class="flow" d="M226 364V391 M226 432V445"/>
+  <path class="flow" d="M604 364V391 M604 432V445"/>
+  <rect class="box" x="70" y="445" width="380" height="91" rx="10"/>
+  <text x="90" y="477" class="label">Buyer assistance</text>
+  <text x="90" y="506" class="body">Intent · catalogue · recommendations</text>
+  <rect class="box" x="472" y="445" width="408" height="91" rx="10"/>
+  <text x="492" y="477" class="label">Merchant growth</text>
+  <text x="492" y="506" class="body">Detect · propose · plan · measure</text>
+  <path class="flow" d="M260 536V570"/>
+  <path class="flow" d="M676 536V570"/>
+  <rect x="70" y="570" width="810" height="82" rx="10" fill="#e0f2ed" stroke="#6aaa96" stroke-width="1.5"/>
+  <text x="90" y="603" class="label">Policy, approvals and bounded authorization</text>
+  <text x="90" y="630" class="body">Eligibility · discount limits · permission checks · authorization consumption</text>
+  <path class="flow" d="M475 652V686"/>
+  <rect class="box" x="70" y="686" width="810" height="80" rx="10"/>
+  <text x="90" y="718" class="label">Commerce and payments</text>
+  <text x="90" y="745" class="body">Server-calculated checkout · orders · idempotency · verification · reconciliation</text>
+
+  <rect class="box" x="938" y="405" width="294" height="132" rx="12"/>
+  <text x="958" y="438" class="label">Optional AI providers</text>
+  <text x="958" y="467" class="body">Language assistance only</text>
+  <text x="958" y="493" class="body">Rule-based demo fallback</text>
+  <text x="958" y="517" class="small">No authority to move money</text>
+  <path class="flow" d="M880 462H938"/>
+  <text x="909" y="451" text-anchor="middle" class="small">AI</text>
+
+  <rect class="box" x="938" y="615" width="294" height="151" rx="12"/>
+  <text x="958" y="650" class="label">Razorpay Test Mode</text>
+  <text x="958" y="680" class="body">Payment gateway adapter</text>
+  <text x="958" y="707" class="body">Signed webhook + provider</text>
+  <text x="958" y="731" class="body">checks establish outcomes</text>
+  <path class="flow" d="M880 704H938"/>
+  <path class="flow" d="M938 743H880"/>
+  <text x="1090" y="795" text-anchor="middle" class="small">Keys required; mocks in tests</text>
+
+  <path class="flow" d="M475 788V827"/>
+  <rect x="48" y="827" width="854" height="99" rx="12" fill="#173b6c"/>
+  <text x="70" y="861" style="fill:#fff" class="label">PRISMA → POSTGRESQL</text>
+  <text x="70" y="890" style="fill:#dbeafe" font-size="16">Catalogue · customers · policies · orders · payments · jobs · hash-chained audit ledger</text>
+  <text x="70" y="913" style="fill:#dbeafe" font-size="14">Shared persistence for API modules. Local development: PGlite.</text>
+
+  <rect x="938" y="827" width="294" height="99" rx="12" fill="#fff7e8" stroke="#b47b24" stroke-width="1.5" stroke-dasharray="7 5"/>
+  <text x="958" y="857" class="label">Partial: weekly jobs</text>
+  <text x="958" y="883" class="small">Drafts persist; delivery adapters</text>
+  <text x="958" y="906" class="small">and full executors unfinished</text>
+
+  <line x1="48" y1="955" x2="1232" y2="955" stroke="#cbd5e1"/>
+  <text x="48" y="982" class="body">Shared domain rules + Zod contracts underpin the API and web app.</text>
+  <text x="48" y="1008" class="small">Solid boxes: implemented modules / integrations. Dashed box: incomplete execution layer. Not a production certification.</text>
+</svg>

@@ -161,7 +161,7 @@ const CHECKS: CheckSpec[] = [
   },
   {
     id: "gateway-unsigned",
-    protocol: "Vaanigam gateway",
+    protocol: "Vettri Vaanigam gateway",
     title: "Intent without a signed mandate is refused",
     expectation: "A rejection — the mandate signature is the gate, not the session",
     run: async (slug) => {
@@ -263,7 +263,7 @@ const CHECKS: CheckSpec[] = [
   },
   {
     id: "gateway-price-forgery",
-    protocol: "Vaanigam gateway",
+    protocol: "Vettri Vaanigam gateway",
     title: "Agent-claimed price is never trusted",
     expectation: "A rejection — the basket is priced from the merchant's catalogue",
     run: async (slug, sku) => {

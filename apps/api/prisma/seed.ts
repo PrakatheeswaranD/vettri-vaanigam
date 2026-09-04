@@ -406,8 +406,8 @@ async function main() {
   /** The demo shopper's account id, needed further down for their policy. */
   let customerAccountId: string | null = null;
   for (const identity of [
-    { slug: "demo-customer-context", name: "Demo Customer", email: "customer@vaanigam.demo", role: "CUSTOMER" as const, password: "CustomerDemo!2026" },
-    { slug: "demo-platform-context", name: "Platform Administration", email: "admin@vaanigam.demo", role: "PLATFORM_ADMIN" as const, password: "AdminDemo!2026" },
+    { slug: "demo-customer-context", name: "Demo Customer", email: "customer@vettrivaanigam.demo", role: "CUSTOMER" as const, password: "CustomerDemo!2026" },
+    { slug: "demo-platform-context", name: "Platform Administration", email: "admin@vettrivaanigam.demo", role: "PLATFORM_ADMIN" as const, password: "AdminDemo!2026" },
   ]) {
     const context = await prisma.merchant.upsert({ where: { slug: identity.slug }, update: {}, create: { slug: identity.slug, name: identity.name, defaultCurrency: "INR", businessCategory: "Identity context", status: "ACTIVE" } });
     // A shopper gets a real CustomerAccount, and it takes the identity

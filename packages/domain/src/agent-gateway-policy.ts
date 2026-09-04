@@ -1,5 +1,5 @@
 /**
- * Vaanigam Core — the merchant-policy half of the gate.
+ * Vettri Vaanigam Core — the merchant-policy half of the gate.
  *
  * A verified mandate says the BUYER consented. This says whether the
  * MERCHANT consents. Both must pass before anything touches a payment API,

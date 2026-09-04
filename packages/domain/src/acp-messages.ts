@@ -1,5 +1,5 @@
 /**
- * Vaanigam decisions expressed in ACP's own vocabulary.
+ * Vettri Vaanigam decisions expressed in ACP's own vocabulary.
  *
  * WHY THIS EXISTS
  *
@@ -17,7 +17,7 @@
  *
  * WHERE THE LINE IS DRAWN — AND WHY IT MATTERS
  *
- * `code` uses ONLY the two ACP enum values above. Vaanigam has fifteen or
+ * `code` uses ONLY the two ACP enum values above. Vettri Vaanigam has fifteen or
  * so reason codes and it would be easy to put `MANDATE_NONCE_REPLAYED`
  * there; that would be inventing an extension inside someone else's enum
  * and calling it compliance. An ACP client switching on `code` would hit a
@@ -25,9 +25,9 @@
  *
  * So the protocol's field carries the protocol's vocabulary, the specific
  * reason travels in `content` where free text belongs, and the machine-
- * readable Vaanigam code stays in our own `vaanigam` namespace alongside.
+ * readable Vettri Vaanigam code stays in our own `vettri_vaanigam` namespace alongside.
  * A client that speaks only ACP gets something valid; a client that also
- * speaks Vaanigam gets everything.
+ * speaks Vettri Vaanigam gets everything.
  *
  * Pure: no database, no clock, no I/O.
  */
@@ -151,7 +151,7 @@ export function buildAcpMessages(decision: DecisionForMessages): AcpMessage[] {
       type: "info",
       content_type: "plain",
       content:
-        "This is not a refusal. Poll the session, or the status token on the Vaanigam decision, until a human resolves it.",
+        "This is not a refusal. Poll the session, or the status token on the Vettri Vaanigam decision, until a human resolves it.",
     });
 
     return messages;

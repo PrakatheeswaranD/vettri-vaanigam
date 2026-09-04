@@ -233,13 +233,13 @@ export interface AIProvider {
   rankCandidates(params: RankCandidatesParams): Promise<RawRankedItem[]>;
   proposeGrowthAction(params: ProposeGrowthActionParams): Promise<RawGrowthProposal>;
   proposeRecoveryAction(params: ProposeRecoveryActionParams): Promise<RawRecoveryProposal>;
-  /** Vaanigam Catalog Compiler — turns one free-text catalogue row into
+  /** Vettri Vaanigam Catalog Compiler — turns one free-text catalogue row into
    * structured fields an AI buyer can filter on. */
   normalizeCatalogRow(params: NormalizeCatalogRowParams): Promise<RawNormalizedProduct>;
-  /** Vaanigam Negotiator — proposes a bounded add-on offer. Its discount is
+  /** Vettri Vaanigam Negotiator — proposes a bounded add-on offer. Its discount is
    * clamped by the merchant's policy before it reaches anyone. */
   proposeAgentUpsell(params: ProposeAgentUpsellParams): Promise<RawAgentUpsell>;
-  /** Vaanigam Policy Author — drafts policy changes from a merchant's own
+  /** Vettri Vaanigam Policy Author — drafts policy changes from a merchant's own
    * sentence. The result is ALWAYS clamped by `buildPolicyDraft` and
    * approved by a human before anything is saved. */
   compilePolicyFromInstruction(params: CompilePolicyParams): Promise<RawPolicyDraftResponse>;

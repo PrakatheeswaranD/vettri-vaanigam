@@ -98,7 +98,7 @@ export async function resolveAgentForIntent(
 
   if (pin) {
     logger.warn(
-      { event: "vaanigam.key_pinned_on_first_use", merchantId: params.merchantId, agentId: params.externalAgentId },
+      { event: "vettri_vaanigam.key_pinned_on_first_use", merchantId: params.merchantId, agentId: params.externalAgentId },
       "Pinned an agent key on first use — this guarantees continuity, not first-contact authenticity",
     );
   }

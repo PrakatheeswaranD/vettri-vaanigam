@@ -154,9 +154,9 @@ function linkedPaths(): string[] {
 
 describe("navigation", () => {
   it("gives the merchant exactly the five Track 01 destinations", () => {
-    const items = NAV_BY_ROLE.merchant.flatMap((section) => section.items);
+    const items = NAV_BY_ROLE.merchant.find((section) => section.id === "merchant")?.items ?? [];
     expect(items.map((item) => item.label)).toEqual([
-      "Overview", "Merchant Agent", "Growth", "Commerce", "Governance",
+      "Home", "Opportunities", "Customers & Orders", "Agent Controls", "Activity",
     ]);
   });
 

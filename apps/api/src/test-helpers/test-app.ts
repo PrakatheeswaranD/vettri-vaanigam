@@ -20,7 +20,7 @@ export const TEST_MERCHANT_PASSWORD = "MeridianDemo!2026";
 
 /** The demo shopper, created by `scripts/provision-demo-identities.ts`
  * (NOT by `prisma/seed.ts` — see `buildCustomerTestApp` below). */
-export const TEST_CUSTOMER_EMAIL = "customer@vaanigam.demo";
+export const TEST_CUSTOMER_EMAIL = "customer@vettrivaanigam.demo";
 export const TEST_CUSTOMER_PASSWORD = "CustomerDemo!2026";
 
 /**

@@ -328,7 +328,7 @@ A count that can only ever return zero is worse than a missing metric, because i
 `params.merchantId` owned the conversation AND scoped the catalogue. It worked only because a shopper was filed under a merchant, so one id was legal for both. Split into `customerAccountId` and `merchantId`; the typechecker then found all four call sites that had been passing a seller where a shopper belonged.
 
 ### PC-5 · Five test fixtures picked their subject with no ordering and no stock clause
-`productVariant.findFirstOrThrow` with neither `orderBy` nor an inventory constraint, across `customer-negotiation`, `acp-surface`, `agent-trust`, `vaanigam-gateway` and `x402-handshake`. Which variant the suite tested was decided by physical row order.
+`productVariant.findFirstOrThrow` with neither `orderBy` nor an inventory constraint, across `customer-negotiation`, `acp-surface`, `agent-trust`, `vettri-vaanigam-gateway` and `x402-handshake`. Which variant the suite tested was decided by physical row order.
 
 It stopped being theoretical: after a reseed, `customer-negotiation` landed on a zero-inventory variant and **all thirteen assertions failed with `POLICY_DENIED`** — for a reason with nothing to do with negotiation. The other four had simply been lucky. All seven fixtures now constrain stock and order by SKU.
 

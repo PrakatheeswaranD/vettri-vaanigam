@@ -1,7 +1,7 @@
 import type { Config } from "tailwindcss";
 
 /**
- * Vaanigam design tokens.
+ * Vettri Vaanigam design tokens.
  *
  * The original palette was deliberately narrow (PART 01 §34) — one hue,
  * cold slate neutrals, no elevation beyond a hairline. That restraint was

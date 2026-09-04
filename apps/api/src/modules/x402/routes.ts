@@ -5,7 +5,7 @@
  * it. An unpaid request to a protected resource gets a genuine `402
  * Payment Required` carrying an `accepts` array; the client retries with
  * a `PAYMENT-SIGNATURE` header; the gateway verifies it through the
- * configured facilitator and then runs the normal Vaanigam gate.
+ * configured facilitator and then runs the normal Vettri Vaanigam gate.
  *
  * WHAT IS REAL AND WHAT IS NOT — stated, not implied
  *
@@ -518,7 +518,7 @@ export function registerX402Routes(app: FastifyInstance, prefix: string): void {
           x402Version: X402_VERSION,
           settlement_status: "not_attempted",
           error: "fulfillment_unavailable",
-          vaanigam: { decision: "DECLINE", reason_code: "FULFILLMENT_UNAVAILABLE", reason: fulfillmentExplanation },
+          vettri_vaanigam: { decision: "DECLINE", reason_code: "FULFILLMENT_UNAVAILABLE", reason: fulfillmentExplanation },
         });
       }
 
@@ -547,7 +547,7 @@ export function registerX402Routes(app: FastifyInstance, prefix: string): void {
           error: "facilitator_unavailable",
           payment_id: prepared.paymentId,
           order_id: prepared.orderId,
-          vaanigam: { decision: result.outcome, reason_code: "SETTLEMENT_UNKNOWN", reason: unknownExplanation },
+          vettri_vaanigam: { decision: result.outcome, reason_code: "SETTLEMENT_UNKNOWN", reason: unknownExplanation },
         });
       }
       if (!settlement.success && !settlement.definitiveFailure) {
@@ -571,7 +571,7 @@ export function registerX402Routes(app: FastifyInstance, prefix: string): void {
           error: settlement.errorReason ?? "invalid_settlement_evidence",
           payment_id: prepared.paymentId,
           order_id: prepared.orderId,
-          vaanigam: { decision: result.outcome, reason_code: "SETTLEMENT_EVIDENCE_INVALID", reason: unknownExplanation },
+          vettri_vaanigam: { decision: result.outcome, reason_code: "SETTLEMENT_EVIDENCE_INVALID", reason: unknownExplanation },
         });
       }
       if (!settlement.success) {
@@ -633,7 +633,7 @@ export function registerX402Routes(app: FastifyInstance, prefix: string): void {
         settlement: paymentResponse,
         order_id: prepared.orderId,
         payment_id: prepared.paymentId,
-        vaanigam: { decision: result.outcome, reason_code: result.reasonCode, reason: result.explanation },
+        vettri_vaanigam: { decision: result.outcome, reason_code: result.reasonCode, reason: result.explanation },
       });
     }
 
@@ -647,7 +647,7 @@ export function registerX402Routes(app: FastifyInstance, prefix: string): void {
       settlement_note: facilitatorVerification.configured
         ? "The merchant policy did not authorize settlement."
         : "No facilitator is configured; the request was routed to human approval and nothing settled on-chain.",
-      vaanigam: {
+      vettri_vaanigam: {
         decision: result.outcome,
         reason_code: result.reasonCode,
         reason: result.explanation,

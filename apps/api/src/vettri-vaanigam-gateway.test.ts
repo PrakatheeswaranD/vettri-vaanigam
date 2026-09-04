@@ -1,5 +1,5 @@
 /**
- * Vaanigam gateway — end-to-end through the real HTTP route.
+ * Vettri Vaanigam gateway — end-to-end through the real HTTP route.
  *
  * These exercise the actual door an outside buyer agent knocks on: no
  * session, real protocol detection, real adapters, real mandate
@@ -89,13 +89,13 @@ afterAll(async () => {
   await prisma.$disconnect();
 });
 
-describe("Vaanigam gateway — protocol mesh", () => {
+describe("Vettri Vaanigam gateway — protocol mesh", () => {
   it("accepts an ACP intent on the shared endpoint with no session", async () => {
     const res = await postIntent({
       items: [{ id: sku, quantity: 1 }],
       buyer: { email: "agent@example.test" },
       totals: { total: priceMinor },
-      vaanigam_mandate: mandateFor(),
+      vettri_vaanigam_mandate: mandateFor(),
     });
 
     expect(res.statusCode).toBe(200);
@@ -108,7 +108,7 @@ describe("Vaanigam gateway — protocol mesh", () => {
       currency: "INR",
       items: [{ sku, quantity: 1 }],
       payload: { authorization: { value: String(priceMinor) } },
-      vaanigam_mandate: mandateFor(),
+      vettri_vaanigam_mandate: mandateFor(),
     });
 
     expect(res.statusCode).toBe(200);
@@ -133,7 +133,7 @@ describe("Vaanigam gateway — protocol mesh", () => {
  * trust score and make them fail for reasons that have nothing to do with
  * mandates.
  */
-describe("Vaanigam gateway — mandate is the gate", () => {
+describe("Vettri Vaanigam gateway — mandate is the gate", () => {
   it("declines an intent presented with no mandate at all", async () => {
     const solo = await enrolAgent(prisma, merchantId);
     const res = await postIntentAs(solo, { items: [{ id: sku, quantity: 1 }], buyer: {}, totals: { total: priceMinor } });
@@ -148,7 +148,7 @@ describe("Vaanigam gateway — mandate is the gate", () => {
       items: [{ id: sku, quantity: 1 }],
       buyer: {},
       totals: { total: priceMinor },
-      vaanigam_mandate: mandate,
+      vettri_vaanigam_mandate: mandate,
     });
     expect(res.json().reasonCode).toBe("MANDATE_SIGNATURE_INVALID");
   });
@@ -156,7 +156,7 @@ describe("Vaanigam gateway — mandate is the gate", () => {
   it("refuses to spend the same mandate twice", async () => {
     const solo = await enrolAgent(prisma, merchantId);
     const mandate = solo.mandate(merchantId);
-    const body = { items: [{ id: sku, quantity: 1 }], buyer: {}, totals: { total: priceMinor }, vaanigam_mandate: mandate };
+    const body = { items: [{ id: sku, quantity: 1 }], buyer: {}, totals: { total: priceMinor }, vettri_vaanigam_mandate: mandate };
 
     const first = await postIntentAs(solo, body);
     expect(first.statusCode).toBe(200);
@@ -189,7 +189,7 @@ describe("Vaanigam gateway — mandate is the gate", () => {
       items: [{ id: blocked.sku, quantity: 1 }],
       buyer: {},
       totals: { total: blocked.priceMinor },
-      vaanigam_mandate: mandate,
+      vettri_vaanigam_mandate: mandate,
     });
     expect(declined.json().reasonCode).toBe("CATEGORY_BLOCKED");
 
@@ -198,19 +198,19 @@ describe("Vaanigam gateway — mandate is the gate", () => {
       items: [{ id: sku, quantity: 1 }],
       buyer: {},
       totals: { total: priceMinor },
-      vaanigam_mandate: mandate,
+      vettri_vaanigam_mandate: mandate,
     });
     expect(accepted.statusCode).toBe(200);
   });
 });
 
-describe("Vaanigam gateway — the merchant's price is the one that counts", () => {
+describe("Vettri Vaanigam gateway — the merchant's price is the one that counts", () => {
   it("declines when the agent's claimed total disagrees with the catalogue", async () => {
     const res = await postIntent({
       items: [{ id: sku, quantity: 1 }],
       buyer: {},
       totals: { total: 1 },
-      vaanigam_mandate: mandateFor(),
+      vettri_vaanigam_mandate: mandateFor(),
     });
     expect(res.json()).toMatchObject({ reasonCode: "AMOUNT_MISMATCH", computedTotalMinor: priceMinor });
   });
@@ -219,13 +219,13 @@ describe("Vaanigam gateway — the merchant's price is the one that counts", () 
     const res = await postIntent({
       items: [{ id: "SKU-THAT-DOES-NOT-EXIST", quantity: 1 }],
       buyer: {},
-      vaanigam_mandate: mandateFor(),
+      vettri_vaanigam_mandate: mandateFor(),
     });
     expect(res.json().reasonCode).toBe("UNRESOLVABLE_ITEMS");
   });
 });
 
-describe("Vaanigam gateway — the step-up the brief demos on stage", () => {
+describe("Vettri Vaanigam gateway — the step-up the brief demos on stage", () => {
   it("steps an over-ceiling unknown-agent order up to a human instead of declining it", async () => {
     const quantity = Math.ceil(1_000_000 / priceMinor) + 1; // guaranteed over the ₹10,000 ceiling
     const total = priceMinor * quantity;
@@ -243,7 +243,7 @@ describe("Vaanigam gateway — the step-up the brief demos on stage", () => {
         items: [{ id: sku, quantity }],
         buyer: {},
         totals: { total },
-        vaanigam_mandate: stranger.mandate(merchantId, { maxAmountMinor: total + 1 }),
+        vettri_vaanigam_mandate: stranger.mandate(merchantId, { maxAmountMinor: total + 1 }),
       },
     });
 
@@ -256,7 +256,7 @@ describe("Vaanigam gateway — the step-up the brief demos on stage", () => {
   });
 });
 
-describe("Vaanigam gateway — an approval becomes payable", () => {
+describe("Vettri Vaanigam gateway — an approval becomes payable", () => {
   /**
    * The brief's data flow sends an approved intent to Razorpay's Orders
    * API. Without this the gateway only ever DECIDES — the agent is told
@@ -268,7 +268,7 @@ describe("Vaanigam gateway — an approval becomes payable", () => {
       items: [{ id: sku, quantity: 1 }],
       buyer: {},
       totals: { total: priceMinor },
-      vaanigam_mandate: solo.mandate(merchantId),
+      vettri_vaanigam_mandate: solo.mandate(merchantId),
     });
 
     expect(res.statusCode).toBe(200);
@@ -299,7 +299,7 @@ describe("Vaanigam gateway — an approval becomes payable", () => {
       items: [{ id: blocked.sku, quantity: 1 }],
       buyer: {},
       totals: { total: blocked.priceMinor },
-      vaanigam_mandate: mandateFor(),
+      vettri_vaanigam_mandate: mandateFor(),
     });
 
     expect(res.json().outcome).toBe("DECLINE");
@@ -318,7 +318,7 @@ describe("Vaanigam gateway — an approval becomes payable", () => {
       items: [{ id: sku, quantity: 1 }],
       buyer: {},
       totals: { total: priceMinor },
-      vaanigam_mandate: solo.mandate(merchantId),
+      vettri_vaanigam_mandate: solo.mandate(merchantId),
     });
     const record = await prisma.decisionRecord.findUniqueOrThrow({ where: { id: approve.json().decisionId } });
     expect(record.providerOrderId).toBeTruthy();
@@ -326,7 +326,7 @@ describe("Vaanigam gateway — an approval becomes payable", () => {
   });
 });
 
-describe("Vaanigam gateway — explainability", () => {
+describe("Vettri Vaanigam gateway — explainability", () => {
   it("writes a Decision Record with a written reason for every outcome", async () => {
     const records = await prisma.decisionRecord.findMany({ where: { merchantId } });
     expect(records.length).toBeGreaterThan(5);

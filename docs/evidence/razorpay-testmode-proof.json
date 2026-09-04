@@ -1,0 +1,96 @@
+{
+  "generatedAt": "2026-09-04T18:55:08.115Z",
+  "mode": "RAZORPAY_TEST_MODE",
+  "keyIdPrefix": "rzp_test_TUjm…",
+  "apiBaseUrl": "https://api.razorpay.com/v1",
+  "summary": {
+    "passed": 6,
+    "failed": 0,
+    "manual": 1
+  },
+  "provesTheseClaims": [
+    "Razorpay Test Mode credentials authenticate against the live API.",
+    "The application's own RazorpayPaymentGateway creates a real provider order.",
+    "The provider echoes the server-computed amount, unchanged.",
+    "The reconciliation read-back path works against the live provider.",
+    "A real provider rejection is classified into the closed error taxonomy.",
+    "The HMAC signature schemes match Razorpay's documented formulas."
+  ],
+  "doesNotProve": [
+    "That a payment was captured or settled. Step 7 requires a human at Razorpay's hosted checkout.",
+    "That webhook delivery is configured on a reachable public endpoint."
+  ],
+  "steps": [
+    {
+      "step": 1,
+      "name": "Create Razorpay Test Mode order",
+      "status": "PASS",
+      "detail": "Razorpay returned order_TY49bxbEmoWnDf for ₹3,489 (status: created).",
+      "evidence": {
+        "providerOrderId": "order_TY49bxbEmoWnDf",
+        "amountMinor": 348900,
+        "currency": "INR",
+        "providerStatus": "created",
+        "internalPaymentIdSentAsReceipt": "d769c1da-ebd9-43a1-bf25-1d679786b6f0"
+      }
+    },
+    {
+      "step": 2,
+      "name": "Provider echoed the server-computed amount",
+      "status": "PASS",
+      "detail": "Sent 348900 INR minor units; Razorpay confirmed 348900 INR.",
+      "evidence": {
+        "sentAmountMinor": 348900,
+        "providerAmountMinor": 348900
+      }
+    },
+    {
+      "step": 3,
+      "name": "Reconciliation read-back against the live provider",
+      "status": "PASS",
+      "detail": "listPaymentsForOrder(order_TY49bxbEmoWnDf) returned 0 payment(s) — an uncompleted order correctly has none. This is the call that resolves an UNKNOWN payment.",
+      "evidence": {
+        "providerOrderId": "order_TY49bxbEmoWnDf",
+        "paymentCount": 0
+      }
+    },
+    {
+      "step": 4,
+      "name": "Live provider failure is classified, not leaked",
+      "status": "PASS",
+      "detail": "A real Razorpay 401 surfaced as ProviderGatewayError(PROVIDER_AUTHENTICATION_ERROR) — callers branch on the closed taxonomy, never on an HTTP status. Nothing was charged.",
+      "evidence": {
+        "errorCategory": "PROVIDER_AUTHENTICATION_ERROR"
+      }
+    },
+    {
+      "step": 5,
+      "name": "Razorpay HMAC schemes accept genuine and reject forged",
+      "status": "PASS",
+      "detail": "Checkout-completion HMAC accepts the genuine signature and rejects a one-character forgery; webhook HMAC accepts the genuine body and rejects both a tampered body and a wrong secret.",
+      "evidence": {
+        "acceptsGenuine": true,
+        "rejectsForged": true,
+        "acceptsGenuineWebhook": true,
+        "rejectsTamperedBody": true,
+        "rejectsWrongSecret": true
+      }
+    },
+    {
+      "step": 6,
+      "name": "Signature scheme matches Razorpay's documented formula independently",
+      "status": "PASS",
+      "detail": "razorpay-signature.ts reproduces HMAC-SHA256(order_id|payment_id, key_secret) exactly, recomputed here without reusing the module under test."
+    },
+    {
+      "step": 7,
+      "name": "Real Test Mode payment link created for human completion",
+      "status": "MANUAL_STEP_REQUIRED",
+      "detail": "Open https://rzp.io/rzp/dZopx1X and pay with a Razorpay test card (4111 1111 1111 1111, any future expiry, any CVV). Completing it produces a captured payment this project can then reconcile. A script cannot honestly do this half.",
+      "evidence": {
+        "providerPaymentLinkId": "plink_TY49dtOc1NdD4S",
+        "shortUrl": "https://rzp.io/rzp/dZopx1X"
+      }
+    }
+  ]
+}

@@ -45,7 +45,7 @@ async function buy(as: EnrolledAgent, quantity = 1) {
     items: [{ id: sku, quantity }],
     buyer: {},
     totals: { total },
-    vaanigam_mandate: as.mandate(merchantId, { maxAmountMinor: total + 1 }),
+    vettri_vaanigam_mandate: as.mandate(merchantId, { maxAmountMinor: total + 1 }),
   });
 }
 
@@ -55,7 +55,7 @@ async function forge(as: EnrolledAgent) {
     items: [{ id: sku, quantity: 1 }],
     buyer: {},
     totals: { total: priceMinor },
-    vaanigam_mandate: { ...as.mandate(merchantId, { maxAmountMinor: 100 }), maxAmountMinor: 99_000_000 },
+    vettri_vaanigam_mandate: { ...as.mandate(merchantId, { maxAmountMinor: 100 }), maxAmountMinor: 99_000_000 },
   });
 }
 
@@ -262,7 +262,7 @@ describe("agent trust — what does NOT count against an agent", () => {
       await intent(clumsy, {
         items: [{ id: `SKU-DOES-NOT-EXIST-${i}`, quantity: 1 }],
         buyer: {},
-        vaanigam_mandate: clumsy.mandate(merchantId),
+        vettri_vaanigam_mandate: clumsy.mandate(merchantId),
       });
     }
 
@@ -292,7 +292,7 @@ describe("agent trust — what does NOT count against an agent", () => {
         items: [{ id: blockedSku, quantity: 1 }],
         buyer: {},
         totals: { total: blockedPriceMinor },
-        vaanigam_mandate: persistent.mandate(merchantId),
+        vettri_vaanigam_mandate: persistent.mandate(merchantId),
       });
       expect(res.json().reasonCode).toBe("CATEGORY_BLOCKED");
     }

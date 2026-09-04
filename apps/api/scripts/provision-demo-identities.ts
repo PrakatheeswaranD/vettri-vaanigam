@@ -9,8 +9,8 @@ if (!isLocalDatabase && process.env.ALLOW_REMOTE_DEMO_IDENTITIES !== "true") {
   throw new Error("Refusing to provision public demo credentials in a remote database without ALLOW_REMOTE_DEMO_IDENTITIES=true.");
 }
 for (const identity of [
-  { slug: "demo-customer-context", name: "Demo Customer", email: "customer@vaanigam.demo", role: "CUSTOMER" as const, password: "CustomerDemo!2026" },
-  { slug: "demo-platform-context", name: "Platform Administration", email: "admin@vaanigam.demo", role: "PLATFORM_ADMIN" as const, password: "AdminDemo!2026" },
+  { slug: "demo-customer-context", name: "Demo Customer", email: "customer@vettrivaanigam.demo", role: "CUSTOMER" as const, password: "CustomerDemo!2026" },
+  { slug: "demo-platform-context", name: "Platform Administration", email: "admin@vettrivaanigam.demo", role: "PLATFORM_ADMIN" as const, password: "AdminDemo!2026" },
 ]) {
   const context = await prisma.merchant.upsert({ where: { slug: identity.slug }, update: {}, create: { slug: identity.slug, name: identity.name, defaultCurrency: "INR", businessCategory: "Identity context", status: "ACTIVE" } });
   // The shopper's own account, keyed to the identity context's id so a
@@ -34,10 +34,54 @@ for (const identity of [
   // every first purchase came back CATEGORY_NOT_ALLOWED. See
   // src/modules/buyer-policy/resolve-policy.ts.
   if (identity.role === "CUSTOMER") {
+    // The demo shopper's spending limits are RESET here, not left alone.
+    //
+    // `update: {}` looks like the careful choice — resolve-policy.ts is
+    // emphatic that an existing policy is never silently widened — but
+    // this is the demo fixture provisioner, and the rule it was borrowing
+    // protects a real shopper's own narrowing, not a fixture's drift.
+    //
+    // What it actually did was make a bad state unrepairable. Several
+    // integration tests raise this shopper's limits to the ₹10,00,000
+    // schema maximum to exercise large-basket paths and do not put them
+    // back (buyer-autonomy.test.ts, customer-negotiation.test.ts). The
+    // README tells a reviewer to run `pnpm test` and then demo — so the
+    // documented path left the demo buyer able to autonomously spend ₹10
+    // lakh, and re-running this script, the one command that looks like
+    // it would repair that, changed nothing.
+    //
+    // The result was the worst possible demo: the step-up gate, which is
+    // the whole safety argument, silently never fired. Restoring the
+    // fixture is this script's entire job, so it now does it.
+    // Chosen so all three outcomes are reachable against the seeded
+    // catalogue, because a control nobody can watch fire is not a control
+    // a reviewer has any reason to believe in. Against a ~₹3,489 seeded
+    // shoe:
+    //
+    //   1 unit = ₹3,489   under the ₹5,000 autonomous limit -> AUTO_APPROVE
+    //   3 units = ₹10,467 over it, under the hard ceiling    -> STEP_UP
+    //   8 units = ₹27,912 over the ₹25,000 hard ceiling      -> DECLINE
+    //
+    // The gap between the autonomous limit and the hard maximum is the
+    // point: above one the buyer is ASKED, above the other they are
+    // REFUSED, and those are different questions.
+    //
+    // The hard ceiling is ₹25,000 rather than something rounder because
+    // `POST /buyer/purchase-proposals` caps quantity at 10: a ceiling
+    // above 10 units of the seeded shoe (₹34,890) is one no request can
+    // reach, so DECLINE would have been dead code in the demo.
+    const demoPolicy = {
+      allowedCategories: await purchasableCategories(),
+      dailyLimitMinor: 10_000_000,
+      autonomousPurchaseLimitMinor: 500_000,
+      maxPurchaseAmountMinor: 2_500_000,
+      autoPurchaseEnabled: true,
+      approvalRequiredAboveLimit: true,
+    };
     await prisma.buyerSpendingPolicy.upsert({
       where: { customerAccountId: context.id },
-      update: {},
-      create: { customerAccountId: context.id, allowedCategories: await purchasableCategories(), dailyLimitMinor: 10_000_000, autonomousPurchaseLimitMinor: 200_000 },
+      update: demoPolicy,
+      create: { customerAccountId: context.id, ...demoPolicy },
     });
   }
   console.log(`Demo ${identity.role} identity is available. Existing merchant data was not reset.`);

@@ -25,7 +25,7 @@ import { AppError } from "../../http/errors.js";
 
 /** Marker stored while a request is still running, so a concurrent retry
  * can be told "in flight" rather than being allowed to run twice. */
-const IN_FLIGHT = "__vaanigam_in_flight__";
+const IN_FLIGHT = "__vettri_vaanigam_in_flight__";
 
 /**
  * Canonical, so key ORDER cannot change the fingerprint.
@@ -87,7 +87,9 @@ export async function withIdempotency<T>(
         "This Idempotency-Key was already used with a different request body.",
       );
     }
-    if (existing.responseSnapshot !== IN_FLIGHT) {
+    // A deployment rename must not treat an older in-flight marker as a
+    // finished response and bypass the existing request lease.
+    if (existing.responseSnapshot !== IN_FLIGHT && existing.responseSnapshot !== "__vaanigam_in_flight__") {
       return { replayed: true, response: existing.responseSnapshot as T };
     }
 

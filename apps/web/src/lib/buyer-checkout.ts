@@ -47,7 +47,7 @@ export async function completeBuyerCheckout(
       amount: checkout.amountMinor,
       currency: checkout.currency,
       order_id: checkout.providerOrderId,
-      name: "Vaanigam — Razorpay Test Mode",
+      name: "Vettri Vaanigam — Razorpay Test Mode",
       modal: { ondismiss: () => finish(null) },
       handler: (response) => {
         void apiPost<PaymentDTO>(`/buyer/purchase-proposals/${proposalId}/payment/verify`, {

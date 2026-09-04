@@ -189,6 +189,23 @@ export const merchantGrowthConfigSchema = z.object({
   maxProposedDiscountBps: z.number().int().min(0),
   maxCrossSellItems: z.number().int().min(1),
   maxBundleItems: z.number().int().min(1),
+  dailyDiscountBudgetMinor: z.number().int().min(0),
+  weeklyCampaignBudgetMinor: z.number().int().min(0),
+  maxCustomersContactedPerDay: z.number().int().min(0),
+  maxContactsPerCustomerPerWeek: z.number().int().min(0),
+  minCampaignMarginBps: z.number().int().min(0).max(10_000),
+  campaignCooldownHours: z.number().int().min(0),
+  automaticStopLossBps: z.number().int().min(0).max(10_000),
+  defaultShippingCostMinor: z.number().int().min(0).max(100_000_000),
+  paymentFeeBps: z.number().int().min(0).max(10_000),
+  expectedReturnRateBps: z.number().int().min(0).max(10_000),
+  quietHoursStart: z.number().int().min(0).max(23),
+  quietHoursEnd: z.number().int().min(0).max(23),
+  consentRequired: z.boolean(),
+  outboundChannels: z.array(z.enum(["EMAIL", "WHATSAPP", "SMS", "PUSH", "BUYER_AGENT"])),
+  categoryDiscountLimits: z.record(z.number().int().min(0).max(5_000)),
+  excludedProductIds: z.array(z.string().uuid()),
+  excludedCustomerIds: z.array(z.string().uuid()),
   currency: z.enum(SUPPORTED_CURRENCIES),
 });
 export type MerchantGrowthConfigDTO = z.infer<typeof merchantGrowthConfigSchema>;
@@ -344,6 +361,13 @@ export const agentStatusSchema = z.object({
   awaitingApproval: z.array(agentProposalRefSchema.extend({ explanation: z.string() })),
   failures: z.array(agentProposalRefSchema.extend({ reason: z.string() })),
 
+  operations: z.object({
+    queuedJobs: z.number().int().min(0),
+    retryingJobs: z.number().int().min(0),
+    deadLetterJobs: z.number().int().min(0),
+    stalledJobs: z.number().int().min(0),
+  }),
+
   /** Provider-verified only. Nothing merely attempted appears here. */
   verified: z.object({
     capturedValue: moneySchema,
@@ -379,6 +403,23 @@ export const merchantGrowthConfigUpdateSchema = z
     maxProposedDiscountBps: z.number().int().min(0).max(5_000),
     maxCrossSellItems: z.number().int().min(1).max(10),
     maxBundleItems: z.number().int().min(1).max(10),
+    dailyDiscountBudgetMinor: z.number().int().min(0).max(1_000_000_000),
+    weeklyCampaignBudgetMinor: z.number().int().min(0).max(2_147_483_647),
+    maxCustomersContactedPerDay: z.number().int().min(0).max(100_000),
+    maxContactsPerCustomerPerWeek: z.number().int().min(0).max(50),
+    minCampaignMarginBps: z.number().int().min(0).max(10_000),
+    campaignCooldownHours: z.number().int().min(0).max(8_760),
+    automaticStopLossBps: z.number().int().min(0).max(10_000),
+    defaultShippingCostMinor: z.number().int().min(0).max(100_000_000),
+    paymentFeeBps: z.number().int().min(0).max(10_000),
+    expectedReturnRateBps: z.number().int().min(0).max(10_000),
+    quietHoursStart: z.number().int().min(0).max(23),
+    quietHoursEnd: z.number().int().min(0).max(23),
+    consentRequired: z.boolean(),
+    outboundChannels: z.array(z.enum(["EMAIL", "WHATSAPP", "SMS", "PUSH", "BUYER_AGENT"])).min(1),
+    categoryDiscountLimits: z.record(z.number().int().min(0).max(5_000)),
+    excludedProductIds: z.array(z.string().uuid()).max(10_000),
+    excludedCustomerIds: z.array(z.string().uuid()).max(100_000),
   })
   .partial()
   .refine((body) => Object.keys(body).length > 0, { message: "No growth boundary was supplied to change." });

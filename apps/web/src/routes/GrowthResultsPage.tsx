@@ -57,6 +57,7 @@ interface CampaignMetrics {
   treatment: CohortResult;
   control: CohortResult;
   lift: CampaignLift;
+  profit: { incrementalMarginMinor: number | null; cannibalisationRisk: "LOW" | "HIGH" | "UNKNOWN"; costsComplete: boolean };
 }
 
 function pct(bps: number | null): string {
@@ -95,7 +96,7 @@ function CampaignResult({ campaignId }: { campaignId: string }) {
     );
   }
 
-  const { campaign, treatment, control, lift } = query.data;
+  const { campaign, treatment, control, lift, profit } = query.data;
   const measured = lift.basis === "MEASURED_AGAINST_HOLDOUT" && lift.liftBps !== null;
   const positive = measured && lift.liftBps! > 0;
   const negative = measured && lift.liftBps! < 0;
@@ -128,13 +129,6 @@ function CampaignResult({ campaignId }: { campaignId: string }) {
       </CardHeader>
 
       <CardBody className="space-y-4">
-        <div className="grid gap-3 sm:grid-cols-2">
-          <CohortColumn label="Shown the offer" cohort={treatment} note="Treated subjects." />
-          <CohortColumn label="Held back" cohort={control} note="Assigned before any offer was made." />
-        </div>
-
-        {/* The explanation is the product here. A percentage without the
-            basis behind it is exactly what this screen exists not to be. */}
         <p className="text-sm leading-relaxed text-ink-muted">{lift.explanation}</p>
 
         {measured && lift.attributableRevenueMinor !== null ? (
@@ -152,6 +146,20 @@ function CampaignResult({ campaignId }: { campaignId: string }) {
             </p>
           </div>
         ) : null}
+
+        <div className="grid gap-3 sm:grid-cols-3">
+          <div className="rounded-md bg-surface-subtle p-3"><p className="text-xs text-ink-muted">Statistical confidence</p><p className="mt-1 text-lg font-bold text-ink">{lift.statisticalConfidenceBps == null ? "Not enough evidence" : pct(lift.statisticalConfidenceBps)}</p></div>
+          <div className="rounded-md bg-surface-subtle p-3"><p className="text-xs text-ink-muted">Incremental margin</p><p className="mt-1 text-lg font-bold text-ink">{profit.incrementalMarginMinor == null ? "Costs incomplete" : formatMoney({ amountMinor: profit.incrementalMarginMinor, currency: "INR" })}</p></div>
+          <div className="rounded-md bg-surface-subtle p-3"><p className="text-xs text-ink-muted">Offer cannibalisation</p><p className="mt-1 text-lg font-bold text-ink">{profit.cannibalisationRisk === "HIGH" ? "Warning" : profit.cannibalisationRisk === "LOW" ? "No warning" : "Not measurable"}</p></div>
+        </div>
+
+        <details className="rounded-md border border-border-hair p-3">
+          <summary className="cursor-pointer text-sm font-medium text-ink">View treatment and holdout evidence</summary>
+          <div className="mt-3 grid gap-3 sm:grid-cols-2">
+            <CohortColumn label="Shown the offer" cohort={treatment} note="Treated subjects." />
+            <CohortColumn label="Held back" cohort={control} note="Assigned before any offer was made." />
+          </div>
+        </details>
       </CardBody>
     </Card>
   );

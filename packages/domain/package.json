@@ -3,7 +3,7 @@
   "version": "0.1.0",
   "private": true,
   "type": "module",
-  "description": "Deterministic domain primitives shared across Vaanigam apps: money, identifiers, payment state machine, statuses.",
+  "description": "Deterministic domain primitives shared across Vettri Vaanigam apps: money, identifiers, payment state machine, statuses.",
   "main": "./dist/index.js",
   "types": "./dist/index.d.ts",
   "exports": {

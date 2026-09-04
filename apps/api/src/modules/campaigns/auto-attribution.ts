@@ -19,7 +19,8 @@ function campaignIsRunning(campaign: { status: string; startsAt: Date; endsAt: D
 }
 
 /**
- * Automatically attributes an order to an active treatment campaign assignment if one exists.
+ * Automatically binds an order to its pre-existing campaign assignment.
+ * Holdout orders are observed too; they receive no offer and no incentive.
  */
 export async function tryAutoAttributeOrder(
   db: DbClient,
@@ -34,7 +35,6 @@ export async function tryAutoAttributeOrder(
   const assignment = await db.campaignAssignment.findFirst({
     where: {
       subjectKeyHash,
-      cohort: "TREATMENT",
       campaign: {
         merchantId: params.merchantId,
         status: "ACTIVE",
@@ -80,7 +80,7 @@ export async function tryAutoAttributeOrder(
       merchantId: params.merchantId,
       actorType: "SYSTEM",
       actionType: "CAMPAIGN_ORDER_ATTRIBUTED",
-      conciseReason: `Auto-attribution: Treatment assignment ${assignment.id} was bound to order ${params.orderId}.`,
+      conciseReason: `Auto-attribution: ${assignment.cohort === "CONTROL" ? "holdout" : "treatment"} assignment ${assignment.id} was bound to order ${params.orderId}.`,
       relatedEntityType: "CampaignOrderAttribution",
       relatedEntityId: attribution.id,
       executedAt: attribution.boundAt,
@@ -102,6 +102,7 @@ export async function tryAutoConvertCampaignOnPaymentCapture(
     include: {
       order: {
         include: {
+          items: { include: { variant: { select: { costMinor: true } } } },
           campaignAttributions: {
             include: {
               campaign: true,
@@ -123,7 +124,7 @@ export async function tryAutoConvertCampaignOnPaymentCapture(
   }
 
   const { campaign, assignment } = attribution;
-  if (!campaign || !assignment || assignment.cohort !== "TREATMENT") {
+  if (!campaign || !assignment) {
     return;
   }
 
@@ -136,6 +137,16 @@ export async function tryAutoConvertCampaignOnPaymentCapture(
   }
 
   try {
+    const config = await db.merchantGrowthConfig.findUnique({ where: { merchantId: payment.merchantId } });
+    const incentiveCostMinor = assignment.cohort === "TREATMENT" ? campaign.incentiveMinorPerConversion : 0;
+    const knownCosts = payment.order.items.length > 0 && payment.order.items.every((item) => item.variant.costMinor !== null);
+    const productCostMinor = knownCosts
+      ? payment.order.items.reduce((sum, item) => sum + (item.variant.costMinor ?? 0) * item.quantity, 0)
+      : null;
+    const shippingMinor = config?.defaultShippingCostMinor ?? 0;
+    const paymentFeeMinor = Math.round(payment.order.totalAmountMinor * (config?.paymentFeeBps ?? 200) / 10_000);
+    const returnCostMinor = Math.round(payment.order.totalAmountMinor * (config?.expectedReturnRateBps ?? 0) / 10_000);
+    const contributionMinor = productCostMinor === null ? null : payment.order.totalAmountMinor - productCostMinor - shippingMinor - paymentFeeMinor - returnCostMinor - incentiveCostMinor;
     const conversion = await db.campaignConversion.create({
       data: {
         campaignId: campaign.id,
@@ -144,7 +155,12 @@ export async function tryAutoConvertCampaignOnPaymentCapture(
         orderId: payment.orderId,
         attributionId: attribution.id,
         observedRevenueMinor: payment.order.totalAmountMinor,
-        incentiveCostMinor: campaign.incentiveMinorPerConversion,
+        incentiveCostMinor,
+        observedProductCostMinor: productCostMinor,
+        observedShippingCostMinor: shippingMinor,
+        observedPaymentFeeMinor: paymentFeeMinor,
+        expectedReturnCostMinor: returnCostMinor,
+        observedContributionMinor: contributionMinor,
       },
     });
 
@@ -156,12 +172,9 @@ export async function tryAutoConvertCampaignOnPaymentCapture(
       },
     });
 
-    await db.campaign.update({
-      where: { id: campaign.id },
-      data: {
-        spentMinor: { increment: campaign.incentiveMinorPerConversion },
-      },
-    });
+    if (incentiveCostMinor > 0) {
+      await db.campaign.update({ where: { id: campaign.id }, data: { spentMinor: { increment: incentiveCostMinor } } });
+    }
 
     await appendLedgerEvent(db, {
       workflowId: `campaign-${campaign.id}`,

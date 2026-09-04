@@ -8,7 +8,7 @@ import { z } from "zod";
  * never a fake "blocked" animation with no real backend behind it.
  */
 export const sandboxAttackIdSchema = z.enum([
-  // Vaanigam gateway attacks. The originals all target this merchant's OWN
+  // Vettri Vaanigam gateway attacks. The originals all target this merchant's OWN
   // agents; these target the boundary an OUTSIDE agent actually reaches,
   // which is the one that matters once the product is a gateway.
   "MANDATE_FORGERY",

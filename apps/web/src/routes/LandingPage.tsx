@@ -1,5 +1,5 @@
 /**
- * Vaanigam — the public landing page.
+ * Vettri Vaanigam — the public landing page.
  *
  * ONE STORY, TOLD IN ORDER
  *
@@ -57,7 +57,7 @@ export default function LandingPage() {
   // navigation into the app does not inherit it.
   useEffect(() => {
     const previous = document.title;
-    document.title = "Vaanigam — Commerce, built for AI.";
+    document.title = "Vettri Vaanigam — Commerce, built for AI.";
     return () => {
       document.title = previous;
     };

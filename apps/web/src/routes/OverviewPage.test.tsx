@@ -143,13 +143,14 @@ function renderOverview() {
 beforeEach(stubFetch);
 afterEach(() => vi.unstubAllGlobals());
 
-describe("Overview — the four stages", () => {
-  it("tells the story in order: observed → detected → did → resulted", async () => {
+describe("Overview — Merchant Today and the four evidence stages", () => {
+  it("leads with today's briefing, then tells observed → detected → did → resulted", async () => {
     renderOverview();
     await screen.findByText("Observed business state");
 
     const headings = screen.getAllByRole("heading", { level: 2 }).map((h) => h.textContent);
-    expect(headings.slice(0, 4)).toEqual([
+    expect(headings.slice(0, 5)).toEqual([
+      "Today at a glance",
       "Observed business state",
       "What your agent detected",
       "What your agent did about it",
@@ -209,7 +210,7 @@ describe("Overview — never fabricates revenue", () => {
     renderOverview();
     await screen.findByText("Captured on agent-proposed orders");
 
-    expect(screen.getByText("₹21,000.00")).toBeInTheDocument();
+    expect(screen.getAllByText("₹21,000.00").length).toBeGreaterThanOrEqual(1);
     expect(screen.getByText("₹3,500.00")).toBeInTheDocument();
     // Exactly the two verified results — the strongest claim on the page
     // must not spread to figures that have not earned it.

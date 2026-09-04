@@ -1,4 +1,4 @@
-import { Bot, Compass, Gauge, LayoutDashboard, Package, Receipt, Search, ShieldCheck, ShoppingBag, TrendingUp, type LucideIcon } from "lucide-react";
+import { Activity, Bot, Compass, Gauge, LayoutDashboard, Package, Receipt, Search, Settings2, ShieldCheck, ShoppingBag, Sparkles, TrendingUp, type LucideIcon } from "lucide-react";
 import type { ExperienceRole } from "../../lib/experience-role";
 
 export interface NavItem { to: string; label: string; icon: LucideIcon; hint: string }
@@ -46,13 +46,21 @@ export const NAV_BY_ROLE: Record<ExperienceRole, NavSection[]> = {
     { to: "/customer/policy", label: "Spending Policy", icon: ShieldCheck, hint: "What your agent may spend without asking" },
   ] }],
 
-  merchant: [{ id: "merchant", label: "Grow with AI", items: [
-    { to: "/merchant/overview", label: "Overview", icon: LayoutDashboard, hint: "Captured revenue, readiness, and what agents did" },
-    { to: "/merchant/agent", label: "Merchant Agent", icon: Bot, hint: "What your agent offers, and whether it can act" },
-    { to: "/merchant/growth", label: "Growth", icon: TrendingUp, hint: "Opportunities, offers, measured results, and your limits" },
-    { to: "/merchant/commerce", label: "Commerce", icon: ShoppingBag, hint: "Products, orders, customers, payments, returns" },
-    { to: "/merchant/governance", label: "Governance", icon: ShieldCheck, hint: "Decisions, approvals, policy, and the audit trail" },
-  ] }],
+  merchant: [
+    { id: "merchant", label: "Grow with AI", items: [
+      { to: "/merchant/overview", label: "Home", icon: LayoutDashboard, hint: "Today's performance, decisions, and agent work" },
+      { to: "/merchant/growth/opportunities", label: "Opportunities", icon: TrendingUp, hint: "The best actions to grow profit, ranked for you" },
+      { to: "/merchant/commerce/orders", label: "Customers & Orders", icon: ShoppingBag, hint: "Customers, orders, products, payments, and returns" },
+      { to: "/merchant/growth/boundaries", label: "Agent Controls", icon: Settings2, hint: "Budgets, contact rules, discounts, and autonomy" },
+      { to: "/merchant/governance/ledger", label: "Activity", icon: Activity, hint: "A plain-language record of what the agent did" },
+    ] },
+    { id: "merchant-advanced", label: "Advanced", items: [
+      { to: "/merchant/agent/console", label: "Agent Console", icon: Bot, hint: "Run cycles and inspect the agent's working state" },
+      { to: "/merchant/agent/readiness", label: "Readiness", icon: Sparkles, hint: "Fix what prevents agents from finding and buying products" },
+      { to: "/merchant/agent/connect", label: "Protocols", icon: Compass, hint: "Technical endpoints for external buyer agents" },
+      { to: "/merchant/governance/policies", label: "Advanced Policies", icon: ShieldCheck, hint: "Financial rules, gateway decisions, and security tools" },
+    ] },
+  ],
 
   // Deliberately one entry. The platform operator needs a place to land
   // and a way to reach the `/admin/*` surface; they do not need a parallel

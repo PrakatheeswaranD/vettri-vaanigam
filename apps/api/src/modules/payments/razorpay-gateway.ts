@@ -176,7 +176,7 @@ export function createRazorpayGateway(config: RazorpayConfig): PaymentGateway {
             // sent hollow.
             notify: { sms: false, email: false },
             reminder_enable: false,
-            notes: { referenceId: params.referenceId, source: "vaanigam-step-up" },
+            notes: { referenceId: params.referenceId, source: "vettri-vaanigam-step-up" },
           }),
         },
         config.timeoutMs,

@@ -66,7 +66,7 @@ export function PaymentPanel({
         amount: initiation.amountMinor,
         currency: initiation.currency,
         order_id: initiation.providerOrderId,
-        name: "Vaanigam — Test Mode",
+        name: "Vettri Vaanigam — Test Mode",
         description: `Checkout ${initiation.checkoutId.slice(0, 8)}`,
         theme: { color: "#4f46e5" },
         handler: (response) => {

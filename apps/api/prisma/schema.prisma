@@ -374,7 +374,7 @@ model Merchant {
   paymentProviderEvents   PaymentProviderEvent[]
   merchantUsers           MerchantUser[]
 
-  // Vaanigam gateway — agent-facing commerce.
+  // Vettri Vaanigam gateway — agent-facing commerce.
   agentIdentities      AgentIdentity[]
   spendMandateNonces   SpendMandateNonce[]
   agentGatewayPolicy   AgentGatewayPolicy?
@@ -383,6 +383,9 @@ model Merchant {
   acpDelegatedPayments AcpDelegatedPayment[]
   catalogCompilations  CatalogCompilation[]
   campaigns            Campaign[]
+  growthPlans          GrowthPlan[]
+  outboundMessages     OutboundMessage[]
+  agentJobs            AgentJob[]
   refunds              Refund[]
   returnRequests       ReturnRequest[]
   fulfillments         Fulfillment[]
@@ -677,12 +680,17 @@ model Customer {
   displayName String
   email       String?
   segment     String?
+  /// Explicit per-channel marketing consent, e.g. {"EMAIL": true}.
+  /// Missing keys mean no consent; the communication layer fails closed.
+  marketingConsent Json     @default("{}")
+  lastContactedAt   DateTime?
   createdAt   DateTime @default(now())
   updatedAt   DateTime @updatedAt
 
   carts            Cart[]
   orders           Order[]
   checkoutSessions CheckoutSession[]
+  outboundMessages OutboundMessage[]
 
   @@index([merchantId])
 }
@@ -1334,6 +1342,23 @@ model MerchantGrowthConfig {
   maxProposedDiscountBps Int      @default(1000)
   maxCrossSellItems      Int      @default(3)
   maxBundleItems         Int      @default(2)
+  dailyDiscountBudgetMinor      Int      @default(250000)
+  weeklyCampaignBudgetMinor     Int      @default(1000000)
+  maxCustomersContactedPerDay   Int      @default(100)
+  maxContactsPerCustomerPerWeek Int      @default(2)
+  minCampaignMarginBps          Int      @default(1500)
+  campaignCooldownHours         Int      @default(168)
+  automaticStopLossBps          Int      @default(2000)
+  defaultShippingCostMinor      Int      @default(0)
+  paymentFeeBps                 Int      @default(200)
+  expectedReturnRateBps         Int      @default(0)
+  quietHoursStart               Int      @default(21)
+  quietHoursEnd                 Int      @default(9)
+  consentRequired               Boolean  @default(true)
+  outboundChannels              Json     @default("[\"BUYER_AGENT\"]")
+  categoryDiscountLimits        Json     @default("{}")
+  excludedProductIds            Json     @default("[]")
+  excludedCustomerIds           Json     @default("[]")
   currency               Currency @default(INR)
   updatedAt              DateTime @updatedAt
 }
@@ -1430,7 +1455,7 @@ model GrowthActionProposal {
 }
 
 // ─────────────────────────────────────────────────────────────────────────
-// VAANIGAM GATEWAY — agent-facing commerce
+// VETTRI VAANIGAM GATEWAY — agent-facing commerce
 //
 // Everything below serves one question: can an AI agent this merchant has
 // never seen buy from them safely, whatever protocol it speaks? The
@@ -1631,7 +1656,7 @@ model AcpCheckoutSession {
 
 /// A server-issued ACP delegated-payment authorization. The external
 /// payment-method token itself is never stored: only a keyed HMAC fingerprint
-/// is retained, while the client receives a signed Vaanigam token that is
+/// is retained, while the client receives a signed Vettri Vaanigam token that is
 /// bound to this row, merchant, authenticated agent and optional session.
 model AcpDelegatedPayment {
   id                           String              @id
@@ -1762,11 +1787,119 @@ model CampaignConversion {
   attribution          CampaignOrderAttribution? @relation(fields: [attributionId], references: [id], onDelete: Restrict)
   incentiveCostMinor   Int
   observedRevenueMinor Int
+  /// Financial evidence captured at conversion time. Nullable COGS/margin
+  /// means at least one product cost was unknown; zero is never invented.
+  observedProductCostMinor Int?
+  observedShippingCostMinor Int
+  observedPaymentFeeMinor Int
+  expectedReturnCostMinor Int
+  observedContributionMinor Int?
   createdAt            DateTime                  @default(now())
 
   @@index([campaignId, createdAt])
   @@index([assignmentId])
   @@index([orderId])
+}
+
+/// One bounded portfolio decision for a merchant's week. The merchant
+/// approves the envelope once; each item still executes through a durable,
+/// idempotent job and writes its own ledger story.
+model GrowthPlan {
+  id                       String   @id @default(uuid())
+  merchantId               String
+  merchant                 Merchant @relation(fields: [merchantId], references: [id], onDelete: Cascade)
+  weekStart                 DateTime
+  status                    String   @default("PENDING_APPROVAL")
+  summary                   String
+  estimatedRevenueMinor     Int      @default(0)
+  estimatedProfitMinor      Int?
+  approvedBudgetMinor       Int      @default(0)
+  approvedCustomerContacts  Int      @default(0)
+  approvedById              String?
+  approvedAt                DateTime?
+  createdAt                 DateTime @default(now())
+  updatedAt                 DateTime @updatedAt
+
+  items GrowthPlanItem[]
+
+  @@unique([merchantId, weekStart])
+  @@index([merchantId, status])
+}
+
+model GrowthPlanItem {
+  id                       String     @id @default(uuid())
+  planId                   String
+  plan                     GrowthPlan @relation(fields: [planId], references: [id], onDelete: Cascade)
+  opportunityId            String
+  opportunityType          String
+  title                     String
+  proposedAction            String
+  subjectIds                Json
+  priority                   Int
+  confidence                 Int
+  customersAffected         Int        @default(0)
+  expectedRevenueMinor      Int?
+  expectedProfitMinor       Int?
+  status                     String     @default("PLANNED")
+  result                     String?
+  createdAt                  DateTime   @default(now())
+  updatedAt                  DateTime   @updatedAt
+
+  outboundMessages OutboundMessage[]
+
+  @@unique([planId, opportunityId])
+  @@index([planId, status])
+}
+
+/// Provider-neutral durable outbox. An enabled channel without a provider
+/// remains QUEUED/FAILED; it is never falsely marked delivered.
+model OutboundMessage {
+  id                String          @id @default(uuid())
+  merchantId        String
+  merchant          Merchant        @relation(fields: [merchantId], references: [id], onDelete: Cascade)
+  customerId        String?
+  customer          Customer?       @relation(fields: [customerId], references: [id], onDelete: SetNull)
+  planItemId        String?
+  planItem          GrowthPlanItem? @relation(fields: [planItemId], references: [id], onDelete: SetNull)
+  channel           String
+  purpose           String
+  content            String
+  status             String          @default("QUEUED")
+  consentEvidence    Json?
+  idempotencyKey     String          @unique
+  providerReference  String?
+  attempts           Int             @default(0)
+  nextAttemptAt      DateTime         @default(now())
+  sentAt             DateTime?
+  deliveredAt        DateTime?
+  convertedAt        DateTime?
+  failureReason      String?
+  createdAt          DateTime         @default(now())
+  updatedAt          DateTime         @updatedAt
+
+  @@index([merchantId, status, nextAttemptAt])
+  @@index([customerId, createdAt])
+}
+
+/// Durable work queue with leases, bounded retries and an explicit DLQ
+/// terminal state. The unique key prevents duplicate actions across runs.
+model AgentJob {
+  id             String   @id @default(uuid())
+  merchantId     String
+  merchant       Merchant @relation(fields: [merchantId], references: [id], onDelete: Cascade)
+  type           String
+  status         String   @default("QUEUED")
+  payload        Json
+  idempotencyKey String   @unique
+  attempts       Int      @default(0)
+  maxAttempts    Int      @default(5)
+  nextAttemptAt  DateTime @default(now())
+  lockedAt       DateTime?
+  lastError      String?
+  createdAt      DateTime @default(now())
+  updatedAt      DateTime @updatedAt
+
+  @@index([merchantId, status, nextAttemptAt])
 }
 
 /// The immutable explainability artifact: one row per inbound intent,

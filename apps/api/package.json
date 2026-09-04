@@ -3,7 +3,7 @@
   "version": "0.1.0",
   "private": true,
   "type": "module",
-  "description": "Vaanigam backend \u2014 Fastify API, agent gateway, Prisma/PostgreSQL.",
+  "description": "Vettri Vaanigam backend \u2014 Fastify API, agent gateway, Prisma/PostgreSQL.",
   "scripts": {
     "//dev": "Runs through node with the runtime-compat shim rather than the bare `tsx` binary: on Windows/Node 24 tsx can fail uv_os_get_passwd with ENOMEM while locating its temp dir, which made `pnpm dev` unusable and pushed people to start the API by hand — without --watch, so edits silently never reloaded.",
     "dev": "node --env-file=../../.env --import ./scripts/node-runtime-compat.mjs --import tsx --watch src/server.ts",
@@ -28,7 +28,9 @@
     "demo:simulate": "node --env-file=../../.env --import tsx scripts/demo-simulate.ts",
     "demo:golden-path": "node --env-file=../../.env --import tsx scripts/demo-golden-path.ts",
     "demo:agent-swarm": "node --env-file=../../.env --import ./scripts/node-runtime-compat.mjs --import tsx scripts/demo-agent-swarm.ts",
-    "redteam": "node --env-file=../../.env --import ./scripts/node-runtime-compat.mjs --import tsx scripts/redteam-buyers.ts"
+    "redteam": "node --env-file=../../.env --import ./scripts/node-runtime-compat.mjs --import tsx scripts/redteam-buyers.ts",
+    "//razorpay:proof": "Exercises the real RazorpayPaymentGateway against live Test Mode and writes docs/evidence/razorpay-testmode-proof.json. Every automated test uses the mock gateway, so this is the only thing that proves the project can actually talk to Razorpay. Refuses to run against an rzp_live_ key.",
+    "razorpay:proof": "node --env-file=../../.env --import tsx scripts/razorpay-testmode-proof.ts"
   },
   "prisma": {
     "seed": "node --env-file=../../.env --import tsx prisma/seed.ts"

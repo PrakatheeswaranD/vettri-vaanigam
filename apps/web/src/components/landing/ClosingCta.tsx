@@ -65,10 +65,10 @@ export function SiteFooter() {
             <span className="grid h-8 w-8 place-items-center rounded-lg bg-gradient-to-br from-[#2563eb] via-[#6d3ff0] to-[#0ea5e9]">
               <span aria-hidden className="h-2.5 w-2.5 rounded-[3px] bg-white/90" />
             </span>
-            <span className="text-[15px] font-semibold tracking-[-0.02em] text-[var(--os-text)]">Vaanigam</span>
+            <span className="text-[15px] font-semibold tracking-[-0.02em] text-[var(--os-text)]">Vettri Vaanigam</span>
           </div>
           <p className="mt-4 max-w-sm text-[13px] leading-relaxed text-[var(--os-dim)]">
-            Vaanigam is the operating layer for AI-native commerce — the trust boundary between an autonomous
+            Vettri Vaanigam is the operating layer for AI-native commerce — the trust boundary between an autonomous
             buyer and a merchant's money.
           </p>
         </div>

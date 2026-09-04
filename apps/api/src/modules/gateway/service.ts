@@ -1,5 +1,5 @@
 /**
- * Vaanigam gateway — the request path an outside AI buyer agent actually
+ * Vettri Vaanigam gateway — the request path an outside AI buyer agent actually
  * hits.
  *
  * ORDER OF OPERATIONS IS THE DESIGN
@@ -18,7 +18,7 @@
  *
  * 2. Every path writes a DecisionRecord with a plain-English sentence,
 /**
- * Vaanigam gateway — the request path an outside AI buyer agent actually
+ * Vettri Vaanigam gateway — the request path an outside AI buyer agent actually
  * hits.
  *
  * ORDER OF OPERATIONS IS THE DESIGN
@@ -445,13 +445,13 @@ async function writeDecision(prisma: PrismaClient, args: RecordArgs): Promise<Ga
     });
   } catch (err) {
     logger.error(
-      { event: "vaanigam.ledger_append_failed", decisionId: record.id, err: err instanceof Error ? err.message : String(err) },
+      { event: "vettri_vaanigam.ledger_append_failed", decisionId: record.id, err: err instanceof Error ? err.message : String(err) },
       "Decision recorded but could not be appended to the audit ledger",
     );
   }
 
   logger.info(
-    { event: "vaanigam.decision", decisionId: record.id, outcome: args.outcome, reasonCode: args.reasonCode, decisionLatencyMs },
+    { event: "vettri_vaanigam.decision", decisionId: record.id, outcome: args.outcome, reasonCode: args.reasonCode, decisionLatencyMs },
     args.explanation,
   );
 
@@ -590,7 +590,7 @@ async function negotiate(
     // smaller discount. Missing cost fails closed.
     if (offerBreachesFloorMargin({ revenueMinor, costMinor, discountBps }, policy)) {
       logger.info(
-        { event: "vaanigam.offer_rejected_floor_margin", discountBps, floorMarginBps: policy.negotiatorFloorMarginBps, costKnown: costMinor !== null },
+        { event: "vettri_vaanigam.offer_rejected_floor_margin", discountBps, floorMarginBps: policy.negotiatorFloorMarginBps, costKnown: costMinor !== null },
         "Negotiator offer rejected: would breach the merchant's floor margin",
       );
       return {
@@ -603,7 +603,7 @@ async function negotiate(
     if (rawProposal.discountWasClamped || rawProposal.droppedSkus.length > 0) {
       logger.info(
         {
-          event: "vaanigam.negotiator_clamped",
+          event: "vettri_vaanigam.negotiator_clamped",
           modelProposedBps: rawProposal.discountBps,
           enforcedBps: discountBps,
           modelProposedSkus: rawProposal.addSkus,
@@ -615,7 +615,7 @@ async function negotiate(
 
     return { offer: { addSkus, discountBps, pitch: rawProposal.pitch }, raw: rawProposal };
   } catch (err) {
-    logger.warn({ event: "vaanigam.negotiator_failed", err: err instanceof Error ? err.message : String(err) }, "Negotiator failed; proceeding with no offer");
+    logger.warn({ event: "vettri_vaanigam.negotiator_failed", err: err instanceof Error ? err.message : String(err) }, "Negotiator failed; proceeding with no offer");
     return NO_NEGOTIATION;
   }
 }
@@ -732,7 +732,7 @@ export async function handleAgentPurchaseIntent(
     : false;
 
   // ACP carries its OWN spend authorisation (an `Allowance`), so an agent
-  // on that protocol is not asked to also mint an Vaanigam mandate. The
+  // on that protocol is not asked to also mint an Vettri Vaanigam mandate. The
   // allowance is checked on the same terms — amount, currency, expiry,
   // merchant scope — but it is NOT signed, so it is never reported as a
   // verified mandate and the Decision Record says which one applied.
@@ -1019,7 +1019,7 @@ export async function handleAgentPurchaseIntent(
   } catch (error) {
     executionError = error;
     logger.warn(
-      { event: "vaanigam.approved_execution_failed", err: error instanceof Error ? error.message : String(error) },
+      { event: "vettri_vaanigam.approved_execution_failed", err: error instanceof Error ? error.message : String(error) },
       "Approved intent could not be turned into an internal checkout and provider order",
     );
   }

@@ -32,7 +32,7 @@ export interface ParsedIntent {
    * checkout_session_id, an x402 nonce) so a decision traces back into the
    * counterparty's system. */
   protocolActorRef: string | null;
-  /** An ACP `Allowance` presented instead of a signed Vaanigam mandate.
+  /** An ACP `Allowance` presented instead of a signed Vettri Vaanigam mandate.
    * Carried separately BECAUSE it is unsigned — collapsing it into
    * `mandate` would let an unverified authorisation be reported as a
    * cryptographically verified one. */
@@ -82,7 +82,7 @@ function parseMandate(source: Json): SpendMandate | null {
   // would look like from the caller's end: a MANDATE_MISSING decline they
   // cannot explain.
   const raw = asRecord(
-    source.vaanigam_mandate ?? source.vaanigamMandate ?? source.anumati_mandate ?? source.anumatiMandate ?? source.mandate,
+    source.vettri_vaanigam_mandate ?? source.vettriVaanigamMandate ?? source.vaanigam_mandate ?? source.vaanigamMandate ?? source.anumati_mandate ?? source.anumatiMandate ?? source.mandate,
   );
   if (!raw) return null;
 

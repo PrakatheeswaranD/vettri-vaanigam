@@ -1,7 +1,7 @@
 {
   "openapi": "3.1.0",
   "info": {
-    "title": "Vaanigam Agent Commerce API",
+    "title": "Vettri Vaanigam Agent Commerce API",
     "version": "2026-08-30",
     "description": "Governed AI-buyer checkout, ACP 2026-04-17 surface, x402 v2 settlement, UAP/UCP adapters, post-purchase operations (refunds, returns, fulfillment, disputes, GST taxes), and autonomous campaign orchestration."
   },

@@ -150,9 +150,9 @@ describe("x402 — the retry", () => {
     // a facilitator, so no order is created and nobody is charged — the
     // purchase waits for a human. An auto-approval here would mean trusting
     // the buyer's own word that the money exists.
-    expect(body.vaanigam.decision).toBe("STEP_UP");
-    expect(body.vaanigam.order_id).toBeFalsy();
-    expect(body.vaanigam.reason).toMatch(/no settlement facilitator|nobody has verified/i);
+    expect(body.vettri_vaanigam.decision).toBe("STEP_UP");
+    expect(body.vettri_vaanigam.order_id).toBeFalsy();
+    expect(body.vettri_vaanigam.reason).toMatch(/no settlement facilitator|nobody has verified/i);
   });
 
   it("accepts raw JSON too, and still steps up rather than settling", async () => {
@@ -185,7 +185,7 @@ describe("x402 — the retry", () => {
     const { paid } = await challengeThenPay(quantity);
 
     expect(paid.statusCode).toBe(202);
-    expect(paid.json().vaanigam.decision).toBe("STEP_UP");
+    expect(paid.json().vettri_vaanigam.decision).toBe("STEP_UP");
   });
 });
 

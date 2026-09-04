@@ -278,7 +278,7 @@ describe("ACP — idempotency (the spec names these by code)", () => {
   });
 });
 
-describe("ACP — completion runs the full Vaanigam gate", () => {
+describe("ACP — completion runs the full Vettri Vaanigam gate", () => {
   it("approves inside the envelope using the ACP Allowance as the mandate", async () => {
     const created = (
       await createSession({
@@ -291,7 +291,7 @@ describe("ACP — completion runs the full Vaanigam gate", () => {
     const res = await completeSession(created.id, completionPayload(delegated.json().id));
 
     expect(res.statusCode).toBe(202);
-    expect(res.json().vaanigam.reason_code).toBe("ALLOWANCE_INVALID");
+    expect(res.json().vettri_vaanigam.reason_code).toBe("ALLOWANCE_INVALID");
   });
 
   it("records the buyer and the raw payload on the decision", async () => {
@@ -335,8 +335,8 @@ describe("ACP — delegate_payment", () => {
     expect(res.statusCode).toBe(201);
     const body = res.json();
     expect(body.id).toMatch(/^dpt_acpdp_/);
-    expect(body.vaanigam.payment_instrument_vaulted).toBe(false);
-    expect(body.vaanigam.risk_signals_forwarded).toBe(0);
+    expect(body.vettri_vaanigam.payment_instrument_vaulted).toBe(false);
+    expect(body.vettri_vaanigam.risk_signals_forwarded).toBe(0);
   });
 
   it("forwards blocking risk signals rather than discarding them", async () => {
@@ -349,8 +349,8 @@ describe("ACP — delegate_payment", () => {
         ],
     });
 
-    expect(res.json().vaanigam.risk_signals_forwarded).toBe(2);
-    expect(res.json().vaanigam.note).toMatch(/human approval/i);
+    expect(res.json().vettri_vaanigam.risk_signals_forwarded).toBe(2);
+    expect(res.json().vettri_vaanigam.note).toMatch(/human approval/i);
   });
 });
 
@@ -369,8 +369,8 @@ describe("ACP — risk signals reach the decision", () => {
     const res = await completeSession(created.id, completionPayload(delegated.json().id));
 
     expect(res.statusCode).toBe(202);
-    expect(res.json().vaanigam.decision).toBe("STEP_UP");
-    expect(res.json().vaanigam.reason).toMatch(/flagged this purchase for review/i);
+    expect(res.json().vettri_vaanigam.decision).toBe("STEP_UP");
+    expect(res.json().vettri_vaanigam.reason).toMatch(/flagged this purchase for review/i);
   });
 });
 
@@ -380,7 +380,7 @@ describe("ACP — risk signals reach the decision", () => {
  *
  * The point of these is protocol fidelity, not coverage: an agent that
  * speaks only ACP must be able to act on what comes back without knowing
- * anything about Vaanigam.
+ * anything about Vettri Vaanigam.
  */
 describe("ACP — structured messages back to the calling agent", () => {
   it("returns approval_required on a step-up, using the protocol's own enum", async () => {
@@ -432,7 +432,7 @@ describe("ACP — structured messages back to the calling agent", () => {
     const delegated = await delegatePayment(created.id, priceMinor * 5);
 
     const res = await completeSession(created.id, completionPayload(delegated.json().id));
-    expect(res.json().vaanigam.decision).toBe("AUTO_APPROVE");
+    expect(res.json().vettri_vaanigam.decision).toBe("AUTO_APPROVE");
     expect(res.json().messages).toEqual([]);
   });
 

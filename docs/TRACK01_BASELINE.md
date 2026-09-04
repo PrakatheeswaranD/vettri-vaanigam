@@ -1,4 +1,4 @@
-# TRACK01_BASELINE — Vaanigam, as it actually exists
+# TRACK01_BASELINE — Vettri Vaanigam, as it actually exists
 
 **Part 0 of the Track 01 (AI Growth & Agentic Commerce) staged transformation.**
 Established 2026-09-02 against branch `security/review-fixes`, working tree at commit `d3102fe` plus 27 modified and 13 untracked files.

@@ -1,5 +1,5 @@
 /**
- * Vaanigam Console — the merchant's view of agent commerce.
+ * Vettri Vaanigam Console — the merchant's view of agent commerce.
  *
  * Three things, in the order a merchant cares about them: what the gateway
  * has decided (the log is the artifact of trust, not a demo prop), how it

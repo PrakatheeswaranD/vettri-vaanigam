@@ -60,6 +60,11 @@ function asStringArray(value: unknown): string[] {
   return value.filter((entry): entry is string => typeof entry === "string");
 }
 
+function asNumberMap(value: unknown): Record<string, number> {
+  if (!value || typeof value !== "object" || Array.isArray(value)) return {};
+  return Object.fromEntries(Object.entries(value).filter((entry): entry is [string, number] => typeof entry[1] === "number"));
+}
+
 export async function revalidateCommerceFacts(prisma: PrismaClient, merchantId: string, productId: string): Promise<CommerceFacts> {
   try {
     const product = await getAgentCatalogProduct(prisma, merchantId, productId);
@@ -236,13 +241,12 @@ export async function evaluateProposalPolicy(
     revalidateCommerceFacts(prisma, merchantId, proposal.primaryProductId),
   ]);
 
-  const actionTypeEnabled = allowedActionTypes(growthConfig).includes(proposal.actionType);
   const { discountBps, discountMinor } = deriveDiscountBps(proposal);
 
   // PART 08 facts. All revalidated HERE, at evaluation time, from the
   // merchant's own rows — never read off the proposal, which is a document
   // an agent authored.
-  const [marginBps, customerPaidOrderCount, autonomousActionsToday, product] = await Promise.all([
+  const [marginBps, customerPaidOrderCount, autonomousActionsToday, product, targetOrder] = await Promise.all([
     computeMarginBps(prisma, merchantId, proposal.primaryProductId, discountBps),
     countTargetCustomerPaidOrders(prisma, merchantId, proposal.sourceOrderId),
     countAutonomousActionsToday(prisma, merchantId),
@@ -250,7 +254,14 @@ export async function evaluateProposalPolicy(
       where: { id: proposal.primaryProductId, merchantId },
       select: { category: true },
     }),
+    proposal.sourceOrderId ? prisma.order.findFirst({ where: { id: proposal.sourceOrderId, merchantId }, select: { customerId: true } }) : null,
   ]);
+  const excludedProducts = asStringArray(growthConfig.excludedProductIds);
+  const excludedCustomers = asStringArray(growthConfig.excludedCustomerIds);
+  const portfolioEligible = !excludedProducts.includes(proposal.primaryProductId) && !(targetOrder?.customerId && excludedCustomers.includes(targetOrder.customerId));
+  const actionTypeEnabled = allowedActionTypes(growthConfig).includes(proposal.actionType) && portfolioEligible;
+  const categoryCeiling = product?.category ? asNumberMap(growthConfig.categoryDiscountLimits)[product.category] : undefined;
+  const portfolioMaxDiscountBps = categoryCeiling === undefined ? policy.maxDiscountBps : Math.min(policy.maxDiscountBps, categoryCeiling);
   const orderAmountMinor = proposalOpportunity(proposal)?.potentialBasketMinor ?? null;
   const recoveryAttemptCount =
     proposal.actionType === "RECOVERY"
@@ -262,8 +273,8 @@ export async function evaluateProposalPolicy(
     policy: {
       policyVersion: policy.policyVersion,
       currency: policy.currency,
-      maxDiscountBps: policy.maxDiscountBps,
-      autoApprovalDiscountBps: policy.autoApprovalDiscountBps,
+      maxDiscountBps: portfolioMaxDiscountBps,
+      autoApprovalDiscountBps: Math.min(policy.autoApprovalDiscountBps, portfolioMaxDiscountBps),
       maxOrderAmountMinor: policy.maxOrderAmountMinor,
       autoApprovalOrderAmountMinor: policy.autoApprovalOrderAmountMinor,
       maxRecoveryAttempts: policy.maxRecoveryAttempts,

@@ -1,5 +1,5 @@
 /**
- * Shared machinery for the Vaanigam landing page.
+ * Shared machinery for the Vettri Vaanigam landing page.
  *
  * WHY THERE IS NO ANIMATION LIBRARY HERE
  *

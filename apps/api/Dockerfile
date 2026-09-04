@@ -1,73 +1,64 @@
-# syntax=docker/dockerfile:1
-#
-# RazorGrowth API production image.
-#
-# Debian-slim rather than Alpine: Prisma's query engine needs OpenSSL 3
-# and glibc, and the musl targets are a recurring source of "query engine
-# not found" failures. The image is larger; the tradeoff buys a runtime
-# that behaves the same as local development.
-#
-# Build from the REPOSITORY ROOT, not this directory — the API depends on
-# two workspace packages (@razorgrowth/domain, @razorgrowth/contracts):
-#
-#   docker build -f apps/api/Dockerfile -t razorgrowth-api .
+﻿# Multi-stage production build for @razorgrowth/api
+FROM node:22-alpine AS builder
 
-# ---------- deps ----------
-FROM node:22-slim AS deps
 WORKDIR /app
 
-RUN apt-get update && apt-get install -y --no-install-recommends openssl ca-certificates \
-    && rm -rf /var/lib/apt/lists/*
-RUN corepack enable
+RUN corepack enable && corepack prepare pnpm@11.24.0 --activate
 
-# Copy only manifests first so this layer caches across source changes.
-COPY package.json pnpm-lock.yaml pnpm-workspace.yaml ./
-COPY apps/api/package.json        apps/api/
-COPY packages/domain/package.json packages/domain/
-COPY packages/contracts/package.json packages/contracts/
-COPY packages/config/package.json packages/config/
+# Copy monorepo configuration
+COPY package.json pnpm-lock.yaml pnpm-workspace.yaml turbo.json* ./
+COPY packages/domain/package.json ./packages/domain/
+COPY packages/contracts/package.json ./packages/contracts/
+COPY packages/config/package.json ./packages/config/
+COPY apps/api/package.json ./apps/api/
 
-# `postinstall` builds domain + contracts, which needs their sources.
-COPY packages/ packages/
+# Install dependencies for build
 RUN pnpm install --frozen-lockfile
 
-# ---------- build ----------
-FROM deps AS build
-WORKDIR /app
-# The shared tsconfig lives at packages/config/tsconfig.base.json, which
-# the `COPY packages/` in the deps stage already brought in.
-COPY apps/api/ apps/api/
-RUN pnpm --filter @razorgrowth/api run db:generate \
-    && pnpm --filter @razorgrowth/api run build
+# Copy source files
+COPY packages/ ./packages/
+COPY apps/api/ ./apps/api/
 
-# ---------- runtime ----------
-FROM node:22-slim AS runtime
+# Build domain and contracts packages
+RUN pnpm --filter @razorgrowth/domain run build && \
+    pnpm --filter @razorgrowth/contracts run build
+
+# Generate Prisma Client & Build API
+WORKDIR /app/apps/api
+RUN pnpm run db:generate && pnpm run build
+
+# Production Runner
+FROM node:22-alpine AS runner
+
 WORKDIR /app
 ENV NODE_ENV=production
+ENV PORT=4000
 
-RUN apt-get update && apt-get install -y --no-install-recommends openssl ca-certificates \
-    && rm -rf /var/lib/apt/lists/*
-RUN corepack enable
+# Install OpenSSL for Prisma engine & dumb-init
+RUN apk add --no-cache openssl dumb-init
 
-COPY --from=build /app/node_modules            ./node_modules
-COPY --from=build /app/package.json            ./package.json
-COPY --from=build /app/pnpm-workspace.yaml     ./pnpm-workspace.yaml
-COPY --from=build /app/packages                ./packages
-COPY --from=build /app/apps/api/node_modules   ./apps/api/node_modules
-COPY --from=build /app/apps/api/dist           ./apps/api/dist
-COPY --from=build /app/apps/api/package.json   ./apps/api/package.json
-COPY --from=build /app/apps/api/prisma         ./apps/api/prisma
-# `/agent-gateway/run-demo` spawns this script. Without it the endpoint
-# exists in the image and fails the moment anyone presses the button.
-COPY --from=build /app/apps/api/scripts        ./apps/api/scripts
+RUN corepack enable && corepack prepare pnpm@11.24.0 --activate
 
-# Run as a non-root user. `node` (uid 1000) ships with the base image.
-USER node
+COPY package.json pnpm-lock.yaml pnpm-workspace.yaml ./
+COPY packages/domain/package.json ./packages/domain/
+COPY packages/contracts/package.json ./packages/contracts/
+COPY packages/config/package.json ./packages/config/
+COPY apps/api/package.json ./apps/api/
+
+# Install production dependencies only
+RUN pnpm install --prod --frozen-lockfile
+
+# Copy built artifacts from builder
+COPY --from=builder /app/packages/domain/dist ./packages/domain/dist
+COPY --from=builder /app/packages/contracts/dist ./packages/contracts/dist
+COPY --from=builder /app/apps/api/dist ./apps/api/dist
+COPY --from=builder /app/apps/api/prisma ./apps/api/prisma
+
+WORKDIR /app/apps/api
 
 EXPOSE 4000
 
-# Migrations run at container start, before the server binds. This is
-# `migrate deploy` (apply committed migrations only) — never `migrate
-# dev`, which can generate or reset. If a migration fails the container
-# exits rather than serving traffic against a schema it does not match.
-CMD ["sh", "-c", "pnpm --filter @razorgrowth/api run db:deploy && node apps/api/dist/server.js"]
+USER node
+
+ENTRYPOINT ["dumb-init", "--"]
+CMD ["node", "dist/server.js"]

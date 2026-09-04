@@ -38,7 +38,7 @@ import {
   buildPolicyAuthorUserMessage,
   buildCatalogCompilerUserMessage,
   buildNegotiatorUserMessage,
-} from "../prompts/vaanigam-prompts.js";
+} from "../prompts/vettri-vaanigam-prompts.js";
 import {
   INTENT_EXTRACTION_SYSTEM_PROMPT,
   RECOMMENDATION_SYSTEM_PROMPT,

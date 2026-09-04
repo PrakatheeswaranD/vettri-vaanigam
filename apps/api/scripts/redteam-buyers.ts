@@ -129,7 +129,7 @@ function record(report: AttackReport) {
 }
 
 async function main() {
-  console.log("Vaanigam — red-team agent attacking a live gateway");
+  console.log("Vettri Vaanigam — red-team agent attacking a live gateway");
   console.log(`API: ${API}`);
   console.log(`Attacker identity: ${ATTACKER_ID}`);
 
@@ -187,7 +187,7 @@ async function main() {
       totals: { total: price },
       metadata: { note: INJECTION, instructions: INJECTION },
       cart_note: INJECTION,
-      vaanigam_mandate: signMandate(merchant.id),
+      vettri_vaanigam_mandate: signMandate(merchant.id),
     });
 
     const offeredBps = res.result.offer?.discountBps ?? 0;
@@ -219,11 +219,11 @@ async function main() {
 
   {
     const mandate = signMandate(merchant.id);
-    const first = await attack(merchant.slug, { ...basket, vaanigam_mandate: mandate });
+    const first = await attack(merchant.slug, { ...basket, vettri_vaanigam_mandate: mandate });
     log("first use", `${first.status} · ${first.result.outcome} (${first.result.reasonCode})`);
 
     // Byte-identical resubmission — same nonce, same signature.
-    const replay = await attack(merchant.slug, { ...basket, vaanigam_mandate: mandate });
+    const replay = await attack(merchant.slug, { ...basket, vettri_vaanigam_mandate: mandate });
     record({
       name: "Replay attack",
       attempted: "Resubmitted a mandate whose nonce had already been spent",
@@ -242,7 +242,7 @@ async function main() {
       notBefore: new Date(Date.now() - 7_200_000),
       expiresAt: new Date(Date.now() - 3_600_000),
     });
-    const res = await attack(merchant.slug, { ...basket, vaanigam_mandate: expired });
+    const res = await attack(merchant.slug, { ...basket, vettri_vaanigam_mandate: expired });
     record({
       name: "Expired mandate reuse",
       attempted: "Presented a correctly-signed mandate that expired an hour ago",
@@ -260,7 +260,7 @@ async function main() {
     // The mandate authorises a fraction of what the cart actually costs.
     // Signed honestly — the lie is in the gap between the two documents.
     const tooSmall = signMandate(merchant.id, { maxAmountMinor: Math.max(100, Math.floor(price / 4)) });
-    const res = await attack(merchant.slug, { ...basket, vaanigam_mandate: tooSmall });
+    const res = await attack(merchant.slug, { ...basket, vettri_vaanigam_mandate: tooSmall });
     record({
       name: "Mandate/cart mismatch",
       attempted: `Signed a mandate for ${rupees(Math.max(100, Math.floor(price / 4)))} while checking out ${rupees(price)}`,
@@ -279,7 +279,7 @@ async function main() {
       items: [{ id: sku, quantity: 1 }],
       buyer: { email: "redteam@agent.test" },
       totals: { total: 100 },
-      vaanigam_mandate: signMandate(merchant.id),
+      vettri_vaanigam_mandate: signMandate(merchant.id),
     });
     record({
       name: "Price forgery",

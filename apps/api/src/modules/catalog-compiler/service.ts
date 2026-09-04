@@ -170,7 +170,7 @@ export async function compileCatalogCsv(
   }
 
   logger.info(
-    { event: "vaanigam.catalog_compiled", merchantId, rowsRead: rows.length, rowsCompiled: products.length, issues: issues.length },
+    { event: "vettri_vaanigam.catalog_compiled", merchantId, rowsRead: rows.length, rowsCompiled: products.length, issues: issues.length },
     "Catalogue compiled",
   );
 

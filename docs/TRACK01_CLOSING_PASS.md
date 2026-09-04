@@ -113,7 +113,7 @@ Five test files picked their subject with `productVariant.findFirstOrThrow` and 
 
 It stopped being theoretical during this pass. After a reseed, `customer-negotiation` landed on a zero-inventory variant and **all thirteen assertions failed with `POLICY_DENIED`** — pointing at negotiation code that was entirely correct. The other four suites had simply been lucky.
 
-All seven fixtures now require stock and order by SKU. `acp-surface`, `agent-trust`, `vaanigam-gateway` and `x402-handshake` — 63 tests — still pass, which is the point: the fix removed the coin flip without changing what they assert.
+All seven fixtures now require stock and order by SKU. `acp-surface`, `agent-trust`, `vettri-vaanigam-gateway` and `x402-handshake` — 63 tests — still pass, which is the point: the fix removed the coin flip without changing what they assert.
 
 ## Removed permanently
 

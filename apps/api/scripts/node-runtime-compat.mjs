@@ -7,7 +7,7 @@ try {
   os.userInfo();
 } catch {
   os.userInfo = () => ({
-    username: process.env.USERNAME ?? "vaanigam",
+    username: process.env.USERNAME ?? "vettri_vaanigam",
     uid: -1,
     gid: -1,
     shell: null,

@@ -26,6 +26,7 @@ jobs:
       WEB_ORIGIN: http://localhost:5173
       LOG_LEVEL: info
       DATABASE_URL: postgresql://postgres:postgres@127.0.0.1:5432/postgres?sslmode=disable&pgbouncer=true&connection_limit=5
+      DIRECT_URL: postgresql://postgres:postgres@127.0.0.1:5432/postgres?sslmode=disable&pgbouncer=true&connection_limit=5
       VITE_API_BASE_URL: http://localhost:4000/api/v1
     steps:
       - name: Checkout
@@ -34,7 +35,7 @@ jobs:
       - name: Setup Node
         uses: actions/setup-node@v4
         with:
-          node-version: "20"
+          node-version: "24"
 
       - name: Setup pnpm
         uses: pnpm/action-setup@v4
@@ -60,6 +61,7 @@ jobs:
           WEB_ORIGIN=http://localhost:5173
           LOG_LEVEL=info
           DATABASE_URL=postgresql://postgres:postgres@127.0.0.1:5432/postgres?sslmode=disable&pgbouncer=true&connection_limit=5
+          DIRECT_URL=postgresql://postgres:postgres@127.0.0.1:5432/postgres?sslmode=disable&pgbouncer=true&connection_limit=5
           VITE_API_BASE_URL=http://localhost:4000/api/v1
           EOF
 

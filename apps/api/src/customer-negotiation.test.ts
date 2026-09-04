@@ -162,19 +162,28 @@ beforeAll(async () => {
 
   // The buyer policy has to permit this category, or every proposal is a
   // DECLINE and there is no price to negotiate.
+  // Every limit this test depends on is set HERE, including
+  // `maxPurchaseAmountMinor`.
+  //
+  // It used to set only the autonomous and daily limits and inherit the
+  // hard ceiling from whatever the fixture happened to hold. That made
+  // the suite quietly dependent on an ambient value it never asserted:
+  // when `db:identities` began provisioning a realistic ₹25,000 ceiling
+  // instead of the ₹10,00,000 schema maximum, this test started failing
+  // on a policy decision that was entirely correct.
+  //
+  // A test that negotiates a large basket has to own the ceiling that
+  // basket needs, or it is testing the fixture rather than the code.
+  const negotiationPolicy = {
+    allowedCategories: [(await prisma.product.findUniqueOrThrow({ where: { id: variant.productId } })).category],
+    autonomousPurchaseLimitMinor: 100_000_000,
+    dailyLimitMinor: 1_000_000_000,
+    maxPurchaseAmountMinor: 100_000_000,
+  };
   await prisma.buyerSpendingPolicy.upsert({
     where: { customerAccountId: buyerContextId },
-    create: {
-      customerAccountId: buyerContextId,
-      allowedCategories: [(await prisma.product.findUniqueOrThrow({ where: { id: variant.productId } })).category],
-      autonomousPurchaseLimitMinor: 100_000_000,
-      dailyLimitMinor: 1_000_000_000,
-    },
-    update: {
-      allowedCategories: [(await prisma.product.findUniqueOrThrow({ where: { id: variant.productId } })).category],
-      autonomousPurchaseLimitMinor: 100_000_000,
-      dailyLimitMinor: 1_000_000_000,
-    },
+    create: { customerAccountId: buyerContextId, ...negotiationPolicy },
+    update: negotiationPolicy,
   });
 });
 

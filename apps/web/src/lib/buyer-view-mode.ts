@@ -15,11 +15,17 @@ import { useCallback, useEffect, useState } from "react";
  */
 export type BuyerViewMode = "buyer" | "trace";
 
-const STORAGE_KEY = "vaanigam.buyerViewMode";
+const STORAGE_KEY = "vettri_vaanigam.buyerViewMode";
 
 function readStored(): BuyerViewMode {
   try {
-    return sessionStorage.getItem(STORAGE_KEY) === "trace" ? "trace" : "buyer";
+    // Preserve the existing preference when moving to the new brand key.
+    const saved = sessionStorage.getItem(STORAGE_KEY) ?? sessionStorage.getItem("vaanigam.buyerViewMode");
+    if (saved !== null) {
+      sessionStorage.setItem(STORAGE_KEY, saved);
+      sessionStorage.removeItem("vaanigam.buyerViewMode");
+    }
+    return saved === "trace" ? "trace" : "buyer";
   } catch {
     // Private windows and blocked site data throw on access. Defaulting to
     // the shopper view is right: it is the one a first-time visitor wants.

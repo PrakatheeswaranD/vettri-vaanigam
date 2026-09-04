@@ -324,7 +324,7 @@ export async function negotiateProposal(
 
   logger.info(
     {
-      event: "vaanigam.customer_negotiation",
+      event: "vettri_vaanigam.customer_negotiation",
       proposalId: proposal.id,
       tier: standing.tier,
       requestedBps: args.requestedDiscountBps,

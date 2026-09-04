@@ -50,7 +50,7 @@ const AUTHORIZED_STATUSES = ["AUTHORIZED"] as const;
 const BLOCKED_STATUSES = ["REJECTED_VALIDATION", "POLICY_DENIED", "APPROVAL_REJECTED"] as const;
 
 export async function getAgentStatus(prisma: PrismaClient, merchantId: string): Promise<AgentStatusDTO> {
-  const [report, summary, lastRun, autonomous, executed, awaiting, failures] = await Promise.all([
+  const [report, summary, lastRun, autonomous, executed, awaiting, failures, jobs] = await Promise.all([
     getRevenueOpportunityReport(prisma, merchantId),
     getGrowthSummary(prisma, merchantId),
 
@@ -89,6 +89,10 @@ export async function getAgentStatus(prisma: PrismaClient, merchantId: string): 
       orderBy: { createdAt: "desc" },
       take: LIST_LIMIT,
       select: { id: true, actionType: true, explanation: true, rejectionReason: true, status: true, createdAt: true },
+    }),
+    prisma.agentJob.findMany({
+      where: { merchantId, status: { in: ["QUEUED", "RUNNING", "DEAD_LETTER"] } },
+      select: { status: true, attempts: true, lockedAt: true },
     }),
   ]);
 
@@ -175,6 +179,13 @@ export async function getAgentStatus(prisma: PrismaClient, merchantId: string): 
       status: p.status,
       at: p.createdAt.toISOString(),
     })),
+
+    operations: {
+      queuedJobs: jobs.filter((job) => job.status === "QUEUED").length,
+      retryingJobs: jobs.filter((job) => job.status === "QUEUED" && job.attempts > 0).length,
+      deadLetterJobs: jobs.filter((job) => job.status === "DEAD_LETTER").length,
+      stalledJobs: jobs.filter((job) => job.status === "RUNNING" && job.lockedAt !== null && job.lockedAt.getTime() < Date.now() - 15 * 60_000).length,
+    },
 
     /**
      * VERIFIED, and only verified. Both figures require a provider-

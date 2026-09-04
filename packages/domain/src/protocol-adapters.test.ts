@@ -46,7 +46,7 @@ describe("ACP adapter", () => {
     const result = parseAcpIntent(
       {
         items: [{ id: "SKU-1" }],
-        vaanigam_mandate: {
+        vettri_vaanigam_mandate: {
           mandateId: "m1",
           buyerAgentId: "agent-chatgpt-1",
           merchantScope: "merchant-1",
@@ -176,7 +176,7 @@ describe("adapter mesh routing", () => {
 });
 
 /**
- * The product was renamed from Anumati to Vaanigam. A rename on our side
+ * The product was renamed from Anumati to Vettri Vaanigam. A rename on our side
  * must not silently break an integration that was working — dropping the
  * old field name would surface to a caller as a MANDATE_MISSING decline
  * they have no way to explain.
@@ -205,7 +205,7 @@ describe("mandate field — the pre-rename name still works", () => {
   }
 
   it("reads a mandate sent under the new name", () => {
-    const result = parse("vaanigam_mandate");
+    const result = parse("vettri_vaanigam_mandate");
     expect(result.ok).toBe(true);
     if (result.ok) expect(result.intent.mandate?.mandateId).toBe("m-1");
   });
@@ -218,6 +218,12 @@ describe("mandate field — the pre-rename name still works", () => {
 
   it("reads the protocol-neutral name too", () => {
     const result = parse("mandate");
+    expect(result.ok).toBe(true);
+    if (result.ok) expect(result.intent.mandate?.mandateId).toBe("m-1");
+  });
+
+  it.each(["vettriVaanigamMandate", "vaanigam_mandate", "vaanigamMandate"])("preserves the signed mandate for %s", (field) => {
+    const result = parse(field);
     expect(result.ok).toBe(true);
     if (result.ok) expect(result.intent.mandate?.mandateId).toBe("m-1");
   });
