@@ -187,6 +187,19 @@ export interface HandleGrowthProposalParams {
   conversationId?: string;
   recommendationId?: string;
   primaryProductId: string;
+  /**
+   * Narrow the proposal to the kind of action the caller is answering.
+   *
+   * Set by the autonomous run when it is working a specific opportunity —
+   * an UPSELL card should produce an upsell, not whatever the relationship
+   * ranking prefers in general. Omitted for a merchant invoking the tool
+   * by hand, who is answering no particular card.
+   *
+   * Deliberately NOT set for ELIGIBLE_OFFER: the provider will not invent
+   * a discount without real signal, and forcing an offer-only proposal
+   * there would turn correct conservatism into a refusal.
+   */
+  restrictToActionTypes?: GrowthActionType[];
 }
 
 async function persistAndRespond(
@@ -266,7 +279,31 @@ export async function proposeGrowthAction(
   logger.info({ event: "merchant_agent.request_received", merchantId: params.merchantId, traceId, primaryProductId: params.primaryProductId }, "Merchant Agent request received");
 
   const config = await getGrowthConfig(prisma, params.merchantId);
-  const allowed = allowedActionTypes(config);
+  /**
+   * The merchant's own switches, then NARROWED to the kind of action the
+   * caller is actually answering.
+   *
+   * PART 17 — verified against the database: not one UPSELL or BUNDLE
+   * proposal had ever been created, on any product, in 237 proposals.
+   * `deterministicGrowthProposal` picks a single best candidate by
+   * `RELATIONSHIP_PRIORITY`, where COMPLEMENTARY outranks
+   * UPSELL_ALTERNATIVE, so an upsell only wins when no complementary
+   * candidate is currently eligible — which depends on stock, not on the
+   * merchant's intent. The "products selling at entry price with a dearer
+   * option available" card was therefore answered with a cross-sell.
+   *
+   * Not "impossible", which was my first reading and was wrong: the test
+   * for this has to SEARCH for a product the unrestricted path cross-sells
+   * rather than assume any given one does.
+   *
+   * Narrowing, never widening: this can only ever be a subset of what the
+   * merchant already permits, and an empty intersection falls through to
+   * the "nothing is allowed" refusal below rather than silently doing
+   * something else.
+   */
+  const allowed = params.restrictToActionTypes
+    ? allowedActionTypes(config).filter((type) => params.restrictToActionTypes!.includes(type))
+    : allowedActionTypes(config);
 
   const conversationId = params.conversationId ?? null;
   const recommendationId = params.recommendationId ?? null;

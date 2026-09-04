@@ -2,6 +2,8 @@
 
 Continues [Part 0](TRACK01_PART0_FIXES.md) → [Part 15](TRACK01_PART15_PRIMARY_DEMO_VERIFICATION.md).
 
+> Followed by [Part 17](TRACK01_PART17_FINAL_EVALUATION.md), the final scored evaluation — which found that four scored capabilities had never actually been driven.
+
 > Problems hit along the way: [TRACK01_PROBLEMS_LOG.md](TRACK01_PROBLEMS_LOG.md).
 
 Evidence before deletion. The interesting result is how little there was to delete — and that two of the eleven removals were not merely dead but actively hazardous.

@@ -43,7 +43,7 @@
  */
 import type { PrismaClient } from "@prisma/client";
 import type { AgentToolDTO, AgentToolInvocationResultDTO } from "@razorgrowth/contracts";
-import type { RevenueOpportunityType } from "@razorgrowth/domain";
+import type { GrowthActionType, RevenueOpportunityType } from "@razorgrowth/domain";
 import { isValidProposalTransition } from "@razorgrowth/domain";
 import { AppError } from "../../http/errors.js";
 import { logger } from "../../observability/logger.js";
@@ -485,8 +485,28 @@ const proposeGrowthActionTool: AgentToolDefinition = {
     handles: ["CROSS_SELL", "UPSELL", "ELIGIBLE_OFFER"],
   },
   async run(ctx, productId) {
+    /**
+     * Answer the card that was actually detected.
+     *
+     * An UPSELL opportunity — "products selling at entry price with a
+     * dearer option available" — was being answered with a cross-sell,
+     * because the relationship ranking prefers COMPLEMENTARY and every
+     * upsell-capable product also has one. Across the entire database not
+     * one UPSELL or BUNDLE proposal had ever been created.
+     *
+     * ELIGIBLE_OFFER is deliberately absent: the provider will not invent
+     * a discount without real signal (see the detail text below), and
+     * narrowing it to offer-only would convert correct conservatism into
+     * a refusal rather than closing the gap.
+     */
+    const RESTRICT_BY_OPPORTUNITY: Partial<Record<string, GrowthActionType[]>> = {
+      UPSELL: ["UPSELL"],
+      CROSS_SELL: ["CROSS_SELL"],
+    };
+    const restrictToActionTypes = ctx.opportunityType ? RESTRICT_BY_OPPORTUNITY[ctx.opportunityType] : undefined;
+
     const gated = await governedPipeline(ctx, () =>
-      proposeGrowthAction(ctx.prisma, { merchantId: ctx.merchantId, primaryProductId: productId }),
+      proposeGrowthAction(ctx.prisma, { merchantId: ctx.merchantId, primaryProductId: productId, restrictToActionTypes }),
     );
     if (!gated.ok) return gated.result;
 

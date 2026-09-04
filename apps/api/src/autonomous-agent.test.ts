@@ -25,6 +25,7 @@ import { createCycleTracker } from "./test-helpers/cycle-cleanup.js";
 import { runAutonomousCycle, MAX_ACTIONS_PER_RUN } from "./modules/merchant-agent/autonomous-run-service.js";
 import { runScheduledCycles, startAgentScheduler } from "./modules/merchant-agent/scheduler.js";
 import { AGENT_TOOLS, toolForOpportunityType } from "./modules/merchant-agent/tools.js";
+import { proposeGrowthAction } from "./modules/merchant-agent/service.js";
 import type { AgentRunResultDTO, AgentStatusDTO } from "@razorgrowth/contracts";
 
 let app: FastifyInstance;
@@ -437,5 +438,93 @@ describe("unattended cycles — two switches, both off by default", () => {
 
     const read = await app.inject({ method: "GET", url: "/api/v1/merchant-agent/growth/config" });
     expect((read.json() as { autonomousRunsEnabled: boolean }).autonomousRunsEnabled).toBe(false);
+  });
+});
+
+/**
+ * PART 17 — the agent must answer the card it detected.
+ *
+ * Verified before this existed: across the ENTIRE database, not one
+ * UPSELL or BUNDLE proposal had ever been created — only CROSS_SELL and
+ * RECOVERY — despite ten `UPSELL_ALTERNATIVE` relationships in the
+ * catalogue.
+ *
+ * `deterministicGrowthProposal` picks a single best candidate by
+ * `RELATIONSHIP_PRIORITY`, where COMPLEMENTARY outranks
+ * UPSELL_ALTERNATIVE, and every upsell-capable product here also has a
+ * complementary relationship. So the general path could never reach an
+ * upsell, and the "products selling at entry price with a dearer option
+ * available" card was answered with a cross-sell.
+ */
+describe("growth proposals answer the opportunity they were invoked for (PART 17)", () => {
+  it("proposes an UPSELL when restricted, where the ranking alone would not", async () => {
+    const merchantId = await getTestMerchantId(prisma);
+
+    const upsellSources = await prisma.productRelationship.findMany({
+      where: { relationshipType: "UPSELL_ALTERNATIVE", sourceProduct: { merchantId } },
+      select: { sourceProductId: true },
+    });
+    expect(upsellSources.length, "no upsell relationship seeded — this would prove nothing").toBeGreaterThan(0);
+
+    /**
+     * Search for a product where the restriction CHANGES the answer, rather
+     * than picking one and hoping.
+     *
+     * Both halves vary with seeded data. Unrestricted already yields an
+     * upsell whenever no COMPLEMENTARY candidate is currently eligible, and
+     * a restricted call yields nothing when the upsell target is itself
+     * blocked for missing commerce data. An earlier version asserted
+     * against the first candidate and failed on a fresh seed for exactly
+     * that reason — the fixture-dependence this file's own cleanup helper
+     * exists to avoid.
+     */
+    let proof: { productId: string; unrestricted: string | null } | null = null;
+    for (const { sourceProductId } of upsellSources) {
+      const plain = await proposeGrowthAction(prisma, { merchantId, primaryProductId: sourceProductId });
+      cycles.trackIds([plain.id]);
+      if (plain.actionType === "UPSELL") continue;
+
+      const restricted = await proposeGrowthAction(prisma, {
+        merchantId,
+        primaryProductId: sourceProductId,
+        restrictToActionTypes: ["UPSELL"],
+      });
+      cycles.trackIds([restricted.id]);
+      if (restricted.actionType === "UPSELL") {
+        proof = { productId: sourceProductId, unrestricted: plain.actionType };
+        expect(restricted.relatedProductIds.length).toBeGreaterThan(0);
+        break;
+      }
+    }
+
+    expect(
+      proof,
+      "no product where restricting to UPSELL changes the outcome — the capability is unproven on this seed",
+    ).not.toBeNull();
+    expect(proof!.unrestricted).not.toBe("UPSELL");
+  });
+
+  it("narrows, never widens — a restriction cannot re-enable what the merchant switched off", async () => {
+    const merchantId = await getTestMerchantId(prisma);
+    const config = await prisma.merchantGrowthConfig.findUniqueOrThrow({ where: { merchantId } });
+    try {
+      await prisma.merchantGrowthConfig.update({ where: { merchantId }, data: { upsellEnabled: false } });
+      const rel = await prisma.productRelationship.findFirst({
+        where: { relationshipType: "UPSELL_ALTERNATIVE", sourceProduct: { merchantId } },
+        select: { sourceProductId: true },
+      });
+      const result = await proposeGrowthAction(prisma, {
+        merchantId,
+        primaryProductId: rel!.sourceProductId,
+        restrictToActionTypes: ["UPSELL"],
+      });
+      cycles.trackIds([result.id]);
+      // The merchant's switch wins: asking for an upsell they disabled
+      // yields no proposal, not an upsell and not a substituted type.
+      expect(result.actionType).not.toBe("UPSELL");
+      expect(result.status).not.toBe("AUTHORIZED");
+    } finally {
+      await prisma.merchantGrowthConfig.update({ where: { merchantId }, data: { upsellEnabled: config.upsellEnabled } });
+    }
   });
 });

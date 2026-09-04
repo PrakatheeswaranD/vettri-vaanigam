@@ -1,4 +1,4 @@
-# TRACK01 — every problem hit, Parts 0 through 16 and the closing gap pass
+# TRACK01 — every problem hit, Parts 0 through 17 and the closing gap pass
 
 A complete log, including the small ones and the ones I caused myself. Kept in three categories per part, because they need different responses:
 
@@ -996,6 +996,59 @@ When 26 payment tests failed right after I deleted things, the obvious story was
 **Library exports**, **the two checkout builders** (real duplication, deliberately kept — merging two money paths on suspicion is the risk the brief warns about), and **every unused exported type**. A type costs nothing at runtime; removing them is LOC reduction, which was explicitly not the objective.
 
 **Net: 85 insertions, 85 deletions.** Most insertions are comments recording why something was removed, so nobody re-adds the trap.
+
+---
+
+# PART 17 — final evaluation
+
+## The rule that produced everything below
+
+Score only what I personally drove. Applying it honestly meant admitting that **four scored capabilities had never been driven by me at all** — merchant upsell, merchant repeat purchase, buyer comparison, buyer negotiation. I had read the code for all four and could have written a paragraph about each. Testing them first produced one clean pass, one real limit, and one defect.
+
+## Product bugs
+
+### P17-1 · The agent could not answer an upsell card with an upsell
+Verified against the database: **not one UPSELL or BUNDLE proposal had ever been created, on any product, in 237 proposals** — only CROSS_SELL and RECOVERY.
+
+`deterministicGrowthProposal` picks a single best candidate by `RELATIONSHIP_PRIORITY`, where COMPLEMENTARY outranks UPSELL_ALTERNATIVE. So an upsell only wins when no complementary candidate is currently eligible — which depends on **stock**, not on the merchant's intent. The "products selling at entry price with a dearer option available" card was being answered with a cross-sell.
+
+The autonomous run now narrows the proposal to the kind of action the card is about. **Narrowing, never widening**: it can only be a subset of what the merchant already permits, and a test proves a disabled switch still wins.
+
+`ELIGIBLE_OFFER` is deliberately excluded — the provider will not invent a discount without real signal, and forcing an offer-only proposal there would turn correct conservatism into a refusal. The same reasoning that made narrowing wrong in Part 15 makes it right here, and the difference is worth stating rather than applying one rule to both.
+
+## Verified limits, not bugs
+
+### P17-2 · Six of eleven opportunity types have no tool
+REPEAT_PURCHASE, ABANDONED_CHECKOUT_RECOVERY, CUSTOMER_REACTIVATION, UNDERPERFORMING_PRODUCT, AI_BUYER_READINESS and PRODUCT_DISCOVERY are detected, ranked and shown — and skipped by the run.
+
+Checked before calling it a defect: the skip is **deliberate and documented** ("a catalogue gap it must not author, or a customer-keyed finding no proposal shape exists for"), and the console distinguishes them ("1 the agent can act on with no buyer present"). An honest limit that costs score, not a lie that costs trust.
+
+### P17-3 · No payment was ever confirmed by Razorpay
+Real orders were created by live API calls; the hosted checkout loads with a real session. Every capture in this project was delivered by a **self-signed webhook**. The verification pipeline is proven exhaustively; "Razorpay confirmed this payment" is not a claim any part of this work can make, and the scores say so.
+
+## My own mistakes
+
+### P17-4 · I stated a limit more strongly than my evidence supported
+I wrote — in a source comment — that the ranking meant upsell "could never be reached". My own test then returned UPSELL from the *unrestricted* path on the first product it tried.
+
+The truth is narrower and more useful: upsell loses **whenever an eligible complementary candidate exists**, which varies with stock. "Impossible" and "reliably loses" are different claims, and only one of them was mine to make. Comment corrected; the test now searches rather than assumes.
+
+### P17-5 · I wrote a fixture-dependent test — the exact thing I criticised twice
+My first upsell test picked the first upsell-capable product and demanded a specific outcome. It passed on the worn database and **failed on a freshly seeded one** ("Every candidate relationship is blocked by missing commerce data"), because which products are eligible depends on stock.
+
+I had written the Part 15 and Part 16 entries about precisely this failure mode, then reproduced it within the hour. The test now searches for a product where the restriction *changes* the answer, and says so plainly if the seed contains none.
+
+### P17-6 · I killed the database by querying it during a test run — again
+Recorded as P14-8. I ran a capture script while the full suite was running; the single-client PGlite shim died, and the run reported **36 failed files and 412 skipped tests** — a result that looks catastrophic and means nothing. The cluster then would not restart at all (PGlite `Aborted()`), and had to be deleted, re-migrated, re-seeded and re-provisioned.
+
+The rule I already knew: **nothing else touches that database while the suite runs.**
+
+### P17-7 · Shell escaping, fourth time
+An apostrophe inside a `node -e` heredoc ("this file's own cleanup helper") terminated the template literal and sprayed the rest of the script at bash, which cheerfully tried to execute `config/` as a command. The script had already failed before writing, so nothing was corrupted — luck, not care. Regex- and prose-bearing scripts go in files.
+
+## What was NOT found
+
+**No fabricated capability.** Every line I scored was driven and read back: comparison compared exactly the products named, negotiation produced three genuinely different outcomes at the right thresholds, a restricted spending policy declined a real purchase with no order and no payment, and a merchant-authorized offer reached a shopper's basket and changed the price.
 
 ---
 
