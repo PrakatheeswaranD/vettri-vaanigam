@@ -49,13 +49,59 @@ const STAGE_BY_ACTION: Readonly<Record<string, BuyerActivityStage>> = {
   BUYER_PURCHASE_PROPOSED: "POLICY",
   BUYER_PURCHASE_AUTHORIZED: "AUTHORIZATION",
   EXECUTION_AUTHORIZATION_DENIED: "AUTHORIZATION",
+
+  // ── CHECKOUT ──────────────────────────────────────────────────────
+  // `CHECKOUT_CREATED` is what the MERCHANT growth path writes. The
+  // buyer's own path writes `AGENT_CHECKOUT_CREATED`, and listing only
+  // the first meant a buyer's purchase reached a real Razorpay order
+  // while their activity page showed no checkout stage at all — the
+  // events existed and nothing read them.
+  AGENT_CHECKOUT_CREATED: "CHECKOUT",
   CHECKOUT_CREATED: "CHECKOUT",
+  CHECKOUT_READY_FOR_PAYMENT: "CHECKOUT",
+  PAYMENT_INITIATION_REQUESTED: "CHECKOUT",
+  // The Razorpay Test Mode order. This IS the checkout the buyer is sent
+  // to, so hiding it left the most concrete step in the chain invisible.
+  PROVIDER_ORDER_CREATED: "CHECKOUT",
+  // The internal order row, created with the basket reservation before
+  // any payment. See the ORDER block below for why it is not ORDER.
+  ORDER_CREATED: "CHECKOUT",
+
+  // ── PAYMENT ───────────────────────────────────────────────────────
+  PAYMENT_RECORD_CREATED: "PAYMENT",
   PAYMENT_AUTHORIZED: "PAYMENT",
   PAYMENT_CAPTURED: "PAYMENT",
   PAYMENT_FAILED: "PAYMENT",
+  PAYMENT_RECONCILED: "PAYMENT",
+  CLIENT_PAYMENT_VERIFICATION_RECEIVED: "PAYMENT",
   CLIENT_PAYMENT_SIGNATURE_VERIFIED: "PAYMENT",
-  ORDER_CREATED: "ORDER",
+  CLIENT_PAYMENT_SIGNATURE_INVALID: "PAYMENT",
+  // A buyer is entitled to know their payment was VERIFIED rather than
+  // assumed. Without these two the page could show a capture and never
+  // show what earned the right to believe it.
+  WEBHOOK_RECEIVED: "PAYMENT",
+  WEBHOOK_SIGNATURE_VERIFIED: "PAYMENT",
+  // A refused capture is the single most important thing that can happen
+  // to someone's money. Omitting it would have shown a payment that
+  // simply stopped, with no record of why.
+  PAYMENT_FINANCIAL_INTEGRITY_ERROR: "PAYMENT",
+  PAYMENT_STATE_TRANSITION_REJECTED: "PAYMENT",
+
+  // ── ORDER ─────────────────────────────────────────────────────────
+  //
+  // `ORDER_CREATED` is deliberately NOT here. An order row exists from
+  // the moment the basket is reserved, before a rupee has moved, so
+  // mapping it to ORDER lit the last stage of the rail for a purchase
+  // that might never be paid — the same overstatement as a checkout
+  // screen that says "order placed" because a row was inserted. It sits
+  // under CHECKOUT above, which is what it actually is: the checkout
+  // being prepared.
+  //
+  // ORDER means the buyer has an order, and only a verified capture
+  // writes `ORDER_CONFIRMED`.
+  ORDER_CONFIRMED: "ORDER",
   ORDER_FULFILLED: "ORDER",
+  AGENT_INVENTORY_RESERVATION_RELEASED: "ORDER",
 };
 
 /** The order the spec names, used to sort stages within one workflow so a
@@ -119,17 +165,41 @@ export async function getBuyerActivity(
       },
     },
     orderBy: { createdAt: "desc" },
-    select: { workflowId: true },
+    select: { workflowId: true, createdAt: true },
     distinct: ["workflowId"],
     take: ACTIVITY_WORKFLOW_LIMIT,
   });
 
-  const workflowIds = [
-    ...new Set([
-      ...decisions.map((d) => d.workflowId).filter((id): id is string => Boolean(id)),
-      ...conversationEvents.map((e) => e.workflowId),
-    ]),
-  ].slice(0, ACTIVITY_WORKFLOW_LIMIT);
+  /**
+   * MERGED BY RECENCY, NOT BY SOURCE.
+   *
+   * This concatenated the two lists and sliced the first twenty. Since
+   * the decisions came first, a buyer with twenty or more purchase
+   * proposals — the demo shopper has ninety-six — never saw a single
+   * conversation-only workflow, which is precisely what the comment above
+   * says must not happen. The feed silently became "spending only" for
+   * exactly the buyers who use the agent most.
+   *
+   * Both sources are already ordered newest-first; interleaving them on
+   * their own timestamps is what makes "the twenty most recent things
+   * your agent did" true rather than "the twenty most recent purchases,
+   * then whatever fits".
+   */
+  const latestByWorkflow = new Map<string, number>();
+  for (const row of [
+    ...decisions.map((d) => ({ workflowId: d.workflowId, at: d.createdAt })),
+    ...conversationEvents.map((e) => ({ workflowId: e.workflowId, at: e.createdAt })),
+  ]) {
+    if (!row.workflowId) continue;
+    const at = row.at.getTime();
+    const seen = latestByWorkflow.get(row.workflowId);
+    if (seen === undefined || at > seen) latestByWorkflow.set(row.workflowId, at);
+  }
+
+  const workflowIds = [...latestByWorkflow.entries()]
+    .sort((a, b) => b[1] - a[1])
+    .slice(0, ACTIVITY_WORKFLOW_LIMIT)
+    .map(([id]) => id);
 
   if (workflowIds.length === 0) return { workflows: [], stageOrder: [...STAGE_ORDER] };
 

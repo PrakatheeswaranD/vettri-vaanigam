@@ -138,6 +138,24 @@ export async function handleBuyerMessage(
     conversationRow = { ...created, messages: [] };
   }
   const conversationId = conversationRow.id;
+  /**
+   * The workflow every ledger write on this turn goes into.
+   *
+   * PART 13 — this used to be `traceId`, which is minted per REQUEST. A
+   * buyer who searched in one turn and bought two turns later therefore
+   * wrote three unrelated hash chains, and their own activity page showed
+   * one journey as three disconnected cards. The pipeline this product
+   * promises spans turns by definition, so the workflow has to belong to
+   * the conversation rather than to the request that happens to be in
+   * flight.
+   *
+   * `traceId` is unchanged and still per-turn — it correlates logs and
+   * the response with one request, which is a different job it was only
+   * doing this one by accident. Falls back to `traceId` for conversations
+   * created before the column existed, so nothing already recorded is
+   * re-parented.
+   */
+  const workflowId = conversationRow.workflowId ?? traceId;
 
   const userMessage = await appendMessage(prisma, conversationId, "BUYER", params.message);
   logger.info({ event: "buyer_agent.request_received", conversationId, traceId }, "Buyer Agent request received");
@@ -332,7 +350,7 @@ export async function handleBuyerMessage(
     if (comparison) {
       await recordLedgerEvent(prisma, {
         merchantId: params.merchantId,
-        workflowId: traceId,
+        workflowId,
         actionType: "COMPARISON_BUILT",
         conciseReason: `Compared ${comparison.productIds.length} products on ${comparison.rows.length} published catalogue fields; ${comparison.rows.filter((r) => r.differs).length} actually differ.`,
         relatedEntityType: "BuyerConversation",
@@ -414,6 +432,12 @@ export async function handleBuyerMessage(
       quantity: 1,
       agentId: CUSTOMER_AGENT_ID,
       decisionLatencyMs: Math.max(0, Math.round(performance.now() - decisionStartedAt)),
+      // The same workflow the search, comparison and recommendation were
+      // written under. Without this the purchase started a second,
+      // unrelated chain and the buyer's own journey appeared as two
+      // disconnected halves with nothing joining the recommendation to
+      // the charge.
+      workflowId,
     });
     const purchase = toPurchaseOutcome(proposal, target.productId, target.variantId, 1);
     // Remember what was quoted, but only when it is actually authorizable.
@@ -569,7 +593,7 @@ export async function handleBuyerMessage(
 
   await recordLedgerEvent(prisma, {
     merchantId: params.merchantId,
-    workflowId: traceId,
+    workflowId,
     actionType: "BUYER_INTENT_EXTRACTED",
     conciseReason: `Extracted intent from buyer message via ${provider.mode}: ${buildAppliedConstraints(mergedIntent).join("; ") || "no hard constraints"}.`,
     relatedEntityType: "BuyerConversation",
@@ -584,7 +608,7 @@ export async function handleBuyerMessage(
 
     await recordLedgerEvent(prisma, {
       merchantId: params.merchantId,
-      workflowId: traceId,
+      workflowId,
       actionType: "PRODUCTS_DISCOVERED",
       conciseReason: "Deterministic catalog filter returned zero candidates for the requested constraints.",
       relatedEntityType: "BuyerConversation",
@@ -622,7 +646,7 @@ export async function handleBuyerMessage(
 
   await recordLedgerEvent(prisma, {
     merchantId: params.merchantId,
-    workflowId: traceId,
+    workflowId,
     actionType: "PRODUCTS_DISCOVERED",
     conciseReason: `Deterministic filter found ${evaluated.exact.length} exact and ${evaluated.nearMatch.length} near-match candidate(s) among ${products.length} catalog product(s).`,
     relatedEntityType: "BuyerConversation",
@@ -657,7 +681,7 @@ export async function handleBuyerMessage(
 
   await recordLedgerEvent(prisma, {
     merchantId: params.merchantId,
-    workflowId: traceId,
+    workflowId,
     actionType: "RECOMMENDATION_PROPOSED",
     conciseReason: `Proposed ${outcome.recommendations.length} recommendation(s) in ${outcome.mode} mode${outcome.groundingFailed ? " (AI ranking failed grounding, deterministic fallback used)" : ""}.`,
     relatedEntityType: "RecommendationRecord",
@@ -690,7 +714,7 @@ export async function handleBuyerMessage(
   });
   await recordLedgerEvent(prisma, {
     merchantId: params.merchantId,
-    workflowId: traceId,
+    workflowId,
     actionType: "OFFERS_EVALUATED",
     conciseReason:
       offers.length > 0

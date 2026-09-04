@@ -13,21 +13,6 @@
  * persisted (`Payment`, `Order`) or came from a signature-verified /
  * directly-fetched provider response (PART 07 §20).
  */
-/**
- * The single place a verified provider fact becomes an internal
- * `Payment`/`Order`/`CheckoutSession` state change (PART 07 §20-§22,
- * §52-§57). Called from three places — the webhook processor, the client-
- * completion verification route, and manual reconciliation — so all three
- * evidence sources go through the exact same deterministic transition
- * logic, never three separately-maintained copies (PART 07 §41's evidence
- * hierarchy is enforced structurally: whichever caller has the freshest
- * verified fact calls this function, and illegal/stale transitions are
- * rejected here regardless of which caller triggered them).
- *
- * No AI dependency, no frontend trust: every input here is either already
- * persisted (`Payment`, `Order`) or came from a signature-verified /
- * directly-fetched provider response (PART 07 §20).
- */
 import type { Order, Payment, PaymentState, Prisma } from "@prisma/client";
 import { canTransitionPaymentState } from "@razorgrowth/domain";
 import { normalizeRazorpayFailure } from "./failure-mapper.js";
@@ -213,6 +198,27 @@ export async function resolvePaymentEvent(
     });
     await setOrderStatus(tx, order.id, "PAID");
     await updateCheckoutStatus(tx, params.checkoutId, "COMPLETED");
+    // THE ORDER BECOMING REAL IS ITS OWN FACT.
+    //
+    // `PAYMENT_CAPTURED` below says money arrived. It does not say the
+    // order is now a confirmed order, and nothing else did either: the
+    // status went PAYMENT_PENDING -> PAID with no ledger entry, so the
+    // last link of the chain — the one the buyer actually cares about —
+    // was the only one that left no trace. Written before the payment
+    // event so the timeline reads payment-then-order in the order the
+    // states actually settled.
+    await appendLedgerEvent(tx, {
+      workflowId: params.workflowId,
+      merchantId: params.merchantId,
+      actorType: "COMMERCE",
+      actionType: "ORDER_CONFIRMED",
+      status: "EXECUTED",
+      conciseReason: `Order confirmed against a verified capture of ${payment.amountMinor} ${payment.currency} minor units.`,
+      relatedEntityType: "Order",
+      relatedEntityId: order.id,
+      metadata: { paymentId: payment.id, source: params.source },
+      executedAt: now,
+    });
     if (order.source === "AGENT_GATEWAY" && order.authorizationId) {
       const decision = await tx.decisionRecord.findUnique({ where: { id: order.authorizationId } });
       if (decision && decision.merchantId === params.merchantId) {

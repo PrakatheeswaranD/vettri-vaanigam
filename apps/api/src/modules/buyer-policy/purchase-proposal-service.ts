@@ -47,6 +47,25 @@ export interface CreatePurchaseProposalInput {
    * Passed in rather than measured here so it covers the caller's own
    * parsing too — and so it stays honest about which work it counts. */
   decisionLatencyMs: number;
+  /**
+   * The workflow this purchase belongs to, when it grew out of one that
+   * already exists.
+   *
+   * ONE JOURNEY, ONE HASH CHAIN.
+   *
+   * This minted a fresh id unconditionally. A conversation therefore had
+   * one workflow for the search, comparison and recommendation, and the
+   * purchase it produced got a second, unrelated one — so the buyer's own
+   * activity showed a single journey as two disconnected halves, and no
+   * chain of custody joined "you recommended this" to "you charged me for
+   * it". The conversation passes its own workflow id here so the ledger
+   * carries the whole story, intent through capture, on one continuous
+   * hash-verifiable timeline.
+   *
+   * The REST route has no conversation and omits it, which still mints a
+   * new one — a direct purchase genuinely is its own workflow.
+   */
+  workflowId?: string;
 }
 
 export interface PurchaseProposalResult {
@@ -251,7 +270,7 @@ export async function createPurchaseProposal(
             lineDiscountMinor: discountMinor,
           },
         ],
-        workflowId: randomUUID(),
+        workflowId: input.workflowId ?? randomUUID(),
         settlementStatus: "PROPOSED",
         decisionLatencyMs: input.decisionLatencyMs,
       },

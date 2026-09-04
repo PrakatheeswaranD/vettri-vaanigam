@@ -153,6 +153,21 @@ export async function executeExternalAgentPurchase(
       lines: orderLines,
     });
     await setOrderFingerprint(tx, order.id, orderFingerprint, ORDER_FINGERPRINT_VERSION);
+    // The merchant growth path records ORDER_CREATED; this one did not,
+    // so an order placed by a buyer's agent existed in the database with
+    // nothing in the ledger saying it had been created.
+    await appendLedgerEvent(tx, {
+      workflowId: params.workflowId,
+      merchantId: params.merchantId,
+      actorType: "COMMERCE",
+      actionType: "ORDER_CREATED",
+      status: "EXECUTED",
+      conciseReason: `Order created: total ${params.amountMinor} ${params.currency} minor units. No payment has been started.`,
+      relatedEntityType: "Order",
+      relatedEntityId: orderId,
+      metadata: { decisionId: params.decisionId, lineCount: params.lines.length },
+      executedAt: new Date(),
+    });
 
     await tx.checkoutSession.create({
       data: {

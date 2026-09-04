@@ -48,6 +48,16 @@ const STAGE_LABEL: Record<BuyerActivityStage, string> = {
   ORDER: "Order",
 };
 
+/**
+ * Ledger statuses that mean the step did NOT succeed.
+ *
+ * PART 13 made failure events reachable here — a refused capture, a
+ * rejected state transition, an invalid client signature. Before that
+ * every event on this page was EXECUTED or VERIFIED, so nothing needed to
+ * tell them apart.
+ */
+const FAILED_STATUSES = new Set(["FAILED", "REJECTED", "DENIED", "CANCELLED"]);
+
 function useBuyerActivity() {
   return useQuery({
     queryKey: ["buyer", "activity"],
@@ -151,7 +161,16 @@ export default function CustomerActivityPage() {
                     <ol className="space-y-2 border-t border-border-hair pt-3">
                       {workflow.events.map((event) => (
                         <li key={event.id} className="flex gap-3">
-                          <span className="mt-1 flex h-1.5 w-1.5 shrink-0 rounded-full bg-brand-600" aria-hidden />
+                          {/* A refused capture, a rejected transition and a
+                              successful one used to render identically —
+                              same dot, same weight — because only EXECUTED
+                              events could reach this page. Failures can now,
+                              and a step that went wrong must not look like a
+                              step that went right. */}
+                          <span
+                            className={`mt-1 flex h-1.5 w-1.5 shrink-0 rounded-full ${FAILED_STATUSES.has(event.status) ? "bg-danger" : "bg-brand-600"}`}
+                            aria-hidden
+                          />
                           <div className="min-w-0 flex-1">
                             <p className="text-xs font-semibold text-ink">{STAGE_LABEL[event.stage]}</p>
                             {/* The reason written AT THE TIME of the action,

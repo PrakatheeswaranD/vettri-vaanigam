@@ -1,4 +1,4 @@
-# TRACK01 — every problem hit, Parts 0 through 12 and the closing gap pass
+# TRACK01 — every problem hit, Parts 0 through 13 and the closing gap pass
 
 A complete log, including the small ones and the ones I caused myself. Kept in three categories per part, because they need different responses:
 
@@ -718,6 +718,87 @@ The spec says "do not generate fake agent activity". **There was none to remove.
 
 ---
 
+# PART 13 — real Razorpay test-mode agentic commerce
+
+## What was NOT found
+
+Worth stating first, because it was most of the part. **The payment infrastructure was already right.** Integer minor units, one deterministic state machine, HMAC over raw bytes in an isolated Fastify scope, event-fingerprint idempotency, authorization re-checked at execution, a hash-chained ledger on every transition, and no AI import anywhere near money.
+
+**And there were no duplicate payment implementations to remove.** One webhook route, one Razorpay HMAC module, one `resolvePaymentEvent`, one `createPaymentOrder` call site, and two `PaymentGateway` implementations that are the real adapter and its deterministic mock. Counted deliberately rather than assumed.
+
+The one real duplication — two checkout builders, one per authorization type — was left alone on purpose. Merging two money paths on suspicion is the risk the spec warns about. P13-1 is a symptom of that split and was worth fixing on its own.
+
+## Product bugs
+
+### P13-1 · Agent Activity showed 3 of 9 real events
+A probe drove one conversational purchase through a signed webhook to capture. The ledger recorded nine events. The buyer's page showed three.
+
+The stage map listed `CHECKOUT_CREATED` — what the MERCHANT growth path writes. The buyer's path writes `AGENT_CHECKOUT_CREATED`. **One name apart, and the CHECKOUT stage never appeared for any buyer, ever.**
+
+`PROVIDER_ORDER_CREATED` — the actual Razorpay Test Mode order, the most concrete step in the chain — was invisible too, as were both webhook events, so a buyer could never see their payment had been *verified* rather than assumed.
+
+### P13-2 · An order becoming PAID left no ledger event
+`resolvePaymentEvent` set the order to PAID and appended nothing, so the ORDER stage had no event to map. The buyer path never wrote `ORDER_CREATED` either, though the merchant path did. Both now write, and `ORDER_CONFIRMED` is written only against a verified capture.
+
+### P13-3 · The ORDER stage would have lit up before payment
+Caught in a browser, after fixing P13-2. An Order row exists from the moment stock is reserved, so mapping `ORDER_CREATED` to ORDER lit the last step of the pipeline for a purchase that might never be paid — **the same overstatement as a checkout screen saying "order placed" because a row was inserted.**
+
+`ORDER_CREATED` moved under CHECKOUT. ORDER now means the buyer has an order.
+
+### P13-4 · One journey was several unrelated hash chains
+The ledger workflow id was the per-turn `traceId`. A buyer who searched in one turn and bought in another wrote three separate chains, so their activity showed one journey as three disconnected cards with nothing joining "I recommend this" to "you were charged for it".
+
+A per-request correlation id had been doing a workflow's job by accident. They are two different things and are now two different fields.
+
+### P13-5 · The activity feed silently became "spending only"
+Found by looking at the running app, not the code. The feed concatenated purchase workflows and conversation workflows and took the first twenty. Purchases came first, so a buyer with twenty or more proposals — the demo shopper has ninety-six — never saw a search-only workflow.
+
+The docblock on that exact function says omitting them "would make the feed look like it only records spending". **It did, for precisely the buyers who use the agent most.** Both sources are now merged on their own timestamps.
+
+### P13-6 · A failed step looked identical to a successful one
+Introduced by my own P13-1 fix: once failure events could reach the page, a refused capture rendered with the same blue dot as a completed one. Failure statuses now render in the danger colour.
+
+## Latent, not live
+
+### P13-7 · A load-bearing `!` on a nullable column
+`webhook-service.ts` did `payment.checkoutId!`, and 55 of 512 payments have a null `checkoutId`.
+
+**Checked rather than assumed in either direction:** all 55 are seeded DEMO history with no provider references, and the webhook resolves payments by provider + providerOrderId, so not one is reachable. A latent hazard, not a shipped bug — and worth reporting as exactly that rather than inflating it. Had one arrived, Prisma would have thrown inside the route, the request would have 500'd, and Razorpay would have retried something no retry could fix. Now recorded as UNRESOLVED.
+
+## My own mistakes
+
+### P13-8 · I wrote a test that grepped for the word "anthropic" and it matched a comment saying there is no Anthropic
+The AI-on-the-payment-path test searched each file's whole text for `/anthropic/i`. It failed on `payment-service.ts`, whose own docblock reads `grep -i anthropic on this file returns nothing`. **It matched the sentence asserting the absence.**
+
+A dependency is something a module IMPORTS. The check now parses import statements, because one that cannot tell code from prose about code proves nothing in either direction.
+
+### P13-9 · My suite promoted the shared demo shopper from NEW to VIP
+The Part 13 suite is the first to carry a buyer purchase all the way to CAPTURED, which counts toward customer standing. Six assertions in `customer-negotiation.test.ts` — a file about negotiation, not payments — started failing with `expected 'VIP' to be 'NEW'`.
+
+The other buyer suites clean up only rows still PROPOSED, which is right for them because they never complete a purchase. **Mine does, so mine has to clean up more.** A suite that permanently alters a shared fixture's identity is not a passing suite.
+
+### P13-10 · Two wrong field names and a wrong response shape, all in my own test
+`totalMinor` for `amountMinor`; `.items` for `.orders` and `.payments`. Three of the first run's four failures were mine, one was the product's. Worth recording because the ratio is the normal one and reading a failure as "the code is broken" before checking the test is how a real bug gets buried under three fake ones.
+
+### P13-11 · I reached for a Tailwind colour that does not exist
+Wrote `bg-danger-600` for the failure dot. This palette defines `danger` with `subtle`/`border`/`text` — there is no numeric scale. A nonexistent Tailwind class renders **no background at all**, so the failure dot would have been invisible rather than obviously wrong. Caught before running by checking the config; confirmed afterwards by reading the computed style off the live page (`rgb(220, 38, 38)`) rather than trusting the class name.
+
+## Environment friction
+
+### P13-12 · A heredoc died on a 400-line TypeScript file
+`cat > file <<'TEST'` failed with "unexpected EOF while looking for matching `'`" on a quoted heredoc, which should be literal. Not worth diagnosing: shell escaping on a file full of backticks, apostrophes and template literals is precisely where Bash stops being the cheaper tool. Same lesson as Parts 9 and 11, reached a third time.
+
+### P13-13 · Applying a migration needed a third method
+`$executeRawUnsafe` hit the PGlite wire-protocol quirk ("unexpected message from server"), and unlike the FK case this one really had not applied — verified by reading the column back rather than assuming, since this dev shim has previously reported failure for writes that succeeded. `prisma db execute --url` worked.
+
+Also worth recording: `.env` points `DATABASE_URL` at a hosted Supabase instance, and `TEST_DATABASE_URL` at the local shim. The new migration is applied to the local one only. Migrating the user's real database is theirs to run.
+
+## What this part did that no previous part did
+
+**It was verified in a browser.** Every part since 1 closed with "not verified in a browser". P13-3 and P13-5 were both found that way and would not have been found any other way: one was a stage lighting up too early, the other a card that never rendered. Both look entirely correct in the source.
+
+---
+
 # Patterns worth naming
 
 **1. Two things that must agree will eventually disagree.** P0-1 (two prefix lists), P3-1 (a string compared against an enum), P2-3 (a fixture shaped like a DTO). Every one was invisible to the typechecker. The fixes that stuck replaced agreement with a single source: one access table, one enum comparison, one contract import.
@@ -728,7 +809,7 @@ The spec says "do not generate fake agent activity". **There was none to remove.
 
 **4. Aggregation for display is the wrong unit for action.** P3-2 acted on one of eighty payments; P4-3 compared eighty payments' total against a per-payment ceiling; P4-7 spent a whole cycle inside one card. Three separate bugs, one mistake: the row a merchant should READ is not the item the system should ACT on.
 
-**5. Capability shipped, consumption forgotten.** P0-8 (admin endpoints, no UI), P0-9 (step-ups, no UI), P4-6 (eight detectors nothing acted on), P5-1 (a control group nobody compared), P5-2 (config nobody could write), P6-1 (relationships recorded, never published), P9-10 (a fully-tested backend whose own default UI had no rendering for any of it). Seven times the hard half was built and the last mile was not. It is the single most common defect in this codebase, by a distance — and P9-10 is the sharpest version yet: eleven passing integration tests, zero of them looking at the page a real buyer sees. P12-5 makes seven: eight of the ten activity stages were already writing real ledger events and the buyer's own activity page read none of them.
+**5. Capability shipped, consumption forgotten.** P0-8 (admin endpoints, no UI), P0-9 (step-ups, no UI), P4-6 (eight detectors nothing acted on), P5-1 (a control group nobody compared), P5-2 (config nobody could write), P6-1 (relationships recorded, never published), P9-10 (a fully-tested backend whose own default UI had no rendering for any of it). Seven times the hard half was built and the last mile was not. It is the single most common defect in this codebase, by a distance — and P9-10 is the sharpest version yet: eleven passing integration tests, zero of them looking at the page a real buyer sees. P12-5 makes seven: eight of the ten activity stages were already writing real ledger events and the buyer's own activity page read none of them. P13-1 makes eight, and the worst of them: the ledger recorded nine steps of a real payment and the buyer's own page read three, because the buyer path and the merchant path named the same event differently.
 
 **7. A deferred modelling debt does not sit still.** P0-11 was recorded as a naming problem and deferred as "not worth the migration". By the time it was opened it had produced PC-2 — a readiness score reporting zero on 35 of its 100 points — plus dead seed data (PC-3), a two-job function parameter (PC-4), and a test constructing an identity that both sold and shopped. None of those were visible when the debt was filed. **The cost of an ambiguous column is not the ambiguity; it is every reader who resolves it the wrong way afterwards, silently.**
 

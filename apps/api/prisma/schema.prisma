@@ -1216,6 +1216,24 @@ model BuyerConversation {
   /// Normalized `BuyerIntent` snapshot (validated + normalized shape,
   /// PART 03 §11, §25-§26) — never raw, unvalidated model output.
   currentIntent     Json?
+  /// The audit workflow this whole conversation writes into.
+  ///
+  /// PART 13: the ledger workflow id used to be the per-TURN `traceId`,
+  /// so a buyer who searched in one turn and bought in another produced
+  /// several unrelated hash chains. The pipeline the product promises —
+  /// INTENT → DISCOVERY → COMPARISON → RECOMMENDATION → OFFER CHECK →
+  /// POLICY → AUTHORIZATION → CHECKOUT → PAYMENT → ORDER — spans turns
+  /// by definition, so a per-turn workflow could never contain it, and
+  /// the buyer's own activity showed one journey as several disconnected
+  /// cards with nothing joining the recommendation to the charge.
+  ///
+  /// `traceId` still exists and is still per-turn: it is a REQUEST
+  /// correlation id for logs and the response, which is a different thing
+  /// from a workflow and was only ever doing this job by accident.
+  ///
+  /// Nullable so existing conversations keep working; a conversation
+  /// without one falls back to the turn's traceId, exactly as before.
+  workflowId        String?
   createdAt         DateTime                @default(now())
   updatedAt         DateTime                @updatedAt
 
@@ -1223,6 +1241,7 @@ model BuyerConversation {
   recommendations RecommendationRecord[]
 
   @@index([customerAccountId, updatedAt])
+  @@index([workflowId])
 }
 
 model BuyerMessage {

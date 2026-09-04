@@ -2,6 +2,8 @@
 
 Continues [Part 0](TRACK01_PART0_FIXES.md) → [Part 11](TRACK01_PART11_PRODUCT_DISCOVERY.md).
 
+> Followed by [Part 13](TRACK01_PART13_RAZORPAY_AGENTIC_COMMERCE.md), which drove the whole money path end to end and found that the buyer could see three of its nine steps.
+
 > Problems hit along the way: [TRACK01_PROBLEMS_LOG.md](TRACK01_PROBLEMS_LOG.md).
 
 The buyer sets the boundaries. The backend enforces them. The activity page shows what actually happened, read from the ledger the agent writes as it works.

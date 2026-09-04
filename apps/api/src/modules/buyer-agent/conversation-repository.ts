@@ -1,3 +1,4 @@
+import { randomUUID } from "node:crypto";
 import { Prisma, type BuyerConversationStatus, type BuyerMessageRole, type PrismaClient } from "@prisma/client";
 
 /**
@@ -8,7 +9,11 @@ import { Prisma, type BuyerConversationStatus, type BuyerMessageRole, type Prism
  * written. A conversation belongs to the person having it.
  */
 export function createConversation(prisma: PrismaClient, customerAccountId: string) {
-  return prisma.buyerConversation.create({ data: { customerAccountId } });
+  // PART 13 — the conversation gets its OWN workflow id, once, so every
+  // turn it goes on to have writes into one continuous hash chain rather
+  // than a fresh one per request. See the schema comment on
+  // `BuyerConversation.workflowId`.
+  return prisma.buyerConversation.create({ data: { customerAccountId, workflowId: randomUUID() } });
 }
 
 export function findConversation(prisma: PrismaClient, customerAccountId: string, conversationId: string) {

@@ -134,7 +134,21 @@ export async function processRazorpayWebhook(
   // anything the request claims (PART 10 §1: this route has no
   // authenticated merchant session at all).
   const merchantId = payment.merchantId;
-  const checkout = await findCheckoutById(prisma, merchantId, payment.checkoutId!);
+  // `Payment.checkoutId` is NULLABLE and this used to dereference it with
+  // a `!`. Every payment a provider can resolve to does have one today —
+  // the rows without are seeded DEMO history carrying no provider
+  // reference at all, so no webhook can reach them — but the assertion
+  // was load-bearing on an invariant the schema does not enforce. Had one
+  // ever arrived, Prisma would have thrown inside the route, the request
+  // would have 500'd, and Razorpay would have retried something no retry
+  // could fix. Recorded as UNRESOLVED instead: the 200 ends the retry
+  // loop and the row stays for a human to look at.
+  if (!payment.checkoutId) {
+    await updateProviderEventStatus(prisma, created.id, "UNRESOLVED");
+    logger.warn({ event: "webhook.unresolved_no_checkout", providerOrderId, paymentId: payment.id }, "Razorpay webhook resolved to a payment that has no checkout session");
+    return { accepted: true, reason: "PAYMENT_HAS_NO_CHECKOUT" };
+  }
+  const checkout = await findCheckoutById(prisma, merchantId, payment.checkoutId);
   if (!checkout) {
     await updateProviderEventStatus(prisma, created.id, "UNRESOLVED");
     return { accepted: true, reason: "CHECKOUT_NOT_FOUND" };
