@@ -2,6 +2,8 @@
 
 Continues [Part 0](TRACK01_PART0_FIXES.md) → [Part 13](TRACK01_PART13_RAZORPAY_AGENTIC_COMMERCE.md).
 
+> Followed by [Part 15](TRACK01_PART15_PRIMARY_DEMO_VERIFICATION.md), which drove both primary demos and a deliberate failure, and found a buyer being quoted a discount the merchant had forbidden.
+
 > Problems hit along the way: [TRACK01_PROBLEMS_LOG.md](TRACK01_PROBLEMS_LOG.md).
 
 Both journeys driven end to end in a browser as a person, not as a developer reading source. Six real defects found and fixed, each rerun afterwards.

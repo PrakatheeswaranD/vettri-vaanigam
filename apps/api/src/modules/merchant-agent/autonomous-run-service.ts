@@ -56,6 +56,7 @@
 import { randomUUID } from "node:crypto";
 import type { PrismaClient } from "@prisma/client";
 import type { AgentRunResultDTO, AgentRunStepDTO } from "@razorgrowth/contracts";
+import type { RevenueOpportunityType } from "@razorgrowth/domain";
 import { logger } from "../../observability/logger.js";
 import { appendLedgerEvent } from "../audit/ledger.js";
 import { getRevenueOpportunityReport } from "../growth/revenue-evidence-service.js";
@@ -172,7 +173,7 @@ async function runOne(
   }
 
   try {
-    const result = await tool.run({ prisma, merchantId, workflowId, unattended }, unit.subjectId);
+    const result = await tool.run({ prisma, merchantId, workflowId, unattended, opportunityType: unit.type as RevenueOpportunityType }, unit.subjectId);
     return step({
       ...base,
       outcome: result.outcome,

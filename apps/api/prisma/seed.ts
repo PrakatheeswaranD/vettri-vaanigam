@@ -160,6 +160,14 @@ const GENERATED_PRODUCTS: ProductSeed[] = PRODUCT_RANGES.flatMap((range) =>
   }),
 );
 
+/**
+ * Products whose promotion eligibility is a deliberate demo fact rather
+ * than an output of the index rule further down. Every offer fixture in
+ * this repo attaches its discount to Pulse Runner, so it has to be a
+ * product this merchant actually permits promoting.
+ */
+const PROMOTABLE_HERO_PRODUCTS = new Set(["Meridian Pulse Runner"]);
+
 const PRODUCTS: ProductSeed[] = [...CORE_PRODUCTS, ...GENERATED_PRODUCTS];
 
 if (PRODUCTS.length !== 200) {
@@ -502,8 +510,24 @@ async function main() {
     // Roughly a third ELIGIBLE, one in seven INELIGIBLE, the rest left at
     // the UNKNOWN default — a merchant that hasn't decided is realistic,
     // not an oversight (PART 02 §57, §9).
-    const promotionEligibility =
-      productIndex % 7 === 0 ? "INELIGIBLE" : productIndex % 3 === 0 ? "ELIGIBLE" : undefined;
+    //
+    // PART 15 — except that an index rule must not decide the eligibility
+    // of the product the whole demo hangs on. Pulse Runner is the buyer's
+    // worked example ("lightweight running shoes under ₹5000"), the
+    // relationship graph's hub, and the product every offer fixture
+    // attaches a discount to — and `0 % 7 === 0` marked it INELIGIBLE.
+    //
+    // Nothing enforced that, so the contradiction was invisible: buyers
+    // were quoted merchant-authorized discounts on a product its merchant
+    // had excluded from promotion. Now that `findBuyerVisibleOffers`
+    // honours the flag, the seed has to mean what it says.
+    const promotionEligibility = PROMOTABLE_HERO_PRODUCTS.has(p.name)
+      ? "ELIGIBLE"
+      : productIndex % 7 === 0
+        ? "INELIGIBLE"
+        : productIndex % 3 === 0
+          ? "ELIGIBLE"
+          : undefined;
 
     const productId = randomUUID();
     productRows.push({

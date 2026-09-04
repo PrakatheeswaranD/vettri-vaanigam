@@ -37,10 +37,17 @@ import { logger } from "../../observability/logger.js";
 /** The synthetic agent id every customer-initiated proposal is written under. */
 export const CUSTOMER_AGENT_ID = "customer-buyer-agent";
 
-/** Settlement states that mean the customer actually paid. */
-const SETTLED_STATUSES = ["SETTLED", "CAPTURED", "PAYMENT_CAPTURED"] as const;
-/** States that mean money came back, or was contested. */
-const DISPUTED_STATUSES = ["REFUNDED", "DISPUTED", "CHARGEBACK"] as const;
+/** Settlement states that mean the customer actually paid.
+ *
+ * Exported so a test resetting a shopper's history cannot drift from the
+ * list this service actually counts: `customer-negotiation.test.ts` reset
+ * only SETTLED and REFUNDED, missed CAPTURED — the status a REAL purchase
+ * produces — and so any genuine run of the product's own demo left the
+ * shared demo shopper promoted and broke three of its assertions. */
+export const SETTLED_STATUSES = ["SETTLED", "CAPTURED", "PAYMENT_CAPTURED"] as const;
+/** States that mean money came back, or was contested. Exported for the
+ * same reason as `SETTLED_STATUSES`. */
+export const DISPUTED_STATUSES = ["REFUNDED", "DISPUTED", "CHARGEBACK"] as const;
 
 /**
  * A customer's record with this merchant, derived from proposals already

@@ -11,7 +11,19 @@ import { describe, it, expect, beforeAll, afterAll, beforeEach } from "vitest";
 import type { FastifyInstance } from "fastify";
 import { buildAuthedTestApp, buildCustomerTestApp, getTestBuyerContextId, getTestMerchantId } from "./test-helpers/test-app.js";
 import { prisma } from "./db/client.js";
-import { CUSTOMER_AGENT_ID } from "./modules/buyer-policy/negotiation-service.js";
+import { CUSTOMER_AGENT_ID, DISPUTED_STATUSES, SETTLED_STATUSES } from "./modules/buyer-policy/negotiation-service.js";
+
+/**
+ * Every settlement status that moves a shopper’s standing, taken from the
+ * service rather than restated here.
+ *
+ * PART 15 — this reset listed only SETTLED and REFUNDED. A REAL purchase
+ * settles as CAPTURED, which the service counts and this did not clear, so
+ * running the product’s own primary demo left the shared demo shopper
+ * promoted and broke three assertions in this file. A fixture reset that
+ * knows less than the code it is resetting is not a reset.
+ */
+const COUNTS_TOWARD_STANDING = [...SETTLED_STATUSES, ...DISPUTED_STATUSES];
 
 /** The shopper's session — everything under `/buyer/*`. */
 let app: FastifyInstance;
@@ -62,7 +74,7 @@ function standing() {
  */
 async function giveCustomerSettledOrders(count: number, disputed = 0) {
   await prisma.decisionRecord.deleteMany({
-    where: { externalAgentId: CUSTOMER_AGENT_ID, protocolActorRef: buyerContextId, settlementStatus: { in: ["SETTLED", "REFUNDED"] } },
+    where: { externalAgentId: CUSTOMER_AGENT_ID, protocolActorRef: buyerContextId, settlementStatus: { in: [...COUNTS_TOWARD_STANDING] } },
   });
   for (let i = 0; i < count; i += 1) {
     await prisma.decisionRecord.create({
@@ -172,7 +184,7 @@ beforeEach(async () => {
 
 afterAll(async () => {
   await prisma.decisionRecord.deleteMany({
-    where: { externalAgentId: CUSTOMER_AGENT_ID, protocolActorRef: buyerContextId, settlementStatus: { in: ["SETTLED", "REFUNDED"] } },
+    where: { externalAgentId: CUSTOMER_AGENT_ID, protocolActorRef: buyerContextId, settlementStatus: { in: [...COUNTS_TOWARD_STANDING] } },
   });
   await app.close();
   await merchantApp.close();

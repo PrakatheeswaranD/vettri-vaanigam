@@ -1,4 +1,4 @@
-# TRACK01 — every problem hit, Parts 0 through 14 and the closing gap pass
+# TRACK01 — every problem hit, Parts 0 through 15 and the closing gap pass
 
 A complete log, including the small ones and the ones I caused myself. Kept in three categories per part, because they need different responses:
 
@@ -867,6 +867,70 @@ The escape button re-enabled the button but left Razorpay's backdrop over the pa
 **No fake agent activity.** The Merchant Agent's cycle wrote 40 real ledger rows and 18 real proposals; the Buyer Agent's purchase produced a real Razorpay order id and an eleven-event chain. Both verified by reading the database before and after.
 
 **No clickable-but-dead controls.** Every button, tab, form and CTA on both journeys did something real, with a network call and a persisted consequence behind it.
+
+---
+
+# PART 15 — primary demo verification
+
+## The pattern of this part
+
+Every defect here was found by **driving the two demos the product is judged on**, and three of the four were about the system **saying something it had not done**. None is a crash. All four change what a merchant or a buyer believes.
+
+## Product bugs
+
+### P15-1 · The agent reported closing a gap it had not closed
+The `ELIGIBLE_OFFER` opportunity says "the permission exists; the offer does not". The agent answered it with a **cross-sell carrying no discount** and reported "Authorized and ready."
+
+`proposeGrowthActionTool` handles three opportunity types and returned **one fixed sentence for all of them**, with no way to know which gap it was answering. A merchant reading the card's own title concludes the offer gap is closed.
+
+The subtle part: **carrying no offer is often correct.** The demo provider deliberately never invents a discount without real signal, and a conservative agent declining to fabricate a reason to discount is the behaviour we want. Reporting that as though it had created the offer is not. The tool now receives the opportunity type and names what it actually did.
+
+### P15-2 · A buyer was quoted a discount the merchant had forbidden
+`findBuyerVisibleOffers` checked status and product and **never checked whether the merchant still permits promoting that product**.
+
+Not hypothetical on the seeded data: **all 151 committed offers sat on one product marked `INELIGIBLE`**, and **zero** existed on any of the 64 `ELIGIBLE` ones. A buyer was quoted ₹224.95 off ₹4,499 on a product its own merchant had excluded from promotion.
+
+The growth engine honours the flag when DETECTING. Nothing honoured it at the point the discount was **shown and charged** — the only point where it costs anyone money.
+
+Only an explicit INELIGIBLE suppresses an offer now. UNKNOWN is the absence of a statement, not a refusal, and revoking a governed offer on silence would be its own invention.
+
+### P15-3 · A promised filter that did not exist, and could not
+The same docblock promised "Not expired — an authorization that lapsed is not an offer." **No such check existed**, and every authorization behind those offers had already lapsed.
+
+It cannot be written as promised: `GrowthActionProposal` **has no validity window**. The only time bound in reach bounds executing ONE checkout, not how long a merchant's price commitment stands, and conflating them would invent a product rule about money.
+
+**So the promise was withdrawn rather than faked.** Inventing an expiry semantic for a discount is exactly the guess that file exists to refuse. What is enforced is now stated, and the missing field is named.
+
+### P15-4 · The seed contradicted itself
+Why did every offer sit on an ineligible product? The seed assigns eligibility by index — `productIndex % 7 === 0 → INELIGIBLE` — and the demo's hero product is index 0. It is also the buyer's worked example, the relationship graph's hub, and the product every offer fixture discounts.
+
+Nothing enforced the flag, so the contradiction was invisible for fifteen parts. **Enforcement is what made the data's own inconsistency visible** — which is the argument for enforcing things.
+
+### P15-5 · Running the demo broke the test suite
+Driving the demos left the shared demo shopper with settled purchases and three negotiation assertions failed.
+
+Not residue to clean up and forget: the test's reset cleared SETTLED and REFUNDED and **missed CAPTURED** — the status a REAL purchase produces and the service counts. So any genuine run of the product's own primary demo broke its own suite. Both lists are now exported from the service and the reset derives from them. **A fixture reset that knows less than the code it is resetting is not a reset.**
+
+## My own mistakes
+
+### P15-6 · I called a figure wrong because I guessed the enum values
+I queried captured-on-agent-orders with a source list I invented (`AGENT_CROSS_SELL`, `AGENT_OFFER`, …) and got ₹3,61,233 against a UI showing ₹5,58,486. I was one keystroke from reporting a ₹1,97,253 discrepancy in a headline revenue figure.
+
+The real constant is `AI_CROSS_SELL`, `AI_UPSELL`, `AI_BUNDLE`, `AI_BOUNDED_OFFER`, `AI_RECOVERY` — and with it the figure matched to the rupee. **A verification query built from a guessed schema verifies nothing**, and the failure mode is not a wrong answer, it is a confident accusation.
+
+### P15-7 · I nearly narrowed a policy on my own judgment
+Having found P15-1, my first instinct was to restrict `ELIGIBLE_OFFER` to offer-bearing action types so the agent would be forced to close the gap it detected. Checking the provider first showed it **deliberately** never proposes a discount without real signal — so the restriction would have converted correct conservatism into a refusal, and made the primary demo weaker in the name of fixing it.
+
+The bug was the reporting, not the policy. **Reading the code I was about to override is what separated the two.**
+
+### P15-8 · Wrong Prisma field names, three times in one session
+`product.promotionEligible` (it is `promotionEligibility`), `p.approval.count` by merchant (Approval keys on `proposalId`), `agentCatalogEntry` (no such model). Each cost a round trip. The schema is right there; guessing at it is slower than reading it, every time.
+
+## What was NOT found
+
+**No fabricated revenue.** Every figure reconciled once queried correctly: ₹5,58,486.00 captured across 114 agent orders, ₹1,17,576.00 recovered across 24, and the ₹4,275.00 purchase traced end to end from a ₹4,500.00 list price and a 5% merchant-authorized offer.
+
+**No unsafe failure handling.** The deliberate failure was diagnosed (`PROVIDER_ERROR`), left safe (`debit=UNKNOWN`, retry blocked, inventory released), recovered through policy into a **new** checkout rather than a silent re-charge, and verified — 28 events on one workflow. After recovery succeeded, attempt #1 **still** reads `debit=UNKNOWN`: the system never retroactively claims the first attempt did not charge.
 
 ---
 

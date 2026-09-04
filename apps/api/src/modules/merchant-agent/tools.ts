@@ -130,6 +130,15 @@ export interface ToolContext {
    * for it.
    */
   unattended?: boolean;
+  /**
+   * The opportunity type this invocation is answering, when there is one.
+   *
+   * A tool that `handles` several opportunity types was given no way to
+   * tell them apart, so it could not report which detected gap it had
+   * actually addressed — see `proposeGrowthActionTool`. Absent for a
+   * merchant invoking a tool by hand, which is answering no card.
+   */
+  opportunityType?: RevenueOpportunityType;
 }
 
 /**
@@ -481,6 +490,34 @@ const proposeGrowthActionTool: AgentToolDefinition = {
     );
     if (!gated.ok) return gated.result;
 
+    /**
+     * SAY WHICH ACTION WAS ACTUALLY PROPOSED.
+     *
+     * This tool handles three different opportunity types and returned
+     * one fixed sentence for all of them. So an ELIGIBLE_OFFER
+     * opportunity — "these products are promotion-eligible and no bounded
+     * offer is attached; the permission exists, the offer does not" —
+     * could be answered with a CROSS_SELL carrying no offer, and reported
+     * as "Authorized and ready." The merchant reads the card's own title
+     * and concludes the offer gap is closed. It is not.
+     *
+     * That the proposal carries no offer is often CORRECT: the demo
+     * provider deliberately never invents a discount without real signal.
+     * A conservative agent declining to fabricate a reason to discount is
+     * the behaviour we want. Reporting that as though it had created the
+     * offer is not.
+     *
+     * So the detail now names the action type, and says plainly when the
+     * detected gap is still open.
+     */
+    const proposal = await ctx.prisma.growthActionProposal.findFirst({
+      where: { id: gated.proposalId, merchantId: ctx.merchantId },
+      select: { actionType: true, offerKind: true },
+    });
+    const actionLabel = (proposal?.actionType ?? "growth action").toLowerCase().replaceAll("_", " ");
+    const carriesOffer = Boolean(proposal?.offerKind);
+    const offerGapStillOpen = ctx.opportunityType === "ELIGIBLE_OFFER" && !carriesOffer;
+
     // A governed growth proposal cannot execute without a live basket to
     // attach to. It is authorized and then waits.
     //
@@ -492,7 +529,11 @@ const proposeGrowthActionTool: AgentToolDefinition = {
     return {
       outcome: "EXECUTED",
       detail:
-        "Authorized and ready. It applies automatically the next time a buyer's basket matches; nothing executes until one does.",
+        `Authorized a ${actionLabel}${carriesOffer ? " carrying a bounded offer" : " with no discount attached"}. ` +
+        "It applies automatically the next time a buyer's basket matches; nothing executes until one does." +
+        (offerGapStillOpen
+          ? " This does NOT close the missing-offer gap that was detected: no bounded offer was proposed, because the agent will not invent a discount without a reason in your own data."
+          : ""),
       proposalId: gated.proposalId,
       policyOutcome: gated.policyOutcome,
       authorizationId: gated.authorizationId,

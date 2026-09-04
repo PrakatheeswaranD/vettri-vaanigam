@@ -250,3 +250,72 @@ describe("the conversation carries the buyer to a real payment order", () => {
     expect(paymentCount).toBeLessThanOrEqual(1);
   });
 });
+
+/**
+ * PART 15 — the merchant's "no" outlives their agent's "yes".
+ *
+ * Found by driving the primary buyer demo. `findBuyerVisibleOffers`
+ * checked status and product, and never checked whether the merchant
+ * still permits promoting that product. On the seeded data every single
+ * committed offer sat on Meridian Pulse Runner, which was marked
+ * INELIGIBLE — so the buyer was quoted ₹224.95 off ₹4,499 on a product
+ * its own merchant had excluded from promotion.
+ *
+ * The growth engine honours the flag when DETECTING opportunities.
+ * Nothing honoured it at the point the discount was shown and charged.
+ */
+describe("an offer never survives the merchant withdrawing promotion", () => {
+  it("stops quoting a discount once the product is marked INELIGIBLE", async () => {
+    const fixture = await productWithAuthorizedOffer();
+    expect(fixture, "no product carries an authorized offer — this test would prove nothing").not.toBeNull();
+    const { productId, variantId } = fixture!;
+
+    const priced = await app.inject({
+      method: "POST",
+      url: "/api/v1/buyer/purchase-proposals",
+      payload: { variantId, quantity: 1 },
+    });
+    expect(priced.statusCode).toBe(200);
+    const discounted = priced.json().amountMinor as number;
+    createdProposalIds.push(priced.json().id as string);
+
+    const variant = await prisma.productVariant.findUniqueOrThrow({ where: { id: variantId }, select: { priceMinor: true } });
+    expect(discounted, "the fixture must actually be discounted, or this proves nothing").toBeLessThan(variant.priceMinor);
+
+    const before = await prisma.product.findUniqueOrThrow({ where: { id: productId }, select: { promotionEligibility: true } });
+    await prisma.product.update({ where: { id: productId }, data: { promotionEligibility: "INELIGIBLE" } });
+    try {
+      const after = await app.inject({
+        method: "POST",
+        url: "/api/v1/buyer/purchase-proposals",
+        payload: { variantId, quantity: 1 },
+      });
+      expect(after.statusCode).toBe(200);
+      createdProposalIds.push(after.json().id as string);
+      // List price, exactly. The authorized offer still exists; the
+      // merchant's permission to promote it does not.
+      expect(after.json().amountMinor).toBe(variant.priceMinor);
+    } finally {
+      await prisma.product.update({ where: { id: productId }, data: { promotionEligibility: before.promotionEligibility } });
+    }
+  });
+
+  it("still quotes the offer while the product remains promotable", async () => {
+    // The guard must refuse only an explicit INELIGIBLE. UNKNOWN is the
+    // absence of a statement, not a refusal, and revoking a governed offer
+    // on silence would be its own invention.
+    const fixture = await productWithAuthorizedOffer();
+    if (!fixture) return;
+    const { productId, variantId } = fixture;
+    const before = await prisma.product.findUniqueOrThrow({ where: { id: productId }, select: { promotionEligibility: true } });
+    await prisma.product.update({ where: { id: productId }, data: { promotionEligibility: "UNKNOWN" } });
+    try {
+      const res = await app.inject({ method: "POST", url: "/api/v1/buyer/purchase-proposals", payload: { variantId, quantity: 1 } });
+      createdProposalIds.push(res.json().id as string);
+      const variant = await prisma.productVariant.findUniqueOrThrow({ where: { id: variantId }, select: { priceMinor: true } });
+      expect(res.json().amountMinor).toBeLessThan(variant.priceMinor);
+    } finally {
+      await prisma.product.update({ where: { id: productId }, data: { promotionEligibility: before.promotionEligibility } });
+    }
+  });
+});
