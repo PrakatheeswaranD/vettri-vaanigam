@@ -153,9 +153,13 @@ function CustomerHistoryPage({ lens, embedded = false }: { lens: Lens; embedded?
     queryFn: () => apiGet<PaymentDTO>(`/buyer/purchase-proposals/${selected}/payment`),
     enabled: Boolean(selected),
   });
+  /** Set while Razorpay's overlay is open, so the buyer can close one that
+   * never became usable. Cleared the moment the checkout settles. */
+  const [cancelCheckout, setCancelCheckout] = useState<(() => void) | null>(null);
   const checkout = useMutation({
-    mutationFn: () => completeBuyerCheckout(selected!),
+    mutationFn: () => completeBuyerCheckout(selected!, (cancel) => setCancelCheckout(() => cancel)),
     onSuccess: () => { void evidence.refetch(); void history.refetch(); },
+    onSettled: () => setCancelCheckout(null),
   });
 
   const all = history.data?.items ?? [];
@@ -256,6 +260,7 @@ function CustomerHistoryPage({ lens, embedded = false }: { lens: Lens; embedded?
               onToggle={() => setSelected(selected === purchase.id ? null : purchase.id)}
               evidence={selected === purchase.id ? evidence : null}
               checkout={selected === purchase.id ? checkout : null}
+              cancelCheckout={selected === purchase.id ? cancelCheckout : null}
             />
           ))}
         </ul>
@@ -271,6 +276,7 @@ function PurchaseRow({
   onToggle,
   evidence,
   checkout,
+  cancelCheckout,
 }: {
   purchase: Purchase;
   lens: Lens;
@@ -278,6 +284,8 @@ function PurchaseRow({
   onToggle: () => void;
   evidence: ReturnType<typeof useQuery<PaymentDTO>> | null;
   checkout: ReturnType<typeof useMutation<PaymentDTO | null, Error, void>> | null;
+  /** Present only while Razorpay's overlay is open — see the button below. */
+  cancelCheckout: (() => void) | null;
 }) {
   const declined = purchase.outcome === "DECLINE";
   const status = STATUS_COPY[purchase.settlementStatus ?? "PROPOSED"];
@@ -395,6 +403,25 @@ function PurchaseRow({
                           >
                             {checkout.isPending ? "Opening checkout…" : "Complete Razorpay Test checkout"}
                           </button>
+                          {/* A WAY OUT OF A CHECKOUT THAT NEVER OPENED.
+                              Razorpay's overlay can fail to become usable —
+                              an ad blocker, a CSP, their bot protection
+                              answering 403 — and it then covers the page with
+                              no close control and fires neither callback. The
+                              button above stays disabled and the only escape
+                              is a reload. This is deliberately manual: a timer
+                              long enough to be safe is useless, and a short
+                              one would interrupt somebody mid-payment. It
+                              asserts nothing about the payment. */}
+                          {checkout.isPending && cancelCheckout ? (
+                            <button
+                              type="button"
+                              onClick={() => cancelCheckout()}
+                              className="ml-2 rounded-md border border-border px-3 py-2 text-sm font-medium text-ink transition hover:bg-surface-subtle"
+                            >
+                              Close the payment window
+                            </button>
+                          ) : null}
                           {checkout.isError ? (
                             <p role="alert" className="mt-2 text-sm text-danger-text">{checkout.error.message}</p>
                           ) : null}

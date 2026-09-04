@@ -198,6 +198,9 @@ export default function OverviewPage() {
           const { observed, totals, opportunities, growthScore, aiBuyerScore } = engine.data;
           const currency = observed.currency;
           const top = opportunities.slice(0, TOP_OPPORTUNITIES);
+          // Exactly the cards `totals.totalAtRiskMinor` was summed from —
+          // see the note on the "Revenue at risk" tile below.
+          const atRiskOpportunityCount = opportunities.filter((o) => o.expectedEffect.atRiskValue !== null).length;
 
           return (
             <>
@@ -218,6 +221,17 @@ export default function OverviewPage() {
                     classification="OBSERVED"
                     note={`Across ${observed.paidOrderCount} paid order${observed.paidOrderCount === 1 ? "" : "s"}, provider-confirmed.`}
                   />
+                  {/* THE COUNT AND THE AMOUNT MUST COME FROM THE SAME SET.
+                      This paired `totals.totalAtRiskMinor` — summed from the
+                      opportunity cards below — with `observed.failedPayment
+                      Count`, which counts failed payments on a different
+                      endpoint over a different population. The two disagreed
+                      by ₹11,783 against real seeded data while the caption
+                      read as though the count explained the amount, on a tile
+                      headed "countable right now in your own orders and
+                      payments". Counting the cards the amount was actually
+                      summed from is the only version a merchant can
+                      reconcile. */}
                   <ValueTile
                     icon={<ShieldAlert size={16} />}
                     label="Revenue at risk"
@@ -226,7 +240,7 @@ export default function OverviewPage() {
                     classification="OBSERVED"
                     note={
                       totals.totalAtRiskMinor > 0
-                        ? `${observed.failedPaymentCount} failed payment${observed.failedPaymentCount === 1 ? "" : "s"} and stalled checkouts that exist right now.`
+                        ? `Across ${atRiskOpportunityCount} uncaptured ${atRiskOpportunityCount === 1 ? "opportunity" : "opportunities"} — failed payments and stalled checkouts that exist right now.`
                         : "No failed payment or stalled checkout is currently uncaptured."
                     }
                   />

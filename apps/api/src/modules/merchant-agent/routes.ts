@@ -181,7 +181,7 @@ export function registerMerchantAgentRoutes(app: FastifyInstance, prefix: string
     try {
       outcome = await tool.run({ prisma, merchantId, workflowId }, subjectId);
     } catch (error) {
-      const classified = classifyToolError(error);
+      const classified = classifyToolError(error, { tool: tool.meta.name, merchantId, workflowId, subject: subjectId });
       outcome = { outcome: classified.outcome, detail: classified.detail };
     }
 

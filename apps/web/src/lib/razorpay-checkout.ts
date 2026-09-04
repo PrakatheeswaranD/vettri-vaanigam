@@ -23,6 +23,12 @@ export interface RazorpayCheckoutOptions {
 
 interface RazorpayCheckoutInstance {
   open(): void;
+  /** Tears down Razorpay's own overlay. Needed because their checkout can
+   * fail to render — an ad blocker, a CSP, or their bot protection
+   * returning 403 — leaving a full-screen backdrop with no close control
+   * and no `ondismiss`. Closing it is a UI teardown only: it abandons the
+   * hosted session and never asserts anything about payment state. */
+  close(): void;
 }
 
 declare global {

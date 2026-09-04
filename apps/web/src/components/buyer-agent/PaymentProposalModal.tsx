@@ -29,6 +29,8 @@ export function PaymentProposalModal({ recommendation, buyerBudgetMinor, onClose
   const [busy, setBusy] = useState(false);
   const [attempted, setAttempted] = useState(false);
   const [error, setError] = useState<string | null>(null);
+  /** Set while Razorpay's overlay is open, so a checkout that never became usable can still be closed. */
+  const [cancelCheckout, setCancelCheckout] = useState<(() => void) | null>(null);
 
   async function perform(action: () => Promise<void>) {
     setBusy(true);
@@ -79,7 +81,12 @@ export function PaymentProposalModal({ recommendation, buyerBudgetMinor, onClose
       {attempted && <div className="mt-5 space-y-3 rounded-xl border border-border p-4">
         <h3 className="font-semibold">{payment?.state === "CAPTURED" ? "Payment captured" : "Payment not confirmed as captured"}</h3>
         <p className="text-sm">State: {payment?.state ?? "Awaiting authoritative evidence"}</p>
-        {payment?.provider === "RAZORPAY" && payment.state === "CREATED" ? <button disabled={busy} className="rounded-lg bg-brand-600 px-4 py-2 text-white disabled:opacity-50" onClick={() => void perform(async () => { const verified = await completeBuyerCheckout(proposal!.id); if (verified) setPayment(verified); })}>Complete Razorpay Test checkout</button> : null}
+        {payment?.provider === "RAZORPAY" && payment.state === "CREATED" ? <button disabled={busy} className="rounded-lg bg-brand-600 px-4 py-2 text-white disabled:opacity-50" onClick={() => void perform(async () => { const verified = await completeBuyerCheckout(proposal!.id, (cancel) => setCancelCheckout(() => cancel)); setCancelCheckout(null); if (verified) setPayment(verified); })}>Complete Razorpay Test checkout</button> : null}
+        {/* Razorpay's overlay can fail to become usable and then fires
+            neither callback — see `completeBuyerCheckout`. Without this the
+            buyer is left under a backdrop with a disabled button and no way
+            out but a reload. It asserts nothing about the payment. */}
+        {busy && cancelCheckout ? <button className="ml-2 rounded-lg border border-border px-3 py-2 text-sm" onClick={() => { cancelCheckout(); setCancelCheckout(null); }}>Close the payment window</button> : null}
         {payment?.provider === "MOCK" ? <p className="text-sm text-ink-muted">Mock gateway order only. No real Razorpay payment has occurred.</p> : null}
         {payment && <>
           <p className="break-all text-xs">Order: {payment.orderId}</p>

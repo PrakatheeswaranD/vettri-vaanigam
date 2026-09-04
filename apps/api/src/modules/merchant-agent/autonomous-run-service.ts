@@ -183,7 +183,7 @@ async function runOne(
       stages: (result.stages ?? ["DETECTED"]) as AgentRunStepDTO["stages"],
     });
   } catch (error) {
-    const { outcome, detail } = classifyToolError(error);
+    const { outcome, detail } = classifyToolError(error, { tool: unit.toolName, merchantId, workflowId, subject: unit.subjectId });
     return step({ ...base, outcome, detail, proposalId: null, policyOutcome: null, authorizationId: null, stages: ["DETECTED"] });
   }
 }

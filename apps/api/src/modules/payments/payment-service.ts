@@ -388,6 +388,34 @@ export async function reconcilePayment(prisma: PrismaClient, merchantId: string,
 
   const payment = await findPaymentById(prisma, merchantId, paymentId);
   if (!payment) throw AppError.notFound(`Payment not found: ${paymentId}`);
+  /**
+   * NEVER ASK ONE PROVIDER ABOUT ANOTHER PROVIDER'S TRANSACTION.
+   *
+   * `Payment.provider` records who actually created the payment, and this
+   * never compared it to the gateway now configured. On a server holding
+   * Razorpay credentials, the Merchant Agent's reconcile tool dutifully
+   * asked Razorpay about `mock_order_…` identifiers — a call that cannot
+   * succeed, made once per payment, every cycle. The merchant saw "an
+   * unexpected error stopped this step" against the agent's own headline
+   * objective, forever.
+   *
+   * The mismatch is not only a dev-data artifact: any deployment that
+   * changes provider, or holds rows from a previous one, has payments the
+   * current gateway never made. An answer from the wrong provider is not
+   * a worse answer, it is a meaningless one — and reconciliation exists
+   * specifically to decide financial truth. Refuse and say so.
+   *
+   * CONFLICT is deliberate: `REFUSAL_CODES` classifies it as a guardrail
+   * declining, not an outage, so a correctly-refused step is not counted
+   * among real failures.
+   */
+  const gatewayProvider = gateway.provider;
+  if (payment.provider !== gatewayProvider) {
+    throw AppError.conflict(
+      `This payment was created through ${payment.provider}, but the server is configured for ${gatewayProvider}. ` +
+        `Reconciling would ask one provider about another's transaction, which cannot return a truthful answer.`,
+    );
+  }
   if (!payment.providerPaymentId && !payment.providerOrderId) {
     throw AppError.conflict("No provider reference exists yet for this payment; nothing to reconcile.");
   }

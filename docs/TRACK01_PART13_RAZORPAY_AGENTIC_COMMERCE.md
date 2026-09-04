@@ -2,6 +2,8 @@
 
 Continues [Part 0](TRACK01_PART0_FIXES.md) → [Part 12](TRACK01_PART12_BUYER_AUTONOMY.md).
 
+> Followed by [Part 14](TRACK01_PART14_REAL_USER_VERIFICATION.md), which drove both journeys in a browser as a person and found six defects no test was ever going to catch.
+
 > Problems hit along the way: [TRACK01_PROBLEMS_LOG.md](TRACK01_PROBLEMS_LOG.md).
 
 An audit, not a rebuild. The payment infrastructure was already right; the half nobody had ever driven end to end was a **buyer's** payment reaching capture, and what the buyer and the merchant see afterwards.

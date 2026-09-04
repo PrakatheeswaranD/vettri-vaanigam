@@ -78,11 +78,40 @@ export const REFUSAL_CODES = new Set([
   "PAYMENT_NOT_CONFIGURED",
 ]);
 
-export function classifyToolError(error: unknown): { outcome: "REFUSED" | "FAILED"; detail: string } {
+export function classifyToolError(error: unknown, context?: { tool?: string; merchantId?: string; workflowId?: string; subject?: string }): { outcome: "REFUSED" | "FAILED"; detail: string } {
   if (error instanceof AppError) {
     return { outcome: REFUSAL_CODES.has(error.code) ? "REFUSED" : "FAILED", detail: error.message };
   }
-  return { outcome: "FAILED", detail: "An unexpected error stopped this step." };
+  /**
+   * AN UNDIAGNOSABLE FAILURE IS WORSE THAN A LOUD ONE.
+   *
+   * This returned the sentence below and dropped the error on the floor.
+   * The merchant read "an unexpected error stopped this step" against the
+   * agent's own headline objective and had nothing to act on; so did
+   * whoever they asked, because nothing reached the logs either. A real
+   * provider outage and a typo in an id were indistinguishable, from
+   * every angle, forever.
+   *
+   * The merchant still gets a short, honest sentence — internal error
+   * text is not something to paste onto their screen — but the actual
+   * error now reaches the operator who can do something about it.
+   */
+  logger.error(
+    {
+      event: "merchant_agent.tool_unexpected_error",
+      tool: context?.tool,
+      merchantId: context?.merchantId,
+      workflowId: context?.workflowId,
+      subject: context?.subject,
+      err: error instanceof Error ? { name: error.name, message: error.message, stack: error.stack } : String(error),
+    },
+    "Merchant Agent tool failed with an unexpected error",
+  );
+  const name = error instanceof Error ? error.name : "Error";
+  return {
+    outcome: "FAILED",
+    detail: `This step stopped on an unexpected ${name}. It has been logged with this run's id for investigation; nothing was changed.`,
+  };
 }
 
 export interface ToolContext {
@@ -209,7 +238,7 @@ async function governedPipeline(
       };
     }
   } catch (error) {
-    const { outcome, detail } = classifyToolError(error);
+    const { outcome, detail } = classifyToolError(error, { tool: "governed_pipeline_propose", merchantId: ctx.merchantId, workflowId: ctx.workflowId });
     return { ok: false, result: { outcome, detail, proposalId: null, stages } };
   }
 
@@ -413,7 +442,7 @@ const recoverFailedPaymentTool: AgentToolDefinition = {
         stages,
       };
     } catch (error) {
-      const { outcome, detail } = classifyToolError(error);
+      const { outcome, detail } = classifyToolError(error, { tool: "governed_pipeline_execute", merchantId: ctx.merchantId, workflowId: ctx.workflowId, subject: gated.proposalId });
       // A REFUSED step is a guardrail working, and the authorization was
       // never consumed — the proposal stays AUTHORIZED and is legitimately
       // re-workable. Only a genuine FAILURE is terminal.

@@ -1,4 +1,4 @@
-# TRACK01 — every problem hit, Parts 0 through 13 and the closing gap pass
+# TRACK01 — every problem hit, Parts 0 through 14 and the closing gap pass
 
 A complete log, including the small ones and the ones I caused myself. Kept in three categories per part, because they need different responses:
 
@@ -796,6 +796,77 @@ Also worth recording: `.env` points `DATABASE_URL` at a hosted Supabase instance
 ## What this part did that no previous part did
 
 **It was verified in a browser.** Every part since 1 closed with "not verified in a browser". P13-3 and P13-5 were both found that way and would not have been found any other way: one was a stage lighting up too early, the other a card that never rendered. Both look entirely correct in the source.
+
+---
+
+# PART 14 — real-user verification
+
+## The pattern of this whole part
+
+**Five of the six defects are invisible to the test suite and to code review.** The suite was green before this part and green after it. Every one of them needed a person to press the button and look at what happened next — and each was found in the first minute of using the screen it lived on.
+
+## Product bugs
+
+### P14-1 · The whole app rendered a blank white page when the database was down
+Hit by accident when the local cluster died mid-session, and worth more than anything I had planned. `#root` was **empty** — no message, no retry, nothing.
+
+`RequireAuth` redirected to `/login` on ANY error from `/auth/me`. A 401 is fine: the client has already cleared the token, so the login form renders. A **500** leaves the token in place, so login bounced straight back — guard → login → guard → login, which React Router resolves by rendering nothing.
+
+A database blip or a deploy restart left a signed-in user staring at a white screen with no way out but clearing site data, which is not something a user can be asked to do. **"Your session is invalid" and "the server is broken" are not the same event**, and this treated them as one.
+
+### P14-2 · An "Observed" figure paired a count and an amount from different populations
+*Revenue at risk* read **₹9,06,052.00 — 186 failed payments**, under a heading promising figures "countable right now in your own orders and payments". The amount was summed from opportunity cards; the count came from a different endpoint counting failed payments. They disagreed by ₹11,783 against real data.
+
+Traced, the amount is recoverable failures ₹7,49,770 + unknown-outcome ₹1,39,179 + abandoned checkouts ₹17,103 — **never the 186 it named**. On a tile a merchant would try to reconcile, that is the worst place to borrow a number from somewhere else.
+
+### P14-3 · The Merchant Agent's own headline objective failed on every cycle
+**Run a cycle** returned `"failed": 3`, each reading "An unexpected error stopped this step." — against the objective printed at the top of its own console.
+
+`reconcilePayment` never compared `Payment.provider` to the configured gateway, so on a Razorpay-configured server it asked Razorpay about `mock_order_…` identifiers. A call that cannot succeed, once per payment, every cycle, forever.
+
+Not merely a dev-data artifact: any deployment that changes provider has payments the current gateway never made, and **an answer from the wrong provider is not a worse answer, it is a meaningless one** — in the one function whose job is deciding financial truth. Reran the cycle: `failed: 3` → `failed: 0`.
+
+### P14-4 · An unexpected error was shown to nobody and logged nowhere
+Underneath P14-3. `classifyToolError` returned that generic sentence for any non-`AppError` and **dropped the error entirely**. A provider outage and a typo in an id were indistinguishable — to the merchant, and to whoever they asked, because nothing reached the logs either. An undiagnosable failure is worse than a loud one.
+
+### P14-5 · A buyer could not save their spending policy at all, including to tighten it
+**Save** returned a bare `400 VALIDATION_ERROR`. For every change. For **1 of 1** policies in the database.
+
+The read schema had no maximum; the update schema capped everything at the single-purchase ceiling — so the server returned a policy it had seeded itself and would then refuse to accept back.
+
+The modelling error underneath: `dailyLimitMinor` bounds a SUM across purchases and was capped at one purchase's maximum, making "₹10,00,000 a few times a day" inexpressible.
+
+**The direction is what matters.** A spending control that cannot be saved is one a buyer cannot LOWER. The test now asserts the property rather than either number: anything the read shape accepts, the update shape must accept. Reran: 400 → 200.
+
+### P14-6 · A checkout that never opened left the page unusable
+Razorpay's hosted checkout answered 403 to an automated browser and never rendered. Neither `ondismiss` nor `handler` fired, so the promise never settled: the button stuck on "Opening checkout…" under a full-screen backdrop, escapable only by reloading.
+
+**Their bot protection is not a product defect; everything downstream of it is** — and an ad blocker or a CSP reaches the same dead end. Fixed with a human escape rather than a timer: a timer long enough to be safe is useless, and a short one would interrupt somebody mid-payment.
+
+## My own mistakes
+
+### P14-7 · I reported a 500 as a product bug before checking my own configuration
+Three concurrent `/auth/me` calls returned two 500s. I started writing it up before checking the obvious: my dev server pointed at the PGlite shim **without** the `connection_limit=1&pgbouncer=true` the test harness sets for exactly this reason. My configuration, not the product. Corrected before it reached the user, and it cost nothing — but only because I checked.
+
+### P14-8 · I killed the database by querying it
+The shim serves one client at a time. Running a Prisma script while the dev server held the connection took the whole cluster down mid-session. Recovering it needed the Part 7/11 lesson a third time: `EADDRINUSE` proved something was listening on 5432, and it was a zombie answering nothing. **"Listening" and "working" are still different facts.**
+
+### P14-9 · I claimed the console showed no run result, from a screenshot of the top of the page
+Wrong, and I nearly wrote it up. The Agent Console renders the entire run below the fold — counts, per-step cards with stage rails, audit trail, pending approvals, ranked next actions. **A screenshot of the top of a page is not the page**, and "the UI shows nothing" is a claim that needs the whole document, not the visible viewport.
+
+### P14-10 · I shipped half of P14-6 and called it fixed
+The escape button re-enabled the button but left Razorpay's backdrop over the page — `instance.close()` does nothing to a frame that never initialised. Only found because I reran the flow and actually looked at the DOM afterwards instead of trusting the button label. **Verifying the thing you changed is not verifying the outcome.**
+
+### P14-11 · A stale HMR frame briefly looked like my own bug
+`atRiskOpportunityCount is not defined` after an edit that typechecked clean, in the same scope, and rendered correctly. Vite had applied my two edits out of order and the console kept the old frame. The tell was the module timestamp in the stack — same `?t=` across every later reading. **A console buffer is cumulative; an error in it is not necessarily current.**
+
+## What was NOT found
+
+**No fabricated data.** Every figure I checked reconciled against the database: captured revenue ₹8,99,043.00, 8 customers, 598 decisions at 48.5% auto-approved, 186 FAILED and 31 UNKNOWN payments, 1,197 proposals. The one that did not reconcile (P14-2) was two real numbers wrongly paired, not an invented one.
+
+**No fake agent activity.** The Merchant Agent's cycle wrote 40 real ledger rows and 18 real proposals; the Buyer Agent's purchase produced a real Razorpay order id and an eleven-event chain. Both verified by reading the database before and after.
+
+**No clickable-but-dead controls.** Every button, tab, form and CTA on both journeys did something real, with a network call and a persisted consequence behind it.
 
 ---
 

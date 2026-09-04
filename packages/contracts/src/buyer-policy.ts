@@ -1,11 +1,37 @@
 import { z } from "zod";
 import { SUPPORTED_CURRENCIES } from "@razorgrowth/domain";
 
+/**
+ * The ceilings a buyer may configure, as named constants BECAUSE THE READ
+ * AND WRITE SHAPES MUST AGREE.
+ *
+ * They did not. The read schema had no maximum at all and the update
+ * schema capped everything at `MAX_SINGLE_PURCHASE_MINOR`, so the server
+ * happily returned a policy it would then refuse to accept back. Every
+ * save of the seeded buyer's policy failed with a bare VALIDATION_ERROR —
+ * they could not even LOWER a limit, which is the one direction that
+ * should never be blocked.
+ *
+ * A DAY IS A SUM, SO ITS CEILING CANNOT BE ONE PURCHASE'S CEILING.
+ *
+ * That was the modelling error underneath: `dailyLimitMinor` bounds the
+ * total across purchases, and capping it at the single-purchase maximum
+ * makes "up to ₹10,00,000 per purchase, a few times a day" impossible to
+ * express — a perfectly coherent policy the form would not save.
+ */
+export const MAX_SINGLE_PURCHASE_MINOR = 100_000_000; // ₹10,00,000
+/** Ten single-purchase maximums. Bounded so a typo cannot authorise an
+ * unbounded day, generous enough to hold any policy the product itself
+ * seeds or defaults to. */
+export const MAX_DAILY_SPEND_MINOR = MAX_SINGLE_PURCHASE_MINOR * 10; // ₹1,00,00,000
+
 export const buyerSpendingPolicySchema = z.object({
   id: z.string().uuid(),
   currency: z.enum(SUPPORTED_CURRENCIES),
-  autonomousPurchaseLimitMinor: z.number().int().min(0),
-  dailyLimitMinor: z.number().int().min(0),
+  // Bounded by the SAME constants the update shape uses, so anything this
+  // endpoint can return is something the update endpoint will accept.
+  autonomousPurchaseLimitMinor: z.number().int().min(0).max(MAX_SINGLE_PURCHASE_MINOR),
+  dailyLimitMinor: z.number().int().min(0).max(MAX_DAILY_SPEND_MINOR),
   allowedCategories: z.array(z.string()),
   /** Explicit "every category is permitted". Never inferred from a
    *  magic word inside `allowedCategories` — see resolve-policy.ts. */
@@ -16,7 +42,7 @@ export const buyerSpendingPolicySchema = z.object({
   /** HARD ceiling: a purchase above this is DECLINED, never offered for
    * approval. Distinct from `autonomousPurchaseLimitMinor`, which is the
    * point above which the buyer is merely ASKED. */
-  maxPurchaseAmountMinor: z.number().int().min(0),
+  maxPurchaseAmountMinor: z.number().int().min(0).max(MAX_SINGLE_PURCHASE_MINOR),
   /** Categories the agent may never buy from. BEATS `allowedCategories`
    * and `allowAllCategories` both — a prohibition that a wider allow list
    * could undo was never a prohibition. */
@@ -37,8 +63,8 @@ export type BuyerSpendingPolicyDTO = z.infer<typeof buyerSpendingPolicySchema>;
 
 export const buyerSpendingPolicyUpdateSchema = z
   .object({
-    autonomousPurchaseLimitMinor: z.number().int().min(0).max(100_000_000),
-    dailyLimitMinor: z.number().int().min(0).max(100_000_000),
+    autonomousPurchaseLimitMinor: z.number().int().min(0).max(MAX_SINGLE_PURCHASE_MINOR),
+    dailyLimitMinor: z.number().int().min(0).max(MAX_DAILY_SPEND_MINOR),
     allowedCategories: z.array(z.string().trim().min(1).max(100)).max(50),
     allowAllCategories: z.boolean().optional(),
     approvalRequiredAboveLimit: z.boolean(),
@@ -47,7 +73,7 @@ export const buyerSpendingPolicyUpdateSchema = z
     // Optional so a buyer flipping one switch does not have to resend
     // their whole envelope and risk clobbering a boundary they never
     // opened the form to change.
-    maxPurchaseAmountMinor: z.number().int().min(0).max(100_000_000).optional(),
+    maxPurchaseAmountMinor: z.number().int().min(0).max(MAX_SINGLE_PURCHASE_MINOR).optional(),
     restrictedCategories: z.array(z.string().trim().min(1).max(100)).max(50).optional(),
     preferredCategories: z.array(z.string().trim().min(1).max(100)).max(50).optional(),
     autoPurchaseEnabled: z.boolean().optional(),

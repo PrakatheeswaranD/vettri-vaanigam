@@ -573,3 +573,43 @@ describe("Payments — read API (PART 07 §71)", () => {
     expect(res.json().payment.state).toBe("CREATED");
   });
 });
+
+/**
+ * PART 14 — found by clicking "Let the agent reconcile payment" as a
+ * merchant, and by watching the Merchant Agent's own headline objective
+ * fail on every autonomous cycle.
+ *
+ * `Payment.provider` records who created the payment; `reconcilePayment`
+ * never compared it to the gateway now configured. On a server holding
+ * Razorpay credentials the agent dutifully asked Razorpay about
+ * `mock_order_…` identifiers — a call that cannot succeed, once per
+ * payment, every cycle, reported to the merchant as "an unexpected error
+ * stopped this step" and logged nowhere.
+ */
+describe("Payments — reconciling across providers (PART 14)", () => {
+  it("refuses to ask one provider about another provider's payment", async () => {
+    const { checkoutId } = await readyCheckout();
+    const init = (await initiate(checkoutId)).json();
+
+    // The gateway under test is MOCK. Re-stamp the row as a payment some
+    // other provider created — exactly the shape the seeded Razorpay data
+    // has on a Razorpay-configured server.
+    await prisma.payment.update({ where: { id: init.paymentId }, data: { provider: "X402" } });
+
+    const res = await app.inject({ method: "POST", url: `/api/v1/payments/${init.paymentId}/reconcile` });
+    expect(res.statusCode).toBeGreaterThanOrEqual(400);
+    const body = res.json();
+    // The merchant must be able to read WHY, not just that it failed.
+    expect(body.error.message).toMatch(/X402/);
+    expect(body.error.message).toMatch(/MOCK/);
+
+    // And it must be classified as a guardrail declining, not an outage —
+    // CONFLICT is in `REFUSAL_CODES`, so the agent counts it as REFUSED.
+    expect(body.error.code).toBe("CONFLICT");
+
+    // Nothing was touched.
+    const after = await prisma.payment.findUniqueOrThrow({ where: { id: init.paymentId } });
+    expect(after.state).toBe("CREATED");
+    expect(after.lastReconciledAt).toBeNull();
+  });
+});
