@@ -9,7 +9,8 @@
   },
   "packageManager": "pnpm@11.24.0",
   "scripts": {
-    "postinstall": "pnpm --filter @razorgrowth/domain run build && pnpm --filter @razorgrowth/contracts run build",
+    "//postinstall": "db:generate is here, not only in the DB setup steps, because `@prisma/client` ships no model types until it is generated. Without it every Prisma-derived value is `any`, and `pnpm typecheck` fails with a wall of TS7006 implicit-any errors in files nobody touched. It passed on developer machines purely because someone had run db:generate by hand earlier, so the failure only ever appeared on a clean clone or in CI. `prisma generate` reads the schema and needs no database.",
+    "postinstall": "pnpm --filter @razorgrowth/domain run build && pnpm --filter @razorgrowth/contracts run build && pnpm --filter @razorgrowth/api run db:generate",
     "dev": "pnpm --parallel --filter ./apps/* run dev",
     "dev:api": "pnpm --filter @razorgrowth/api run dev",
     "dev:web": "pnpm --filter @razorgrowth/web run dev",
