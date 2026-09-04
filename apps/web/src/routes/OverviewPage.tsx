@@ -248,6 +248,21 @@ function AttentionInbox({ approvals, failures, campaignWarnings, opportunities }
   );
 }
 
+/**
+ * The weekly growth plan is OFF by default.
+ *
+ * Snapshots, approvals and job records are real and persist, but no
+ * delivery adapter exists behind them — email, WhatsApp, SMS, push and
+ * Buyer Agent hand-off are all unimplemented. A queued message is not a
+ * delivered message, and this card sat on the merchant's home screen,
+ * offering "Generate weekly plan" as the second thing anyone saw.
+ *
+ * A reviewer's first impression should not be the one surface that cannot
+ * finish what it starts. Set `VITE_ENABLE_WEEKLY_PLAN=true` to work on it;
+ * leave it unset to demo.
+ */
+const WEEKLY_PLAN_ENABLED = import.meta.env.VITE_ENABLE_WEEKLY_PLAN === "true";
+
 function WeeklyPlanCard({ plan, weeklyBudgetMinor, maxContacts }: { plan: GrowthPlanRow | null | undefined; weeklyBudgetMinor: number; maxContacts: number }) {
   const queryClient = useQueryClient();
   const refresh = () => { void queryClient.invalidateQueries({ queryKey: ["growth-plans", "current"] }); void queryClient.invalidateQueries({ queryKey: ["ledger"] }); };
@@ -339,9 +354,11 @@ export default function OverviewPage() {
         currency={summary.data?.observedCapturedValue?.currency ?? "INR"}
       />
 
-      <div className="grid gap-4 xl:grid-cols-2">
+      <div className={WEEKLY_PLAN_ENABLED ? "grid gap-4 xl:grid-cols-2" : "grid gap-4"}>
         <AttentionInbox approvals={approvalCount} failures={failureCount} campaignWarnings={campaignSummary.data?.warnings ?? 0} opportunities={engine.data?.opportunities ?? []} />
-        <WeeklyPlanCard plan={validPlan} weeklyBudgetMinor={growthConfig?.weeklyCampaignBudgetMinor ?? 0} maxContacts={(growthConfig?.maxCustomersContactedPerDay ?? 0) * 7} />
+        {WEEKLY_PLAN_ENABLED && (
+          <WeeklyPlanCard plan={validPlan} weeklyBudgetMinor={growthConfig?.weeklyCampaignBudgetMinor ?? 0} maxContacts={(growthConfig?.maxCustomersContactedPerDay ?? 0) * 7} />
+        )}
       </div>
 
       <SetupChecklist
