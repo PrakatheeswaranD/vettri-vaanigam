@@ -1003,6 +1003,62 @@ model BuyerSpendingPolicy {
   /// existing policy is widened by this column appearing.
   allowAllCategories           Boolean         @default(false)
   approvalRequiredAboveLimit   Boolean         @default(true)
+
+  // ── PART 12 — the boundaries a buyer could not previously express ──
+  //
+  // Every one of these is enforced in `createPurchaseProposal`, the single
+  // function both the HTTP route and the Buyer Agent conversation call.
+  // There is no second place a purchase can be priced, so there is no
+  // second place these can be skipped.
+
+  /// HARD ceiling. A purchase above this is DECLINED outright, never sent
+  /// for approval.
+  ///
+  /// Distinct from `autonomousPurchaseLimitMinor`, which is the point
+  /// above which the buyer is ASKED. Two different questions: "how much
+  /// may the agent spend without me" and "how much am I willing to spend
+  /// at all". Collapsing them would mean a buyer could only raise their
+  /// convenience threshold by also raising their exposure.
+  ///
+  /// Defaults high enough not to change any existing buyer's outcome — a
+  /// column appearing must never silently start refusing purchases that
+  /// worked yesterday.
+  maxPurchaseAmountMinor       Int             @default(100000000)
+
+  /// Categories the agent may NEVER buy from, whatever else permits them.
+  ///
+  /// A denylist rather than the absence of an allow, and it BEATS
+  /// `allowedCategories` and `allowAllCategories` both — a prohibition
+  /// must survive someone later widening the allow list, or it was never
+  /// a prohibition.
+  ///
+  /// string[] of category names. Empty means nothing is restricted.
+  restrictedCategories         Json            @default("[]")
+
+  /// Categories the buyer leans toward. A RANKING SIGNAL, NEVER A GATE.
+  ///
+  /// Stated explicitly because the obvious next change is to "enforce"
+  /// it, and that would silently convert a preference into a restriction
+  /// — a buyer who said "I prefer running shoes" has not said "refuse to
+  /// show me anything else".
+  preferredCategories          Json            @default("[]")
+
+  /// Whether the agent may complete a purchase without asking at all.
+  ///
+  /// Off turns every purchase into a step-up, however small — the buyer
+  /// wants to see each one. Defaults TRUE because that is the behaviour
+  /// every existing buyer already has: under the autonomous limit,
+  /// purchases auto-approve. A false default would change what the
+  /// product does for people who never asked for a change.
+  autoPurchaseEnabled          Boolean         @default(true)
+
+  /// Merchants the agent may never buy from. Same denylist reasoning as
+  /// `restrictedCategories`: a buyer who has had a bad experience with a
+  /// seller should be able to say so once and have it hold.
+  ///
+  /// string[] of merchant ids. Empty means no merchant is restricted.
+  restrictedMerchantIds        Json            @default("[]")
+
   createdAt                    DateTime        @default(now())
   updatedAt                    DateTime        @updatedAt
 }

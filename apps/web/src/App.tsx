@@ -40,7 +40,7 @@ const CustomerProductPage = lazy(() => import("./routes/CustomerProductPage"));
 const CustomerPolicyPage = lazy(() => import("./routes/CustomerPolicyPage"));
 const CustomerOrdersPage = lazy(() => import("./routes/CustomerHistoryPage").then((m) => ({ default: m.CustomerOrdersPage })));
 const CustomerPaymentsPage = lazy(() => import("./routes/CustomerHistoryPage").then((m) => ({ default: m.CustomerPaymentsPage })));
-const CustomerActivityPage = lazy(() => import("./routes/CustomerHistoryPage").then((m) => ({ default: m.CustomerActivityPage })));
+const CustomerActivityPage = lazy(() => import("./routes/CustomerActivityPage"));
 
 // —— Merchant: sections ————————————————————————————————————————————————
 const MerchantAgentSection = lazy(() => import("./routes/sections/MerchantAgentSection"));

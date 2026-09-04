@@ -2,6 +2,8 @@
 
 Continues [Part 0](TRACK01_PART0_FIXES.md) → [Part 10](TRACK01_PART10_AGENTIC_CHECKOUT.md).
 
+> Followed by [Part 12](TRACK01_PART12_BUYER_AUTONOMY.md), which gave the buyer boundaries the backend enforces and an activity page read from the ledger.
+
 > Problems hit along the way: [TRACK01_PROBLEMS_LOG.md](TRACK01_PROBLEMS_LOG.md).
 
 Discover supports the Buyer Agent rather than competing with it. The comparison now knows which products the buyer named, and what they asked for.

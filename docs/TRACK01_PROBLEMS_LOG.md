@@ -1,4 +1,4 @@
-# TRACK01 — every problem hit, Parts 0 through 11 and the closing gap pass
+# TRACK01 — every problem hit, Parts 0 through 12 and the closing gap pass
 
 A complete log, including the small ones and the ones I caused myself. Kept in three categories per part, because they need different responses:
 
@@ -670,6 +670,54 @@ Recorded because reporting a consolidation that did not happen would be worse th
 
 ---
 
+# PART 12 — buyer autonomy, spending policy and activity
+
+## Product bugs
+
+### P12-1 · Five of the seven buyer boundaries could not be expressed at all
+`BuyerSpendingPolicy` had an approval threshold, a daily limit and an allow-list. It had no way to say **"never above this at all"**, **"never this category"**, **"never this merchant"**, **"ask me every time"**, or **"I lean toward these"**.
+
+The gap that matters most is the first: `autonomousPurchaseLimitMinor` is the point above which the buyer is ASKED, and there was nothing that meant *refused*. A buyer could only raise their convenience threshold by also raising their exposure, because one number was doing both jobs.
+
+All five added and enforced in `createPurchaseProposal` — the single function both the HTTP route and the conversation call, so there is no second place a purchase can be priced and therefore no second place a boundary can be skipped.
+
+### P12-2 · A restriction could have been undone by widening an allow list
+Not a shipped bug — a design trap avoided while building. The obvious implementation checks `allowedCategories` and `restrictedCategories` as alternatives. Then a category on both lists resolves by whichever check runs first, and "never buy this" becomes negotiable by editing a different field.
+
+Restrictions are checked **independently of and after** the allow-list, so restricted always wins. The update contract additionally refuses to save a category on both lists — the buyer resolves the contradiction rather than discovering later which one the engine picked.
+
+### P12-3 · Boundaries were re-checked at authorization, but only the old ones
+`authorizePurchaseProposal` already re-read the policy before executing, precisely so a buyer who changes their mind between pricing and authorizing is obeyed. It re-checked category, currency and the autonomous ceiling — and would have sailed past every Part 12 boundary added above it.
+
+The window between pricing and authorizing is exactly when someone changes their mind, so all five are now re-checked there too. A test restricts a category after a proposal is priced and asserts the in-flight authorization is refused.
+
+### P12-4 · Two real pipeline stages left no durable record
+COMPARISON and OFFER CHECK pushed a trace stage and wrote no ledger event. A trace lives only in the response that produced it, and Agent Activity reads the ledger — so both were **real backend actions the buyer could never see afterwards**.
+
+The offer check now records even when no offer applies: "we checked and there were none" and "we never checked" are different facts, and only one of them means the buyer saw list price for a good reason.
+
+### P12-5 · Agent Activity showed a verdict, not activity
+Three fields per purchase proposal — policy outcome, reason code, negotiation status. Real data, and not activity: it showed the RESULT of a pipeline while the pipeline was invisible, and a conversation that searched without buying produced no row at all.
+
+Replaced with the ledger-backed timeline. Eight of the ten stages the spec names were **already writing real events** and nothing was reading them — the sixth instance of *capability shipped, consumption forgotten*.
+
+## My own mistakes
+
+### P12-6 · I removed a page export and left three orphans behind it
+Deleting `CustomerActivityPage` from `CustomerHistoryPage` left the `"activity"` lens type, its copy block, and its render branch. The typechecker caught the copy block; the other two would have compiled fine as dead code.
+
+Same shape as the Part 10 extraction, where lint found six dead imports. **Removing a thing is not one edit — it is one edit plus everything that only existed for it**, and I still reach for the first without the second.
+
+## Environment friction
+
+None new. The cluster survived the whole part.
+
+## What was NOT found
+
+The spec says "do not generate fake agent activity". **There was none to remove.** The old activity view was thin but honest — every field came from a real `DecisionRecord`. The work was making the *real* events visible, not deleting invented ones.
+
+---
+
 # Patterns worth naming
 
 **1. Two things that must agree will eventually disagree.** P0-1 (two prefix lists), P3-1 (a string compared against an enum), P2-3 (a fixture shaped like a DTO). Every one was invisible to the typechecker. The fixes that stuck replaced agreement with a single source: one access table, one enum comparison, one contract import.
@@ -680,7 +728,7 @@ Recorded because reporting a consolidation that did not happen would be worse th
 
 **4. Aggregation for display is the wrong unit for action.** P3-2 acted on one of eighty payments; P4-3 compared eighty payments' total against a per-payment ceiling; P4-7 spent a whole cycle inside one card. Three separate bugs, one mistake: the row a merchant should READ is not the item the system should ACT on.
 
-**5. Capability shipped, consumption forgotten.** P0-8 (admin endpoints, no UI), P0-9 (step-ups, no UI), P4-6 (eight detectors nothing acted on), P5-1 (a control group nobody compared), P5-2 (config nobody could write), P6-1 (relationships recorded, never published), P9-10 (a fully-tested backend whose own default UI had no rendering for any of it). Seven times the hard half was built and the last mile was not. It is the single most common defect in this codebase, by a distance — and P9-10 is the sharpest version yet: eleven passing integration tests, zero of them looking at the page a real buyer sees.
+**5. Capability shipped, consumption forgotten.** P0-8 (admin endpoints, no UI), P0-9 (step-ups, no UI), P4-6 (eight detectors nothing acted on), P5-1 (a control group nobody compared), P5-2 (config nobody could write), P6-1 (relationships recorded, never published), P9-10 (a fully-tested backend whose own default UI had no rendering for any of it). Seven times the hard half was built and the last mile was not. It is the single most common defect in this codebase, by a distance — and P9-10 is the sharpest version yet: eleven passing integration tests, zero of them looking at the page a real buyer sees. P12-5 makes seven: eight of the ten activity stages were already writing real ledger events and the buyer's own activity page read none of them.
 
 **7. A deferred modelling debt does not sit still.** P0-11 was recorded as a naming problem and deferred as "not worth the migration". By the time it was opened it had produced PC-2 — a readiness score reporting zero on 35 of its 100 points — plus dead seed data (PC-3), a two-job function parameter (PC-4), and a test constructing an identity that both sold and shopped. None of those were visible when the debt was filed. **The cost of an ambiguous column is not the ambiguity; it is every reader who resolves it the wrong way afterwards, silently.**
 

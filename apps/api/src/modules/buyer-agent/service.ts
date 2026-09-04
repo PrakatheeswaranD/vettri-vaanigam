@@ -326,6 +326,20 @@ export async function handleBuyerMessage(
         : "Fewer than two comparable products.",
     });
 
+    // A trace stage lives only in this response. The Agent Activity view
+    // reads the LEDGER, so a comparison that wrote no ledger event was a
+    // real action the buyer could never see afterwards.
+    if (comparison) {
+      await recordLedgerEvent(prisma, {
+        merchantId: params.merchantId,
+        workflowId: traceId,
+        actionType: "COMPARISON_BUILT",
+        conciseReason: `Compared ${comparison.productIds.length} products on ${comparison.rows.length} published catalogue fields; ${comparison.rows.filter((r) => r.differs).length} actually differ.`,
+        relatedEntityType: "BuyerConversation",
+        relatedEntityId: conversationId,
+      });
+    }
+
     return {
       conversationId,
       messageId: userMessage.id,
@@ -664,9 +678,27 @@ export async function handleBuyerMessage(
     prisma,
     outcome.recommendations.map((r) => r.productId),
   );
-  if (offers.length > 0) {
-    trace.push({ stage: "OFFERS_EVALUATED", detail: `${offers.length} merchant-authorized offer(s) apply to these products.` });
-  }
+  // Recorded whether or not any offer applied. "We checked and there
+  // were none" and "we never checked" are different facts, and only one
+  // of them means the buyer saw list price for a good reason.
+  trace.push({
+    stage: "OFFERS_EVALUATED",
+    detail:
+      offers.length > 0
+        ? `${offers.length} merchant-authorized offer(s) apply to these products.`
+        : "No merchant-authorized offer applies to these products.",
+  });
+  await recordLedgerEvent(prisma, {
+    merchantId: params.merchantId,
+    workflowId: traceId,
+    actionType: "OFFERS_EVALUATED",
+    conciseReason:
+      offers.length > 0
+        ? `Checked ${outcome.recommendations.length} recommended product(s) for merchant-authorized offers; ${offers.length} apply.`
+        : `Checked ${outcome.recommendations.length} recommended product(s) for merchant-authorized offers; none apply.`,
+    relatedEntityType: "RecommendationRecord",
+    relatedEntityId: recommendationRecord.id,
+  });
 
   return {
     conversationId,

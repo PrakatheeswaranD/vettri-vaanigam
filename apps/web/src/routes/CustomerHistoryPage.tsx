@@ -67,7 +67,7 @@ interface Purchase {
   items: PurchaseItem[];
 }
 
-type Lens = "cart" | "orders" | "payments" | "activity";
+type Lens = "cart" | "orders" | "payments";
 
 const LENS_COPY: Record<Lens, { title: string; description: string; empty: string; emptyHint: string }> = {
   cart: {
@@ -87,12 +87,6 @@ const LENS_COPY: Record<Lens, { title: string; description: string; empty: strin
     description: "Where the money actually is. Payment state comes from the provider, never from this page — refreshing reads it, it does not change it.",
     empty: "No payments yet",
     emptyHint: "A payment appears here once you authorize a purchase proposal.",
-  },
-  activity: {
-    title: "Agent activity",
-    description: "Everything your Buyer Agent proposed on your behalf, including what your spending policy refused and why.",
-    empty: "No agent activity yet",
-    emptyHint: "Every proposal your Buyer Agent makes is recorded here, whether or not it was allowed.",
   },
 };
 
@@ -351,14 +345,6 @@ function PurchaseRow({
             </ul>
           ) : null}
 
-          {lens === "activity" ? (
-            <dl className="grid gap-3 border-t border-border-hair pt-3 sm:grid-cols-3">
-              <div><dt className="text-micro uppercase tracking-wide text-ink-faint">Policy outcome</dt><dd className="mt-1 text-sm font-medium text-ink">{purchase.outcome.replaceAll("_", " ")}</dd></div>
-              <div><dt className="text-micro uppercase tracking-wide text-ink-faint">Reason code</dt><dd className="mt-1 text-sm text-ink">{purchase.reasonCode?.replaceAll("_", " ") ?? "No refusal"}</dd></div>
-              <div><dt className="text-micro uppercase tracking-wide text-ink-faint">Negotiation</dt><dd className="mt-1 text-sm text-ink">{purchase.negotiationStatus?.replaceAll("_", " ") ?? "Not requested"}</dd></div>
-            </dl>
-          ) : null}
-
           {lens !== "orders" && purchase.internalPaymentId ? (
             <div className="border-t border-border-hair pt-3">
               <button
@@ -433,7 +419,6 @@ function SummaryMetric({ icon, label, value, tone }: { icon: React.ReactNode; la
 
 export function CustomerOrdersPage() { return <CustomerHistoryPage lens="orders" />; }
 export function CustomerPaymentsPage() { return <CustomerHistoryPage lens="payments" />; }
-export function CustomerActivityPage() { return <CustomerHistoryPage lens="activity" />; }
 /** The agent's un-authorized proposals, rendered inside the Buyer Agent
  * screen. See the `embedded` note on `CustomerHistoryPage`. */
 export function CustomerProposalsSection() { return <CustomerHistoryPage lens="cart" embedded />; }

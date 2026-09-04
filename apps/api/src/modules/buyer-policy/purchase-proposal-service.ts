@@ -85,6 +85,21 @@ export interface PurchaseProposalResult {
   } | null;
 }
 
+/**
+ * A JSON column is `unknown` until something checks it.
+ *
+ * A malformed row degrades to "no restriction configured" in one obvious
+ * place rather than throwing from inside a spending decision — but note
+ * which direction that fails: an unreadable RESTRICTION list becomes
+ * empty, which permits. That is the correct trade-off only because these
+ * columns are written by our own validated update path and never by a
+ * buyer's raw input.
+ */
+function asStringList(value: unknown): string[] {
+  if (!Array.isArray(value)) return [];
+  return value.filter((entry): entry is string => typeof entry === "string");
+}
+
 export async function createPurchaseProposal(
   prisma: PrismaClient,
   input: CreatePurchaseProposalInput,
@@ -152,14 +167,62 @@ export async function createPurchaseProposal(
   if (amountMinor > policy.dailyLimitMinor) reasons.push("DAILY_LIMIT_EXCEEDED");
   if (input.budgetMinor !== undefined && amountMinor > input.budgetMinor) reasons.push("BUYER_BUDGET_EXCEEDED");
 
-  const requiresApproval = amountMinor > policy.autonomousPurchaseLimitMinor;
-  if (requiresApproval && !policy.approvalRequiredAboveLimit) reasons.push("AUTONOMOUS_LIMIT_EXCEEDED");
+  // ── PART 12 boundaries ────────────────────────────────────────────
+  //
+  // All DECLINE conditions, and all checked here rather than anywhere
+  // else: this is the one function that prices a purchase, so it is the
+  // one place a boundary can be enforced without a second copy to keep
+  // in step.
+
+  /**
+   * The HARD ceiling, which is not the approval threshold.
+   *
+   * Above the autonomous limit the buyer is ASKED. Above this they are
+   * REFUSED — "how much may the agent spend without me" and "how much am
+   * I willing to spend at all" are different questions, and a purchase
+   * over the hard maximum is never offered for approval, because
+   * approving it was never on the table.
+   */
+  if (amountMinor > policy.maxPurchaseAmountMinor) reasons.push("MAX_PURCHASE_AMOUNT_EXCEEDED");
+
+  /**
+   * Restrictions BEAT permissions, always.
+   *
+   * Checked after `categoryPermitted` and independent of it: a category
+   * on both the allow list and the restricted list is restricted. A
+   * prohibition that could be undone by widening an allow list was never
+   * a prohibition.
+   */
+  if (asStringList(policy.restrictedCategories).includes(variant.product.category)) {
+    reasons.push("CATEGORY_RESTRICTED");
+  }
+  if (asStringList(policy.restrictedMerchantIds).includes(variant.product.merchantId)) {
+    reasons.push("MERCHANT_RESTRICTED");
+  }
+
+  // `preferredCategories` is deliberately NOT consulted here. It is a
+  // ranking signal, and enforcing it would silently turn "I prefer
+  // running shoes" into "refuse to show me anything else".
+
+  /**
+   * Whether the agent may complete a purchase without asking at all.
+   *
+   * Off makes every purchase a step-up however small — the buyer wants
+   * to see each one. It never DECLINES: wanting to approve each purchase
+   * is not the same as refusing to make them.
+   */
+  const requiresApproval = amountMinor > policy.autonomousPurchaseLimitMinor || !policy.autoPurchaseEnabled;
+  if (amountMinor > policy.autonomousPurchaseLimitMinor && !policy.approvalRequiredAboveLimit) {
+    reasons.push("AUTONOMOUS_LIMIT_EXCEEDED");
+  }
 
   const outcome = reasons.length ? "DECLINE" : requiresApproval ? "STEP_UP" : "AUTO_APPROVE";
   const explanation = reasons.length
     ? reasons.join(", ")
     : requiresApproval
-      ? "Explicit buyer approval is required above the autonomous limit."
+      ? policy.autoPurchaseEnabled
+        ? "Explicit buyer approval is required above the autonomous limit."
+        : "You asked to approve every purchase, so this one is waiting for you."
       : "Within the saved buyer policy; ready for authorization.";
 
   const row = await withLedgerConcurrencyRetry(prisma, async (tx) => {
@@ -315,11 +378,29 @@ export async function authorizePurchaseProposal(
       where: { id: lines[0]!.variantId },
       include: { product: true },
     });
-    if (
+    /**
+     * The policy is re-read and re-checked HERE, against the row as it
+     * stands now — not as it stood when the proposal was priced.
+     *
+     * A buyer who restricts a category, lowers their ceiling, or turns
+     * off automatic purchasing after a proposal was created must have
+     * that apply to the proposal still in flight. Checking only at
+     * pricing time would leave a window in which the old policy still
+     * governed, and that window is exactly when someone changes their
+     * mind.
+     *
+     * Every PART 12 boundary is re-checked for the same reason.
+     */
+    const totalMinor = current.computedTotalMinor ?? 0;
+    const policyNoLongerPermits =
       !categoryPermitted(policy, variant.product.category, z.array(z.string()).parse(policy.allowedCategories)) ||
       policy.currency !== current.currency ||
-      ((current.computedTotalMinor ?? 0) > policy.autonomousPurchaseLimitMinor && !policy.approvalRequiredAboveLimit)
-    ) {
+      (totalMinor > policy.autonomousPurchaseLimitMinor && !policy.approvalRequiredAboveLimit) ||
+      totalMinor > policy.maxPurchaseAmountMinor ||
+      asStringList(policy.restrictedCategories).includes(variant.product.category) ||
+      asStringList(policy.restrictedMerchantIds).includes(variant.product.merchantId);
+
+    if (policyNoLongerPermits) {
       throw new AppError("POLICY_CHANGED", "The current buyer policy no longer permits this purchase.");
     }
 
