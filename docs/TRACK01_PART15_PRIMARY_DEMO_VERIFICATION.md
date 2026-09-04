@@ -2,6 +2,8 @@
 
 Continues [Part 0](TRACK01_PART0_FIXES.md) → [Part 14](TRACK01_PART14_REAL_USER_VERIFICATION.md).
 
+> Followed by [Part 16](TRACK01_PART16_OBSOLETE_CODE_REMOVAL.md), the cleanup pass — which found almost nothing to delete, and two things that were traps rather than spares.
+
 > Problems hit along the way: [TRACK01_PROBLEMS_LOG.md](TRACK01_PROBLEMS_LOG.md).
 
 Both primary demos driven end to end, plus one deliberate failure. Four defects found and fixed, each rerun.

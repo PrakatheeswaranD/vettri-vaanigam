@@ -53,9 +53,21 @@ export function findPaymentByProviderOrderId(prismaLike: PrismaClient | Prisma.T
   return prismaLike.payment.findFirst({ where: { provider, providerOrderId } });
 }
 
-export function setPaymentProviderOrderId(prisma: PrismaClient, id: string, providerOrderId: string) {
-  return prisma.payment.update({ where: { id }, data: { providerOrderId } });
-}
+/*
+ * `setPaymentProviderOrderId` used to live here: an unconditional
+ * `update({ where: { id } })` that stamped a provider order id onto a
+ * payment. Nothing called it, and it was worse than merely dead.
+ *
+ * The live path in `payment-service.ts` deliberately uses a CONDITIONAL
+ * claim — `updateMany({ where: { id, providerOrderId: null } })` — so that
+ * two concurrent initiations cannot both record a provider order against
+ * one payment. This helper was the plausible-looking way to do the same
+ * thing without that guard, sitting in the repository where the next
+ * person would reach for it.
+ *
+ * Deleted rather than kept "just in case": a duplicate that reintroduces a
+ * race the codebase fixed on purpose is not a spare, it is a trap.
+ */
 
 export interface ApplyPaymentTransitionInput {
   state: PaymentState;

@@ -89,7 +89,7 @@ export interface RevenueOpportunityReport {
   generatedAt: string;
 }
 
-export async function collectMerchantRevenueEvidence(
+async function collectMerchantRevenueEvidence(
   prisma: PrismaClient,
   merchantId: string,
   now: Date = new Date(),

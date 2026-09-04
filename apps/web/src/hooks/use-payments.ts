@@ -28,15 +28,17 @@ export function useVerifyPaymentCompletion() {
   });
 }
 
-export function useReconcilePayment() {
-  const queryClient = useQueryClient();
-  return useMutation({
-    mutationFn: (paymentId: string) => apiPost<PaymentDTO>(`/payments/${paymentId}/reconcile`),
-    onSuccess: () => {
-      void queryClient.invalidateQueries({ queryKey: ["ledger"] });
-    },
-  });
-}
+/*
+ * `useReconcilePayment` used to live here — a second browser path to
+ * reconciliation, unused. The UI reconciles through
+ * `useRunAgentTool("reconcile_payment")`, which goes via the agent tool
+ * registry and records the action in the ledger with agent attribution.
+ * Two client paths to the same money operation, one of them bypassing the
+ * audit trail, is not redundancy worth keeping.
+ *
+ * `POST /payments/:id/reconcile` is untouched: it is the API surface the
+ * agent tool itself calls, and reconciliation still works.
+ */
 
 /** Polls a payment's authoritative state for a bounded window after
  * initiation/verification (PART 07 §70, §169-§172) — never indefinitely,

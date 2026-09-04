@@ -103,29 +103,11 @@ export function useCreateRefund() {
   });
 }
 
-export function useCreateReturn() {
-  const queryClient = useQueryClient();
-  return useMutation({
-    mutationFn: (body: { orderId: string; reason: string; items: { orderItemId: string; quantity: number }[] }) =>
-      apiPost<ReturnRow>("/returns", body),
-    onSuccess: () => invalidateMoneyViews(queryClient),
-  });
-}
-
 export function useAdvanceReturn() {
   const queryClient = useQueryClient();
   return useMutation({
     mutationFn: ({ returnId, status }: { returnId: string; status: string }) =>
       apiPost<ReturnRow>(`/returns/${returnId}/status`, { status }),
-    onSuccess: () => invalidateMoneyViews(queryClient),
-  });
-}
-
-export function useCreateFulfillment() {
-  const queryClient = useQueryClient();
-  return useMutation({
-    mutationFn: (body: { orderId: string; carrier: string; trackingNumber: string; items: { orderItemId: string; quantity: number }[] }) =>
-      apiPost<FulfillmentRow>("/fulfillments", body),
     onSuccess: () => invalidateMoneyViews(queryClient),
   });
 }

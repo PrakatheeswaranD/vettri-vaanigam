@@ -1,4 +1,4 @@
-# TRACK01 — every problem hit, Parts 0 through 15 and the closing gap pass
+# TRACK01 — every problem hit, Parts 0 through 16 and the closing gap pass
 
 A complete log, including the small ones and the ones I caused myself. Kept in three categories per part, because they need different responses:
 
@@ -931,6 +931,71 @@ The bug was the reporting, not the policy. **Reading the code I was about to ove
 **No fabricated revenue.** Every figure reconciled once queried correctly: ₹5,58,486.00 captured across 114 agent orders, ₹1,17,576.00 recovered across 24, and the ₹4,275.00 purchase traced end to end from a ₹4,500.00 list price and a 5% merchant-authorized offer.
 
 **No unsafe failure handling.** The deliberate failure was diagnosed (`PROVIDER_ERROR`), left safe (`debit=UNKNOWN`, retry blocked, inventory released), recovered through policy into a **new** checkout rather than a silent re-charge, and verified — 28 events on one workflow. After recovery succeeded, attempt #1 **still** reads `debit=UNKNOWN`: the system never retroactively claims the first attempt did not charge.
+
+---
+
+# PART 16 — obsolete code removal
+
+## The finding that matters most
+
+**There was almost nothing to delete.** 480 source files, and every one is imported by something. Zero orphaned modules, zero unreachable routes, zero nav items without a route, zero unreferenced Prisma models of 46, zero tracked build output, zero temp or `legacy` files.
+
+Fifteen parts of deleting things as they were replaced left a codebase with **11 genuinely unreferenced symbols** in it. The interesting part is that two of those eleven were not merely dead.
+
+## Dead code that was actively dangerous
+
+### P16-1 · A non-atomic duplicate of a deliberately atomic write
+`setPaymentProviderOrderId` did `update({ where: { id } })` to stamp a provider order id onto a payment. The live path uses a CONDITIONAL claim — `updateMany({ where: { id, providerOrderId: null } })` — precisely so two concurrent initiations cannot both record a provider order against one payment.
+
+Nothing called it. It sat in the repository beside the functions that ARE called, **looking exactly like the right way to do the thing the codebase does carefully**. A duplicate that reintroduces a race the code fixed on purpose is not a spare, it is a trap, and "just in case" is how someone finds it at 2am.
+
+### P16-2 · A second client path that bypassed the audit trail
+`useReconcilePayment` was an unused browser path to reconciliation. The UI reconciles through `useRunAgentTool("reconcile_payment")`, which goes via the tool registry and **records the action in the ledger with agent attribution**.
+
+Two client paths to the same money operation, one of them writing no audit record. The endpoint stays — it is what the agent tool calls — but the second client is gone.
+
+### P16-3 · Two seams for one job
+`setRateLimitStore`/`getRateLimitStore` and `createPublicRateLimitHook(customStore)` both existed to swap the rate-limit store. Only the second was used. The pair also made the module-level store a `let` implying a reassignment that never happened.
+
+## Test and fixture bugs
+
+### P16-4 · A payments fixture that silently depended on a catalogue price
+Twenty-six payment tests died on `Cannot read properties of null` inside `readyCheckout()`.
+
+Nothing was broken. `Meridian CoolMax Running Socks — S/M` (₹399) had reached stock 0, so the cross-sell correctly picked a ₹900 bottle instead, the basket went from ₹4,899 to ₹5,399, crossed the merchant's ₹5,000 auto-approval ceiling, and policy correctly said REQUIRE_APPROVAL. The fixture read `.authorization.id` directly and blew up.
+
+**Tests about payment machinery should not depend on a complementary product staying cheap and in stock.** The fixture now approves when asked, as a merchant would.
+
+### P16-5 · The suite depletes its own fixture and never restores it
+The deeper cause of P16-4. Every `readyCheckout()` reserves inventory; nothing gives it back. Across sixteen parts of runs, **46 of 677 inventory rows reached zero** and the catalogue wore down until an unrelated assertion broke.
+
+Repaired by re-seeding rather than topping up stock by hand — because roughly **1 in 9 non-Running-Shoes variants is zero ON PURPOSE**, as out-of-stock evidence the readiness score depends on. Blindly restoring every zero would have erased a deliberate signal to fix an accidental one.
+
+## Environment friction
+
+### P16-6 · Listening and not working, for the fourth time
+Mid-run, failures went from 26 tests to whole files. Port 5432 `LISTENING`; every query failing. Parts 7, 11, 14 and now 16. The recorded lesson held again: **a real query is the only proof**, and `netstat` is not one.
+
+## My own mistakes
+
+### P16-7 · My first dead-code scan called a library's public API dead
+The unused-export sweep returned **535 symbols**, almost all of them `packages/contracts` and `packages/domain` exports consumed through `export *` re-exports or simply not used by the apps yet.
+
+Acting on that list would have deleted the interface of two library packages to make a number go down. **An unreferenced export in a library is its API surface, not an orphan** — the scan has to know what kind of module it is looking at. Narrowing to runtime values in the apps took 535 to 20, and per-symbol verification took 20 to 11.
+
+### P16-8 · I nearly blamed my own deletions for a pre-existing failure
+When 26 payment tests failed right after I deleted things, the obvious story was that I had broken them. `git stash` took thirty seconds and proved they failed without my changes too — which redirected the whole investigation to inventory drift.
+
+**The obvious culprit is worth eliminating before it costs an hour**, especially when it is me.
+
+### P16-9 · Shell escaping ate a word boundary, again
+`new RegExp("^export function "+n+"\\b")` inside a bash double-quoted `node -e` became a literal backspace character, so every match failed and the script reported "NOT FOUND" for functions that were plainly there. Third time this project. Regex-bearing scripts go in files.
+
+## What was deliberately NOT removed
+
+**Library exports**, **the two checkout builders** (real duplication, deliberately kept — merging two money paths on suspicion is the risk the brief warns about), and **every unused exported type**. A type costs nothing at runtime; removing them is LOC reduction, which was explicitly not the objective.
+
+**Net: 85 insertions, 85 deletions.** Most insertions are comments recording why something was removed, so nobody re-adds the trap.
 
 ---
 

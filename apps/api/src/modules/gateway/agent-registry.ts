@@ -35,7 +35,7 @@ export type KeyTrustSource = "MERCHANT_REGISTERED" | "PINNED_ON_FIRST_USE";
 /** Ed25519 raw public keys are 32 bytes; base64 of that is 44 chars. */
 const ED25519_KEY_B64_LENGTH = 44;
 
-export function isPlausibleEd25519Key(value: string): boolean {
+function isPlausibleEd25519Key(value: string): boolean {
   if (value.length !== ED25519_KEY_B64_LENGTH) return false;
   try {
     return Buffer.from(value, "base64").length === 32;
@@ -44,7 +44,7 @@ export function isPlausibleEd25519Key(value: string): boolean {
   }
 }
 
-export function hashApiKey(raw: string): string {
+function hashApiKey(raw: string): string {
   return createHash("sha256").update(raw).digest("hex");
 }
 

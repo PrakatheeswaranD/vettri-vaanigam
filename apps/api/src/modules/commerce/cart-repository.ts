@@ -1,4 +1,4 @@
-import type { Prisma, PrismaClient } from "@prisma/client";
+import type { Prisma } from "@prisma/client";
 
 export interface CreateCartItemInput {
   variantId: string;
@@ -48,6 +48,3 @@ export function updateCartStatus(tx: Prisma.TransactionClient, cartId: string, s
   return tx.cart.update({ where: { id: cartId }, data: { status } });
 }
 
-export function findCartById(prisma: PrismaClient, merchantId: string, cartId: string) {
-  return prisma.cart.findFirst({ where: { id: cartId, merchantId }, include: { items: true } });
-}

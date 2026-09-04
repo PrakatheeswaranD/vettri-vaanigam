@@ -77,7 +77,38 @@ async function proposeCrossSell() {
 async function readyCheckout(): Promise<{ checkoutId: string; orderId: string; workflowId: string; amountMinor: number; currency: string }> {
   const proposal = await proposeCrossSell();
   const evalRes = await app.inject({ method: "POST", url: "/api/v1/policy/evaluate", payload: { proposalId: proposal.id } });
-  const authorizationId = evalRes.json().authorization.id as string;
+
+  /**
+   * POLICY MAY LEGITIMATELY REQUIRE APPROVAL, AND THAT IS NOT A FAILURE.
+   *
+   * This read `evalRes.json().authorization.id` directly. Whether policy
+   * auto-approves depends on the cross-sell's basket total against the
+   * merchant's ₹5,000 auto-approval ceiling — and the basket depends on
+   * which complementary product is currently PURCHASABLE, which depends
+   * on stock every other test and demo run consumes.
+   *
+   * So it drifted: the ₹399 socks that kept the basket at ₹4,899 reached
+   * zero stock, the agent correctly picked a ₹900 bottle instead, the
+   * basket became ₹5,399, policy correctly said REQUIRE_APPROVAL, and all
+   * 26 tests in this file died on `Cannot read properties of null` in the
+   * fixture — pointing at nothing that was actually wrong.
+   *
+   * These tests are about the PAYMENT machinery given an authorized
+   * checkout. So approve when asked, exactly as the merchant would, and
+   * stop depending on a catalogue price staying under a policy threshold.
+   */
+  let authorization = evalRes.json().authorization as { id: string } | null;
+  if (!authorization) {
+    const approve = await app.inject({
+      method: "POST",
+      url: `/api/v1/approvals/${proposal.id}/approve`,
+      payload: { reason: "Approved by the payments fixture: the basket is above the auto-approval ceiling." },
+    });
+    expect(approve.statusCode, `approval failed: ${approve.body}`).toBe(200);
+    authorization = approve.json().authorization as { id: string };
+  }
+  expect(authorization, `policy neither authorized nor approved: ${evalRes.body}`).toBeTruthy();
+  const authorizationId = authorization.id;
   const variantId = await cheapestActiveVariant(proposal.primaryProductId);
   const checkoutRes = await app.inject({
     method: "POST",

@@ -87,7 +87,7 @@ export async function revalidateCommerceFacts(prisma: PrismaClient, merchantId: 
  * margin as a breach when a floor is set, which is the conservative
  * reading and the one a floor implies.
  */
-export async function computeMarginBps(
+async function computeMarginBps(
   prisma: PrismaClient,
   merchantId: string,
   productId: string,
@@ -116,7 +116,7 @@ export async function computeMarginBps(
  * merchant's autonomy budget, and counting it would let a run of denials
  * exhaust a limit that exists to bound what actually happens.
  */
-export async function countAutonomousActionsToday(prisma: PrismaClient, merchantId: string): Promise<number> {
+async function countAutonomousActionsToday(prisma: PrismaClient, merchantId: string): Promise<number> {
   const startOfDay = new Date();
   startOfDay.setUTCHours(0, 0, 0, 0);
   return prisma.executionAuthorization.count({
@@ -133,7 +133,7 @@ export async function countAutonomousActionsToday(prisma: PrismaClient, merchant
  * deny every untargeted action the moment a merchant required one prior
  * order.
  */
-export async function countTargetCustomerPaidOrders(
+async function countTargetCustomerPaidOrders(
   prisma: PrismaClient,
   merchantId: string,
   sourceOrderId: string | null,

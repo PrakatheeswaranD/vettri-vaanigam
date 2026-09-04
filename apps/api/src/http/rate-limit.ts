@@ -57,15 +57,20 @@ export class InMemoryRateLimitStore implements RateLimitStore {
   }
 }
 
-let activeRateLimitStore: RateLimitStore = new InMemoryRateLimitStore();
-
-export function setRateLimitStore(store: RateLimitStore): void {
-  activeRateLimitStore = store;
-}
-
-export function getRateLimitStore(): RateLimitStore {
-  return activeRateLimitStore;
-}
+/**
+ * The process-local default.
+ *
+ * There were two ways to swap this out: a `setRateLimitStore` /
+ * `getRateLimitStore` pair, and `createPublicRateLimitHook(customStore)`.
+ * Only the second was ever used. The pair also made this a mutable
+ * module-level singleton that nothing could actually mutate — a `let`
+ * implying a reassignment that never happened, and a second seam for a
+ * job that already had one.
+ *
+ * `const` now, and a distributed store is injected where the hook is
+ * built. Rate limiting itself is untouched.
+ */
+const activeRateLimitStore: RateLimitStore = new InMemoryRateLimitStore();
 
 function category(request: FastifyRequest): { name: string; limit: number } | null {
   const path = request.url.split("?", 1)[0] ?? request.url;

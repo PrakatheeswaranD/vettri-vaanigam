@@ -3,13 +3,11 @@ import type {
   AgentToolInvocationResultDTO,
   AgentToolsResponseDTO,
   CheckoutResponseDTO,
-  CheckoutSessionDTO,
   CommerceCustomersResponseDTO,
   CommerceExecutionRequestDTO,
   CommerceOrdersResponseDTO,
   CommercePaymentsResponseDTO,
   CommerceProductsResponseDTO,
-  OrderDTO,
 } from "@razorgrowth/contracts";
 import { apiGet, apiPost } from "../lib/api-client";
 
@@ -24,22 +22,6 @@ export function useExecuteCheckout() {
     onSuccess: () => {
       void queryClient.invalidateQueries({ queryKey: ["ledger"] });
     },
-  });
-}
-
-export function useCheckoutSession(id: string | null) {
-  return useQuery({
-    queryKey: ["commerce", "checkout", id],
-    queryFn: () => apiGet<CheckoutSessionDTO>(`/commerce/checkouts/${id}`),
-    enabled: Boolean(id),
-  });
-}
-
-export function useOrder(id: string | null) {
-  return useQuery({
-    queryKey: ["commerce", "order", id],
-    queryFn: () => apiGet<OrderDTO>(`/commerce/orders/${id}`),
-    enabled: Boolean(id),
   });
 }
 

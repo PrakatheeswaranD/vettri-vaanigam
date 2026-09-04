@@ -35,7 +35,7 @@ const IN_FLIGHT = "__vaanigam_in_flight__";
  * hash and was refused as a conflicting reuse of the key. Clients do not
  * guarantee key order, and neither do most JSON libraries.
  */
-export function fingerprintBody(body: unknown): string {
+function fingerprintBody(body: unknown): string {
   return createHash("sha256").update(canonicalStringify((body ?? null) as CanonicalValue)).digest("hex");
 }
 

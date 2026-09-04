@@ -1,7 +1,7 @@
 import type { BuyerConversation, BuyerMessage } from "@prisma/client";
 import type { BuyerConversationDTO, BuyerIntentDTO, BuyerMessageDTO } from "@razorgrowth/contracts";
 
-export function toBuyerMessageDTO(message: BuyerMessage): BuyerMessageDTO {
+function toBuyerMessageDTO(message: BuyerMessage): BuyerMessageDTO {
   return {
     id: message.id,
     role: message.role,

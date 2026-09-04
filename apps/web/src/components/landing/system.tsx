@@ -47,7 +47,7 @@ export const SECTIONS = [
 
 export type SectionId = (typeof SECTIONS)[number]["id"];
 
-export function sectionIndex(id: SectionId): number {
+function sectionIndex(id: SectionId): number {
   return SECTIONS.findIndex((section) => section.id === id);
 }
 
@@ -564,6 +564,3 @@ export function SectionShell({
 }
 
 /** ₹ figures, formatted the way the rest of the product formats them. */
-export function formatInr(value: number): string {
-  return `₹${value.toLocaleString("en-IN")}`;
-}

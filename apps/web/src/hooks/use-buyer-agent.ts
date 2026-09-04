@@ -1,6 +1,6 @@
-import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
-import type { BuyerAgentResponseDTO, BuyerConversationDTO } from "@razorgrowth/contracts";
-import { apiGet, apiPost } from "../lib/api-client";
+import { useMutation, useQueryClient } from "@tanstack/react-query";
+import type { BuyerAgentResponseDTO } from "@razorgrowth/contracts";
+import { apiPost } from "../lib/api-client";
 
 /**
  * The Buyer Agent lives entirely under `/buyer/`.
@@ -15,14 +15,6 @@ export function useSendBuyerMessage() {
   return useMutation({
     mutationFn: (params: { conversationId?: string; message: string }) =>
       apiPost<BuyerAgentResponseDTO>("/buyer/messages", params),
-  });
-}
-
-export function useBuyerConversation(conversationId: string | undefined) {
-  return useQuery({
-    queryKey: ["buyer-agent", "conversation", conversationId],
-    queryFn: () => apiGet<BuyerConversationDTO>(`/buyer/conversations/${conversationId}`),
-    enabled: Boolean(conversationId),
   });
 }
 
