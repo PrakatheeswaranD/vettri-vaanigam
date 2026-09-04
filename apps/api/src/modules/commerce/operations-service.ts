@@ -53,13 +53,22 @@ export const COMMERCE_PAGE_LIMIT = 100;
  * merchant's own Merchant Agent did. Counting it as the merchant agent's
  * work would be the console taking credit for a third party's traffic.
  */
-const AGENT_ORIGINATED_SOURCES = new Set([
+export const AGENT_ORIGINATED_SOURCES = new Set([
   "AI_CROSS_SELL",
   "AI_UPSELL",
   "AI_BUNDLE",
   "AI_BOUNDED_OFFER",
   "AI_RECOVERY",
 ]);
+
+/**
+ * Orders placed by SOMEBODY ELSE'S buyer agent against this catalogue.
+ *
+ * Real agentic commerce and worth surfacing — but separately from the
+ * merchant's own agent, for the reason stated above: a console must not
+ * report a third party's traffic as its own agent's work.
+ */
+export const EXTERNAL_AGENT_SOURCES = new Set(["AGENT_GATEWAY"]);
 
 const SOURCE_LABEL: Record<string, string> = {
   DIRECT_BUYER: "Direct sale",

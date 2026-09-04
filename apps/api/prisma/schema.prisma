@@ -550,6 +550,23 @@ model MerchantPolicy {
   approvalValidityMinutes      Int      @default(15)
   /// How long an issued `ExecutionAuthorization` remains `ACTIVE` (PART 05 §42).
   authorizationValidityMinutes Int      @default(10)
+
+  /// PART 18 — how long a merchant's PRICE COMMITMENT stands, in hours.
+  ///
+  /// Distinct from the three windows above, and deliberately much longer.
+  /// Those bound how long an INTERNAL step may sit before it goes stale:
+  /// a proposal awaiting evaluation, an approval awaiting use, an
+  /// authorization awaiting one checkout. This bounds something a BUYER is
+  /// shown and may act on, so minutes would be the wrong unit — an offer
+  /// that lapses while someone is deciding is not a boundary, it is a bug.
+  ///
+  /// Before this existed, `findBuyerVisibleOffers` had no time bound in
+  /// reach at all: an offer authorized months earlier was quoted to a
+  /// buyer as a live discount, and the only lifetime anywhere near it was
+  /// the authorization's ten minutes, which bounds executing one checkout
+  /// and says nothing about how long a price stands. Seven days is a
+  /// merchant-changeable default, not a rule.
+  offerValidityHours           Int      @default(168)
   updatedAt                    DateTime @updatedAt
 }
 
@@ -1390,6 +1407,16 @@ model GrowthActionProposal {
   latestPolicyDecisionId   String?
   approvalId               String?
   executionAuthorizationId String?
+  /// PART 18 — when this offer stops being quotable to a buyer, stamped
+  /// from the merchant's `offerValidityHours` when the offer is created.
+  ///
+  /// NULL means no window was recorded, which is every offer authorized
+  /// before this column existed. Those are treated as still standing
+  /// rather than as expired: a merchant committed to them under rules
+  /// that had no expiry, and retroactively revoking a commitment because
+  /// a column was added later would be the system changing its mind about
+  /// a price on the merchant's behalf.
+  offerValidUntil          DateTime?
   isSyntheticDemo          Boolean              @default(true)
   createdAt                DateTime             @default(now())
 

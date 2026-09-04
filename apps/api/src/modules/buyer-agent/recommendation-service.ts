@@ -138,7 +138,11 @@ function buildRecommendedProduct(
 function toFallbackCandidate(candidate: EvaluatedCandidate, intent: BuyerIntent): FallbackRankCandidate {
   return {
     productId: candidate.product.productId,
-    priceMinor: candidate.priceMinor,
+    // PART 18 — rank on what the buyer would PAY. Ranking on list price
+    // pushed a discounted product below undiscounted ones that cost the
+    // buyer more, so a merchant-authorized offer could not reach the
+    // shopper it was authorized for.
+    priceMinor: candidate.effectivePriceMinor,
     readinessState: candidate.product.readiness.state,
     preferenceMatchCount: countPreferenceMatches(candidate, intent),
     hasStrongMetadata: candidate.product.readiness.state === "AGENT_READY",

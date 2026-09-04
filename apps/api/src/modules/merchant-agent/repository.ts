@@ -83,7 +83,48 @@ export interface CreateProposalInput {
   sourceCheckoutId?: string | null;
 }
 
-export function createProposal(prisma: PrismaClient, input: CreateProposalInput) {
+/**
+ * Fallback when a merchant has no `MerchantPolicy` row yet. Matches the
+ * column default in `schema.prisma` — stated in both places because a
+ * merchant with no policy still gets offers stamped, and silently using
+ * "forever" for them would reintroduce exactly the gap this closes.
+ */
+const DEFAULT_OFFER_VALIDITY_HOURS = 168;
+
+/**
+ * PART 18 — how long this offer may be quoted to a buyer.
+ *
+ * Stamped at creation rather than at authorization. The offer's terms are
+ * decided here, and `proposalValidityMinutes` (30 by default) already
+ * bounds how long a proposal can sit before policy evaluates it — so the
+ * gap between creation and commitment is half an hour against a window
+ * measured in days. Stamping at the point the number is computed keeps one
+ * write instead of two, and cannot leave an authorized offer unstamped
+ * because a later transition forgot.
+ *
+ * Returns null for a proposal carrying no offer. A cross-sell with no
+ * discount has no price commitment to expire, and giving it a date would
+ * imply the recommendation itself lapses.
+ */
+async function resolveOfferValidUntil(
+  prisma: PrismaClient,
+  merchantId: string,
+  hasOffer: boolean,
+): Promise<Date | null> {
+  if (!hasOffer) return null;
+  const policy = await prisma.merchantPolicy.findUnique({
+    where: { merchantId },
+    select: { offerValidityHours: true },
+  });
+  const hours = policy?.offerValidityHours ?? DEFAULT_OFFER_VALIDITY_HOURS;
+  // A merchant who sets zero means "do not quote my offers", not "quote
+  // them forever" — the stamp lands in the past and the offer is filtered
+  // out, which is the honest reading of the number they typed.
+  return new Date(Date.now() + hours * 60 * 60 * 1000);
+}
+
+export async function createProposal(prisma: PrismaClient, input: CreateProposalInput) {
+  const offerValidUntil = await resolveOfferValidUntil(prisma, input.merchantId, input.offerKind !== null);
   return prisma.growthActionProposal.create({
     data: {
       merchantId: input.merchantId,
@@ -106,6 +147,7 @@ export function createProposal(prisma: PrismaClient, input: CreateProposalInput)
       rejectionReason: input.rejectionReason,
       blockedOpportunities: input.blockedOpportunities,
       traceId: input.traceId,
+      offerValidUntil,
       recoveryAction: input.recoveryAction ?? null,
       sourceOrderId: input.sourceOrderId ?? null,
       sourcePaymentId: input.sourcePaymentId ?? null,

@@ -1,68 +1,66 @@
-# Full production-shaped stack: real Postgres, API, and web.
+# Real Postgres for local development, as an alternative to the PGlite
+# socket shim in `scripts/db-server.mjs`.
 #
-# This exists mainly so you can validate item #1 (real Postgres) BEFORE
-# paying for a managed database. The local PGlite dev shim
-# (`pnpm db:up`) is not represented here on purpose — the whole point is
-# to run against a real Postgres server.
+# WHY THIS EXISTS
 #
-#   cp .env.example .env      # then fill in real values
-#   docker compose up --build
+# The shim is Postgres compiled to WebAssembly behind a single connection.
+# It is genuinely useful — no install, no daemon, works on a locked-down
+# machine — and it is also the least reliable component in the repo. It
+# wedges while still holding port 5432, so `netstat` reports LISTENING for
+# a process that answers nothing; it needs `connection_limit=1&pgbouncer=true`
+# on every URL because concurrent prepared statements collide; and
+# `vitest.config.ts` sets `fileParallelism: false` purely to keep it alive.
+# Twice during development it corrupted its own data directory badly enough
+# to need a delete, migrate, seed and re-provision.
 #
-# Web is served at http://localhost:8080, API at http://localhost:4000.
-
+# None of those are problems with real Postgres.
+#
+# USING IT
+#
+#   docker compose up -d db
+#   # then point both URLs at it:
+#   #   DATABASE_URL=postgresql://razorgrowth:razorgrowth@127.0.0.1:5433/razorgrowth
+#   #   TEST_DATABASE_URL=postgresql://razorgrowth:razorgrowth@127.0.0.1:5433/razorgrowth
+#   pnpm db:migrate && pnpm db:seed && pnpm db:identities
+#
+# Port 5433, not 5432, so this can run alongside the shim rather than
+# fighting it for the port — switching is then an .env edit, not a
+# process hunt.
+#
+# The credentials below are deliberately trivial and deliberately bound to
+# 127.0.0.1 only: this is a disposable local fixture database holding
+# seeded demo data, never anything real. `assertLocalDatabase` in
+# `src/test-helpers/vitest-setup.ts` still refuses to run the suite
+# against any host that is not local, and that guard is what actually
+# protects the hosted database — not this file.
+#
+# NOT YET VERIFIED ON THIS MACHINE: Docker is not installed here, so this
+# compose file has been written against the documented images and flags
+# but never started. Treat the first `docker compose up` as the test.
 services:
-  postgres:
+  db:
     image: postgres:16-alpine
+    container_name: razorgrowth-db
+    restart: unless-stopped
     environment:
       POSTGRES_USER: razorgrowth
-      POSTGRES_PASSWORD: ${POSTGRES_PASSWORD:-razorgrowth_local_dev}
+      POSTGRES_PASSWORD: razorgrowth
       POSTGRES_DB: razorgrowth
+      # Deterministic collation, so ORDER BY in tests does not depend on
+      # the host's locale.
+      POSTGRES_INITDB_ARGS: "--locale=C --encoding=UTF8"
     ports:
-      - "5433:5432" # 5433 on the host so it never collides with `pnpm db:up`
+      - "127.0.0.1:5433:5432"
     volumes:
-      - postgres-data:/var/lib/postgresql/data
+      - razorgrowth-db-data:/var/lib/postgresql/data
     healthcheck:
-      # The API's migration step fails if it starts before Postgres is
-      # accepting connections, so this gate is load-bearing, not cosmetic.
+      # `pg_isready` is the check the app actually needs: it answers only
+      # when the server will accept a query, which is the distinction the
+      # PGlite shim could not make.
       test: ["CMD-SHELL", "pg_isready -U razorgrowth -d razorgrowth"]
       interval: 5s
-      timeout: 5s
-      retries: 10
-
-  api:
-    build:
-      context: .
-      dockerfile: apps/api/Dockerfile
-    environment:
-      NODE_ENV: production
-      PORT: 4000
-      DATABASE_URL: postgresql://razorgrowth:${POSTGRES_PASSWORD:-razorgrowth_local_dev}@postgres:5432/razorgrowth?schema=public
-      WEB_ORIGIN: ${WEB_ORIGIN:-http://localhost:8080}
-      LOG_LEVEL: ${LOG_LEVEL:-info}
-      SESSION_VALIDITY_HOURS: ${SESSION_VALIDITY_HOURS:-12}
-      # Leave unset to run on the deterministic mock gateway. Set all
-      # three together — partial Razorpay config is rejected at startup.
-      RAZORPAY_KEY_ID: ${RAZORPAY_KEY_ID:-}
-      RAZORPAY_KEY_SECRET: ${RAZORPAY_KEY_SECRET:-}
-      RAZORPAY_WEBHOOK_SECRET: ${RAZORPAY_WEBHOOK_SECRET:-}
-      AI_PROVIDER_API_KEY: ${AI_PROVIDER_API_KEY:-}
-    ports:
-      - "4000:4000"
-    depends_on:
-      postgres:
-        condition: service_healthy
-
-  web:
-    build:
-      context: .
-      dockerfile: apps/web/Dockerfile
-      args:
-        # Build-time only — see apps/web/Dockerfile.
-        VITE_API_BASE_URL: ${VITE_API_BASE_URL:-http://localhost:4000/api/v1}
-    ports:
-      - "8080:80"
-    depends_on:
-      - api
+      timeout: 3s
+      retries: 20
 
 volumes:
-  postgres-data:
+  razorgrowth-db-data:

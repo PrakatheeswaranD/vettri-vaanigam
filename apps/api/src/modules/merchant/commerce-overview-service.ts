@@ -33,6 +33,7 @@
  */
 import type { PrismaClient } from "@prisma/client";
 import type { MerchantCommerceOverviewDTO } from "@razorgrowth/contracts";
+import { AGENT_ORIGINATED_SOURCES, EXTERNAL_AGENT_SOURCES } from "../commerce/operations-service.js";
 
 /** The order feed is a screenful, not a report. Named so the response can
  * tell the console what it is looking at. */
@@ -42,7 +43,7 @@ export async function getMerchantCommerceOverview(
   prisma: PrismaClient,
   merchantId: string,
 ): Promise<MerchantCommerceOverviewDTO> {
-  const [merchant, recentOrders, customers, captured, orderCount, paidAggregate] = await Promise.all([
+  const [merchant, recentOrders, customers, captured, orderCount, paidBySource, paidAggregate] = await Promise.all([
     prisma.merchant.findUniqueOrThrow({ where: { id: merchantId }, select: { defaultCurrency: true } }),
 
     prisma.order.findMany({
@@ -70,6 +71,17 @@ export async function getMerchantCommerceOverview(
 
     prisma.order.count({ where: { merchantId } }),
 
+    // PART 18 — attribution, grouped in the database rather than derived
+    // from the capped `recentOrders` page above. A share computed from the
+    // most recent hundred orders is not the merchant's share, and would
+    // drift every time an order was placed.
+    prisma.order.groupBy({
+      by: ["source"],
+      where: { merchantId, status: "PAID" },
+      _count: true,
+      _sum: { totalAmountMinor: true },
+    }),
+
     // The average the database computes over every PAID order — not the
     // average of the page above.
     prisma.order.aggregate({
@@ -79,7 +91,44 @@ export async function getMerchantCommerceOverview(
     }),
   ]);
 
+  /**
+   * `Order.source` is a free String, not an enum, and the data proves why
+   * that matters: both "direct" and "DIRECT_BUYER" exist in the seeded
+   * catalogue. Classification is therefore an explicit allowlist shared
+   * with `operations-service.ts` — never a substring guess at "AI" or
+   * "AGENT", which would misfile the first source anyone named awkwardly.
+   *
+   * Anything unrecognised counts as human. A new agent source added later
+   * would be under-reported until it is listed, and under-reporting the
+   * agent is the safe direction for a figure whose whole purpose is to
+   * claim credit for the agent.
+   */
+  const attribution = {
+    ownAgentPaidOrderCount: 0,
+    ownAgentPaidRevenueMinor: 0,
+    externalAgentPaidOrderCount: 0,
+    externalAgentPaidRevenueMinor: 0,
+    humanPaidOrderCount: 0,
+    humanPaidRevenueMinor: 0,
+  };
+  for (const row of paidBySource) {
+    const count = row._count;
+    const revenue = row._sum.totalAmountMinor ?? 0;
+    const source = row.source ?? "";
+    if (AGENT_ORIGINATED_SOURCES.has(source)) {
+      attribution.ownAgentPaidOrderCount += count;
+      attribution.ownAgentPaidRevenueMinor += revenue;
+    } else if (EXTERNAL_AGENT_SOURCES.has(source)) {
+      attribution.externalAgentPaidOrderCount += count;
+      attribution.externalAgentPaidRevenueMinor += revenue;
+    } else {
+      attribution.humanPaidOrderCount += count;
+      attribution.humanPaidRevenueMinor += revenue;
+    }
+  }
+
   return {
+    agentAttribution: attribution,
     analytics: {
       receivedRevenueMinor: captured._sum.amountMinor ?? 0,
       capturedPaymentCount: captured._count,

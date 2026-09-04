@@ -26,6 +26,7 @@
 import { randomUUID } from "node:crypto";
 import type { PrismaClient } from "@prisma/client";
 import { z } from "zod";
+import { offerDiscountMinor } from "@razorgrowth/domain";
 import { AppError } from "../../http/errors.js";
 import { appendLedgerEvent, withLedgerConcurrencyRetry } from "../audit/ledger.js";
 import { categoryPermitted, resolveBuyerPolicy } from "./resolve-policy.js";
@@ -153,16 +154,11 @@ export async function createPurchaseProposal(
    * product cannot round in opposite directions.
    */
   const [offer] = await findBuyerVisibleOffers(prisma, [variant.productId]);
-  const discountMinor = (() => {
-    if (!offer) return 0;
-    if (offer.percentageBps !== null && offer.percentageBps > 0) {
-      return Math.min(listTotalMinor, Math.round((listTotalMinor * offer.percentageBps) / 10_000));
-    }
-    if (offer.discountMinor !== null && offer.discountMinor > 0) {
-      return Math.min(listTotalMinor, offer.discountMinor);
-    }
-    return 0;
-  })();
+  // PART 18 — the arithmetic moved to `@razorgrowth/domain` so discovery
+  // can rank and budget-check on the SAME number the buyer is charged.
+  // Two copies would be two chances to disagree, and a buyer shown one
+  // price and charged another is worse than either figure alone.
+  const discountMinor = offerDiscountMinor(listTotalMinor, offer ?? null);
 
   // Never negative, never above the basket. Both are structurally
   // impossible above; asserted here because a negative charge is the one

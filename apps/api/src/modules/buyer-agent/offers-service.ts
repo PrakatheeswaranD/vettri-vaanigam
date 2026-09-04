@@ -42,21 +42,28 @@
  * of a statement, not a refusal, and an offer that already passed
  * governance should not be revoked by silence.
  *
- * WHAT THIS DELIBERATELY DOES *NOT* FILTER, AND WHY
+ * EXPIRY — PART 18
  *
- * Expiry. The docblock here used to promise "an authorization that lapsed
- * is not an offer", and no such check existed — because
- * `GrowthActionProposal` HAS NO VALIDITY WINDOW. The only time bound in
- * reach is the `ExecutionAuthorization`'s ~10 minutes, and that bounds
- * executing ONE checkout, not how long a merchant's price commitment
- * stands. Treating the two as the same thing would invent a product rule
- * about money, which is exactly the kind of guess this file exists to
- * refuse.
+ * This file used to promise "an authorization that lapsed is not an
+ * offer" and then not check anything, because `GrowthActionProposal` had
+ * no validity window at all. The only time bound in reach was the
+ * `ExecutionAuthorization`'s ten minutes, which bounds executing ONE
+ * checkout and says nothing about how long a merchant's price commitment
+ * stands. Rather than fake it, the promise was withdrawn — and the real
+ * gap left behind was that an offer authorized months ago was still
+ * quoted to a buyer as live.
  *
- * So the promise is withdrawn rather than faked. A merchant who wants
- * offers to lapse needs a validity field on the offer itself; until there
- * is one, a committed offer stands until its status or the product's
- * eligibility changes, and that is now stated instead of implied.
+ * `MerchantPolicy.offerValidityHours` now exists, alongside the three
+ * internal windows a merchant already sets, and every offer is stamped
+ * with `offerValidUntil` when it is created. The filter below is that
+ * stamp, and nothing else — no inference from the authorization's
+ * lifetime, no assumption about what "recent" means.
+ *
+ * NULL IS NOT EXPIRED. Offers committed before the column existed carry
+ * no window, and they still stand. A merchant agreed to those prices
+ * under rules that had no expiry; revoking them because a column was
+ * added later would be the system changing its mind about a price on the
+ * merchant's behalf, which is the opposite of what this file is for.
  *
  * And the amount is read from the merchant's own `offerCalculation`, which
  * the growth pipeline computed deterministically — never recomputed here,
@@ -108,6 +115,9 @@ export async function findBuyerVisibleOffers(
       primaryProductId: { in: promotable },
       status: { in: [...COMMITTED_STATUSES] },
       offerKind: { not: null },
+      // Still inside the merchant's own validity window, or from before
+      // windows existed. See EXPIRY above for why NULL stays visible.
+      OR: [{ offerValidUntil: null }, { offerValidUntil: { gt: new Date() } }],
     },
     orderBy: { createdAt: "desc" },
     select: {
@@ -120,6 +130,7 @@ export async function findBuyerVisibleOffers(
       offerAmountMinor: true,
       offerCurrency: true,
       offerCalculation: true,
+      offerValidUntil: true,
       status: true,
       createdAt: true,
     },
@@ -154,6 +165,7 @@ export async function findBuyerVisibleOffers(
        * proposed and their own policy authorized.
        */
       provenance: `Authorized by the merchant's policy engine on ${proposal.createdAt.toISOString().slice(0, 10)}.`,
+      validUntil: proposal.offerValidUntil?.toISOString() ?? null,
       status: proposal.status,
     };
   });

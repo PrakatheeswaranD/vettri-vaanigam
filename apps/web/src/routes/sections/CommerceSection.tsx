@@ -47,6 +47,108 @@ const TABS = [
   { to: "/merchant/commerce/post-purchase", label: "Post-Purchase" },
 ] as const;
 
+/**
+ * PART 18 — Commerce now opens with how much of this was agentic.
+ *
+ * The section led with captured revenue, order count, average order and
+ * customer count: four figures any storefront dashboard shows, none of
+ * which say whether an agent did anything. A merchant evaluating an
+ * AI-native commerce system had to go to a different section to find out.
+ *
+ * Every number here is PAID-only and whole-history, the same basis as the
+ * strip below, and the merchant's own agent is kept separate from
+ * external buyer agents throughout — see the DTO for why they are never
+ * summed into a single "AI revenue" headline.
+ */
+function AgentAttribution({
+  attribution,
+  money,
+  sharePercent,
+  attributableMinor,
+}: {
+  attribution: MerchantCommerceOverviewDTO["agentAttribution"];
+  money: (amountMinor: number) => string;
+  sharePercent: number | null;
+  attributableMinor: number;
+}) {
+  const { ownAgentPaidOrderCount, ownAgentPaidRevenueMinor, externalAgentPaidOrderCount, externalAgentPaidRevenueMinor, humanPaidRevenueMinor } = attribution;
+
+  // Nothing settled yet. An empty bar and "0%" would read as a verdict on
+  // the agent rather than as an absence of data.
+  if (attributableMinor === 0) {
+    return (
+      <Card>
+        <CardBody className="py-3">
+          <p className="text-xs font-medium uppercase tracking-wide text-ink-faint">Agent-attributed revenue</p>
+          <p className="mt-1 text-sm text-ink-muted">
+            No paid orders yet, so there is nothing to attribute. This fills in from settled orders, never from projections.
+          </p>
+        </CardBody>
+      </Card>
+    );
+  }
+
+  const pct = (minor: number) => (minor / attributableMinor) * 100;
+  // Two shades of the brand ramp for the two agentic buckets, and a
+  // neutral for direct. Deliberately NOT `accent`: the palette reserves
+  // amber for "a human needs to decide this", and attribution is a
+  // reading, not a decision waiting on someone.
+  const segments = [
+    { key: "own", minor: ownAgentPaidRevenueMinor, className: "bg-brand-600" },
+    { key: "external", minor: externalAgentPaidRevenueMinor, className: "bg-brand-300" },
+    { key: "human", minor: humanPaidRevenueMinor, className: "bg-border-strong" },
+  ].filter((segment) => segment.minor > 0);
+
+  return (
+    <Card>
+      <CardBody className="py-3">
+        <div className="flex flex-wrap items-baseline justify-between gap-x-4 gap-y-1">
+          <p className="text-xs font-medium uppercase tracking-wide text-ink-faint">Agent-attributed revenue</p>
+          <p className="text-xs text-ink-muted">
+            {sharePercent}% of {money(attributableMinor)} settled
+          </p>
+        </div>
+
+        <div className="mt-2 flex h-2 w-full overflow-hidden rounded-full bg-surface-sunken" role="presentation">
+          {segments.map((segment) => (
+            <div key={segment.key} className={segment.className} style={{ width: `${pct(segment.minor)}%` }} />
+          ))}
+        </div>
+
+        <dl className="mt-3 grid gap-x-6 gap-y-2 sm:grid-cols-3">
+          <div>
+            <dt className="text-xs text-ink-muted">This merchant&rsquo;s agent</dt>
+            <dd className="text-sm font-semibold tabular-nums text-ink">
+              {money(ownAgentPaidRevenueMinor)}{" "}
+              <span className="font-normal text-ink-muted">
+                · {ownAgentPaidOrderCount} order{ownAgentPaidOrderCount === 1 ? "" : "s"}
+              </span>
+            </dd>
+          </div>
+          <div>
+            <dt className="text-xs text-ink-muted">External buyer agents</dt>
+            <dd className="text-sm font-semibold tabular-nums text-ink">
+              {money(externalAgentPaidRevenueMinor)}{" "}
+              <span className="font-normal text-ink-muted">
+                · {externalAgentPaidOrderCount} order{externalAgentPaidOrderCount === 1 ? "" : "s"}
+              </span>
+            </dd>
+          </div>
+          <div>
+            <dt className="text-xs text-ink-muted">Direct</dt>
+            <dd className="text-sm font-semibold tabular-nums text-ink">{money(humanPaidRevenueMinor)}</dd>
+          </div>
+        </dl>
+
+        <p className="mt-2 text-xs text-ink-faint">
+          Paid orders only, whole history. An order placed by another party&rsquo;s buyer agent is counted separately —
+          it is real agentic commerce, but not this merchant&rsquo;s agent&rsquo;s work.
+        </p>
+      </CardBody>
+    </Card>
+  );
+}
+
 function Metric({ label, value, note }: { label: string; value: string; note?: string }) {
   return (
     <Card>
@@ -76,9 +178,29 @@ function CommerceSummary() {
   // tab in the section — the tab below states its own failure.
   if (query.isError || !query.data) return null;
 
-  const { analytics } = query.data;
+  const { analytics, agentAttribution } = query.data;
+  const money = (amountMinor: number) => formatMoney({ amountMinor, currency: analytics.currency });
+
+  // The denominator is settled revenue the console can attribute, which is
+  // the sum of the three buckets — not `receivedRevenueMinor`. Those are
+  // different bases (captured PAYMENTS versus PAID ORDER totals), and
+  // dividing one by the other would produce a share that is quietly wrong.
+  const attributableMinor =
+    agentAttribution.ownAgentPaidRevenueMinor +
+    agentAttribution.externalAgentPaidRevenueMinor +
+    agentAttribution.humanPaidRevenueMinor;
+  const agentMinor = agentAttribution.ownAgentPaidRevenueMinor + agentAttribution.externalAgentPaidRevenueMinor;
+  const agentSharePercent = attributableMinor === 0 ? null : Math.round((agentMinor / attributableMinor) * 100);
+
   return (
-    <div className="grid gap-3 sm:grid-cols-2 xl:grid-cols-4">
+    <div className="space-y-3">
+      <AgentAttribution
+        attribution={agentAttribution}
+        money={money}
+        sharePercent={agentSharePercent}
+        attributableMinor={attributableMinor}
+      />
+      <div className="grid gap-3 sm:grid-cols-2 xl:grid-cols-4">
       <Metric label="Captured revenue" value={formatMoney({ amountMinor: analytics.receivedRevenueMinor, currency: analytics.currency })} note={`${analytics.capturedPaymentCount} captured payment${analytics.capturedPaymentCount === 1 ? "" : "s"}`} />
       <Metric label="Orders received" value={String(analytics.orderCount)} note={`${analytics.paidOrderCount} paid`} />
       <Metric
@@ -87,6 +209,7 @@ function CommerceSummary() {
         note={analytics.paidOrderCount === 0 ? "No paid orders yet" : `Across ${analytics.paidOrderCount} paid order${analytics.paidOrderCount === 1 ? "" : "s"}`}
       />
       <Metric label="Customers" value={String(analytics.customerCount)} />
+      </div>
     </div>
   );
 }

@@ -13,6 +13,7 @@ import { afterAll, beforeAll, describe, expect, it } from "vitest";
 import type { FastifyInstance } from "fastify";
 import { buildAuthedTestApp, getTestMerchantId } from "./test-helpers/test-app.js";
 import { prisma } from "./db/client.js";
+import { createInventoryTracker } from "./test-helpers/inventory-restore.js";
 import { proposeGrowthAction } from "./modules/merchant-agent/service.js";
 import { createFixtureProvider } from "./modules/agents/providers/fixture-provider.js";
 
@@ -36,11 +37,17 @@ async function cheapestActiveVariant(pid: string): Promise<string> {
   return variant.id;
 }
 
+const inventory = createInventoryTracker();
+
 beforeAll(async () => {
   app = await buildAuthedTestApp();
+  // Record stock levels so afterAll can put them back — this file
+  // reserves inventory on every checkout it creates.
+  await inventory.capture(prisma);
 });
 
 afterAll(async () => {
+  await inventory.restore(prisma);
   await app.close();
   await prisma.$disconnect();
 });
@@ -91,7 +98,8 @@ async function authorizeProposal(percentageBps: number | null): Promise<{ author
 }
 
 async function checkout(body: { authorizationId: string; selection: { productId: string; variantId: string; quantity: number }; idempotencyKey: string }) {
-  return app.inject({ method: "POST", url: "/api/v1/commerce/checkout", payload: body });
+  const response = await app.inject({ method: "POST", url: "/api/v1/commerce/checkout", payload: body });
+  return response;
 }
 
 describe("Commerce Execution — golden path (PART 06 §189)", () => {

@@ -641,7 +641,24 @@ export async function handleBuyerMessage(
     };
   }
 
-  const evaluated = evaluateCandidates(products, mergedIntent);
+  /**
+   * OFFERS ARE RESOLVED BEFORE EVALUATION, NOT AFTER RANKING.
+   *
+   * PART 18 — they used to be looked up only for the five products that
+   * had already won. So a merchant-authorized discount could not affect
+   * whether its product was affordable or where it ranked; a product the
+   * discount brought inside the buyer's budget was still rejected on list
+   * price, and one made cheapest by a discount still ranked as if it were
+   * not. The merchant's agent authorized offers that structurally could
+   * not reach a shopper.
+   *
+   * Resolved across every candidate, so eligibility and ranking both use
+   * the price the buyer would actually pay.
+   */
+  const candidateOffers = await findBuyerVisibleOffers(prisma, products.map((product) => product.productId));
+  const offersByProductId = new Map(candidateOffers.map((offer) => [offer.productId, offer]));
+
+  const evaluated = evaluateCandidates(products, mergedIntent, offersByProductId);
   trace.push({ stage: "CANDIDATES_EVALUATED", detail: `${evaluated.exact.length} exact match(es), ${evaluated.nearMatch.length} near-match candidate(s)` });
 
   await recordLedgerEvent(prisma, {

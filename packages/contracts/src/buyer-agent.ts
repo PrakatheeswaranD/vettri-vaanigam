@@ -191,6 +191,14 @@ export const buyerVisibleOfferSchema = z.object({
   currency: z.string().nullable(),
   /** Where this came from, in the buyer's terms. Never "we found a deal". */
   provenance: z.string(),
+  /**
+   * PART 18 — when the merchant's price commitment lapses, ISO-8601.
+   *
+   * NULL means no window was recorded, which is every offer committed
+   * before offers had one. Those still stand, so a consumer must render
+   * NULL as "no stated end date", never as "expired" or "expires today".
+   */
+  validUntil: z.string().nullable(),
   status: z.string(),
 });
 export type BuyerVisibleOfferDTO = z.infer<typeof buyerVisibleOfferSchema>;

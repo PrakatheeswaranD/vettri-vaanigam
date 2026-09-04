@@ -15,6 +15,7 @@ import { afterAll, beforeAll, beforeEach, describe, expect, it } from "vitest";
 import type { FastifyInstance } from "fastify";
 import { buildAuthedTestApp, getTestMerchantId } from "./test-helpers/test-app.js";
 import { prisma } from "./db/client.js";
+import { createInventoryTracker } from "./test-helpers/inventory-restore.js";
 import { proposeGrowthAction } from "./modules/merchant-agent/service.js";
 import { createFixtureProvider } from "./modules/agents/providers/fixture-provider.js";
 import { getMockPaymentGatewayForTests, getPaymentGateway } from "./modules/payments/gateway-factory.js";
@@ -37,11 +38,17 @@ async function cheapestActiveVariant(pid: string): Promise<string> {
   return variant.id;
 }
 
+const inventory = createInventoryTracker();
+
 beforeAll(async () => {
   app = await buildAuthedTestApp();
+  // Record stock levels so afterAll can put them back — this file
+  // reserves inventory on every checkout it creates.
+  await inventory.capture(prisma);
 });
 
 afterAll(async () => {
+  await inventory.restore(prisma);
   await app.close();
   await prisma.$disconnect();
 });
@@ -74,6 +81,13 @@ async function proposeCrossSell() {
 /** Builds a real, authorized, READY_FOR_PAYMENT checkout — the exact
  * handoff PART 07 must consume. Returns the checkout id and the
  * workflowId (the proposal's own traceId) for ledger assertions. */
+/**
+ * Creating a checkout reserves stock, and nothing gave it back. Twenty-nine
+ * reservations per run, across many runs, is what drained the ₹399 socks that
+ * kept a cross-sell basket under the merchant's auto-approval ceiling — after
+ * which twenty-six tests in this file failed on a null authorization for
+ * reasons that had nothing to do with payments.
+ */
 async function readyCheckout(): Promise<{ checkoutId: string; orderId: string; workflowId: string; amountMinor: number; currency: string }> {
   const proposal = await proposeCrossSell();
   const evalRes = await app.inject({ method: "POST", url: "/api/v1/policy/evaluate", payload: { proposalId: proposal.id } });

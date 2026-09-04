@@ -52,6 +52,7 @@ import { reconcilePayment } from "../payments/payment-service.js";
 import { executeRecovery } from "../payments/recovery-execution-service.js";
 import { evaluateProposalPolicy } from "../policy/service.js";
 import { issueExecutionAuthorization } from "../policy/authorization-service.js";
+import { evaluateAndProposeCheckoutReissue, executeCheckoutReissue } from "./abandoned-checkout-service.js";
 import { evaluateAndProposeRecovery } from "./recovery-service.js";
 import { proposeGrowthAction } from "./service.js";
 
@@ -566,10 +567,95 @@ const proposeGrowthActionTool: AgentToolDefinition = {
  * The registry
  * ══════════════════════════════════════════════════════════════════════ */
 
+/**
+ * GOVERNED. Hands an abandoned basket back to the buyer who left it.
+ *
+ * PART 18 — `ABANDONED_CHECKOUT_RECOVERY` was detected every cycle and no
+ * tool consumed it, so the finding sat on the merchant's screen with an
+ * action label and nothing behind it. See
+ * `abandoned-checkout-service.ts` for why this is a separate action from
+ * `recover_failed_payment` rather than a relaxation of it.
+ *
+ * `movesMoney: false` is the substantive claim here, and it is true: the
+ * only write is the session's status and expiry. No order, no payment, no
+ * amount change. The buyer still has to decide, and still has to pay.
+ */
+const reissueAbandonedCheckoutTool: AgentToolDefinition = {
+  meta: {
+    name: "reissue_abandoned_checkout",
+    summary:
+      "Re-open a checkout a buyer abandoned, so the same basket at the same price is available to them again. Nothing is charged and no new order is created; the buyer still completes the payment themselves.",
+    safety: "GOVERNED",
+    reads: "PAYMENTS",
+    subject: "an order id",
+    movesMoney: false,
+    requiresApproval: true,
+    handles: ["ABANDONED_CHECKOUT_RECOVERY"],
+  },
+  async run(ctx, orderId) {
+    const gated = await governedPipeline(ctx, () => evaluateAndProposeCheckoutReissue(ctx.prisma, ctx.merchantId, orderId));
+    if (!gated.ok) return gated.result;
+
+    try {
+      // The authorization id is the idempotency key, as everywhere else in
+      // this pipeline: one authorization re-opens one checkout, so a
+      // retried run cannot re-issue twice against the same permission.
+      const result = await executeCheckoutReissue(ctx.prisma, ctx.merchantId, gated.authorizationId, gated.authorizationId);
+      const stages = [...gated.stages, "EXECUTED"];
+
+      const checkout = await ctx.prisma.checkoutSession.findFirst({
+        where: { id: result.checkoutId, merchantId: ctx.merchantId },
+        select: { id: true, status: true, expiresAt: true },
+      });
+      if (!checkout || checkout.status !== "READY_FOR_PAYMENT") {
+        // Execution ran and its claim could not be confirmed. FAILED, not
+        // EXECUTED: an unverifiable success is the one outcome a
+        // governance record must never round up.
+        await recordTerminalStatus(ctx, gated.proposalId, "FAILED");
+        return {
+          outcome: "FAILED",
+          detail: "The re-issue reported success but the checkout could not be read back as ready for payment.",
+          proposalId: gated.proposalId,
+          policyOutcome: gated.policyOutcome,
+          authorizationId: gated.authorizationId,
+          stages,
+        };
+      }
+      stages.push("VERIFIED");
+      await recordTerminalStatus(ctx, gated.proposalId, "EXECUTED");
+      await recordTerminalStatus(ctx, gated.proposalId, "VERIFIED");
+
+      return {
+        outcome: "EXECUTED",
+        // Deliberately not "recovered the basket". The basket is available
+        // again; whether the buyer returns is theirs to decide.
+        detail: `This checkout is open again until ${checkout.expiresAt.toISOString()}, holding the same basket at the same price. No payment was taken and no new order was created.`,
+        proposalId: gated.proposalId,
+        policyOutcome: gated.policyOutcome,
+        authorizationId: gated.authorizationId,
+        changed: { entity: "CheckoutSession", id: checkout.id, from: "abandoned", to: checkout.status },
+        stages,
+      };
+    } catch (error) {
+      const { outcome, detail } = classifyToolError(error, { tool: "governed_pipeline_execute", merchantId: ctx.merchantId, workflowId: ctx.workflowId, subject: gated.proposalId });
+      if (outcome === "FAILED") await recordTerminalStatus(ctx, gated.proposalId, "FAILED");
+      return {
+        outcome,
+        detail,
+        proposalId: gated.proposalId,
+        policyOutcome: gated.policyOutcome,
+        authorizationId: gated.authorizationId,
+        stages: gated.stages,
+      };
+    }
+  },
+};
+
 const TOOLS: readonly AgentToolDefinition[] = [
   reconcilePaymentTool,
   recoverFailedPaymentTool,
   proposeGrowthActionTool,
+  reissueAbandonedCheckoutTool,
 ] as const;
 
 export const AGENT_TOOLS: readonly AgentToolDTO[] = TOOLS.map((t) => t.meta);
@@ -588,9 +674,8 @@ export function findTool(name: string): AgentToolDefinition | null {
  * has already shipped that bug twice.
  *
  * The types that map to nothing are deliberate, not missing:
- * ABANDONED_CHECKOUT_RECOVERY, REPEAT_PURCHASE and CUSTOMER_REACTIVATION
- * are keyed by customer or checkout, and no proposal shape exists for
- * either; UNDERPERFORMING_PRODUCT, PRODUCT_DISCOVERY and
+ * REPEAT_PURCHASE and CUSTOMER_REACTIVATION are keyed by a customer, and
+ * no proposal shape exists for one; UNDERPERFORMING_PRODUCT, PRODUCT_DISCOVERY and
  * AI_BUYER_READINESS ask the merchant to author product facts, which the
  * agent must never invent. Manufacturing a proposal for "add attributes to
  * nine products" would put a governance row on a task governance has no

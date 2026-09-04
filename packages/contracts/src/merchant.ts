@@ -148,6 +148,34 @@ export const merchantCommerceOverviewSchema = z.object({
     averageOrderValueMinor: z.number().int().min(0),
     currency: currencySchema,
   }),
+  /**
+   * PART 18 — how much of this merchant's settled commerce an agent
+   * actually produced.
+   *
+   * Commerce led with four totals that an ordinary storefront dashboard
+   * would show, with nothing to say whether any of it was agentic. These
+   * are the same PAID-only, whole-history basis as `analytics` above, so
+   * the two strips can be read together without unit confusion.
+   *
+   * The merchant's OWN agent and EXTERNAL buyer agents are counted
+   * separately and never summed into one "AI revenue" figure: an order
+   * that arrived through the agent gateway was placed by somebody else's
+   * agent against this catalogue, and reporting it as this merchant's
+   * agent's work would be the console taking credit for a third party.
+   */
+  agentAttribution: z.object({
+    /** Orders this merchant's Merchant Agent originated, PAID only. */
+    ownAgentPaidOrderCount: z.number().int().min(0),
+    ownAgentPaidRevenueMinor: z.number().int().min(0),
+    /** Orders another party's buyer agent placed here, PAID only. */
+    externalAgentPaidOrderCount: z.number().int().min(0),
+    externalAgentPaidRevenueMinor: z.number().int().min(0),
+    /** Everything else: direct, admin, and any source not classified as
+     * agentic. Unrecognised sources land here deliberately — understating
+     * the agent is the safe direction for a claim about the agent. */
+    humanPaidOrderCount: z.number().int().min(0),
+    humanPaidRevenueMinor: z.number().int().min(0),
+  }),
   recentOrders: z.array(
     z.object({
       id: z.string().uuid(),

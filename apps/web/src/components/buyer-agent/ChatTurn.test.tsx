@@ -288,6 +288,9 @@ describe("AgentBubble — the default view a buyer actually sees", () => {
           baseAmountMinor: 449_900,
           currency: "INR",
           provenance: "Authorized by the merchant's policy engine on 2026-09-01.",
+          // PART 18 — an offer committed before validity windows existed.
+          // Null is "no stated end date", never "expired".
+          validUntil: null,
           status: "AUTHORIZED",
         },
       ],

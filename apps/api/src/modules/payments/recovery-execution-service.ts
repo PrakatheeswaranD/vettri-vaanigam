@@ -71,6 +71,19 @@ export async function executeRecovery(
   if (!proposal || proposal.actionType !== "RECOVERY" || !proposal.sourceOrderId || !proposal.sourcePaymentId || !proposal.sourceCheckoutId) {
     throw new AppError("AUTHORIZATION_NOT_ALLOWED", "This authorization does not correspond to a payment-failure recovery proposal.");
   }
+  // PART 18 — an abandoned-checkout re-issue is also `actionType: RECOVERY`
+  // with the same three `source*` columns, and it must never be executed
+  // here: this function CREATES A NEW CHECKOUT, which is right for a
+  // payment that verifiably failed and wrong for one that may still be
+  // live. The order/payment state checks below would refuse it anyway, but
+  // they refuse it for the wrong reason and only by luck. The recovery
+  // action is what actually distinguishes the two, so it is checked.
+  if (proposal.recoveryAction !== "RETRY_SAME_CHECKOUT") {
+    throw new AppError(
+      "AUTHORIZATION_NOT_ALLOWED",
+      `This authorization is for a ${proposal.recoveryAction ?? "unspecified"} action, not a payment-failure retry.`,
+    );
+  }
   if (fingerprintFromProposal(proposal) !== authorization.proposalFingerprint) {
     throw new AppError("PROPOSAL_CHANGED", "The recovery proposal has changed since authorization was issued.");
   }

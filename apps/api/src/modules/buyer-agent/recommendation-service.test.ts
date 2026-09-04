@@ -43,6 +43,10 @@ function candidate(id: string, overrides: Partial<EvaluatedCandidate> = {}): Eva
     matchType: "EXACT",
     violations: [],
     priceMinor: 449900,
+    // No offer by default: effective price equals list, which is the
+    // common case and the pre-PART-18 behaviour.
+    effectivePriceMinor: 449900,
+    offerDiscountMinor: 0,
     availabilityState: "IN_STOCK",
     attributes: { size: "UK9" },
     ...overrides,

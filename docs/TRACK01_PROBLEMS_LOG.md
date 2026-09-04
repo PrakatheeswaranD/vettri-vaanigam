@@ -1,4 +1,4 @@
-# TRACK01 — every problem hit, Parts 0 through 17 and the closing gap pass
+# TRACK01 — every problem hit, Parts 0 through 18 and the closing gap pass
 
 A complete log, including the small ones and the ones I caused myself. Kept in three categories per part, because they need different responses:
 
@@ -7,6 +7,8 @@ A complete log, including the small ones and the ones I caused myself. Kept in t
 - **Environment friction** — tooling and machine problems that cost time but weren't defects
 
 ## How this file is maintained
+
+Part 18 continues in [TRACK01_PART18_FIXES.md](./TRACK01_PART18_FIXES.md). It is kept as a separate detailed verification record so this already-large forensic log remains navigable.
 
 **A part is not finished until its section exists here.** Problems are recorded as they happen during the part, not reconstructed afterwards — reconstruction loses the small ones and the self-inflicted ones, which are the entries most worth having.
 

@@ -45,6 +45,8 @@ apps/api/prisma/dev.db
 # Throwaway query/repair scripts written while auditing against a live
 # database. Useful in the moment, never part of the product.
 .qa/
+.p18/
+apps/api/.scratch/
 
 # Vite/Vitest write these transient config shims next to the real config.
 *.timestamp-*.mjs
