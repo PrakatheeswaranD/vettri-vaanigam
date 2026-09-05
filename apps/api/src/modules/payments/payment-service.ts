@@ -234,9 +234,23 @@ async function continueProviderOrderCreation(
   }
 
   // Publish only the claimed provider result; recovery may have published it first.
+  //
+  // Releasing `automaticRetryBlocked` is part of publishing, not an
+  // afterthought. The flag is the durable claim taken before the network
+  // call, and it exists to stop a second POST while the outcome is
+  // unknown. Once the provider order id is recorded the outcome is known,
+  // so the claim has done its job and must be handed back.
+  //
+  // Leaving it set was silently fatal: `GET .../payment/checkout` refuses
+  // any payment with `automaticRetryBlocked`, so every successfully
+  // created Razorpay order was immediately ineligible for the checkout it
+  // had just been created for. The buyer reached "Complete Razorpay Test
+  // checkout" and got "Payment is not eligible for checkout" — with a real
+  // order sitting in Razorpay. The uncertain paths above deliberately keep
+  // the claim: an UNKNOWN or FAILED attempt must stay blocked.
   const claim = await prisma.payment.updateMany({
     where: { id: payment.id, providerOrderId: null },
-    data: { providerOrderId: providerOrder.providerOrderId, state: "CREATED" },
+    data: { providerOrderId: providerOrder.providerOrderId, state: "CREATED", automaticRetryBlocked: false },
   });
   if (claim.count === 0) {
     const winner = await prisma.payment.findUniqueOrThrow({ where: { id: payment.id } });
@@ -285,8 +299,10 @@ async function recoverProviderOrder(
     throw new AppError("FINANCIAL_INTEGRITY_ERROR", "Recovered provider order does not match the authorized amount and currency.");
   }
   return withLedgerConcurrencyRetry(prisma, async tx => {
+    // Same release as the create path: recovering the order resolves the
+    // uncertainty the claim was protecting, so the claim is handed back.
     const claim = await tx.payment.updateMany({ where: { id: payment.id, providerOrderId: null, state: { in: ["CREATED", "UNKNOWN"] } },
-      data: { providerOrderId: order.providerOrderId, state: "CREATED" } });
+      data: { providerOrderId: order.providerOrderId, state: "CREATED", automaticRetryBlocked: false } });
     if (claim.count === 1) {
       await updateCheckoutStatus(tx, payment.checkoutId!, "PAYMENT_IN_PROGRESS");
       await setOrderStatus(tx, payment.orderId, "PAYMENT_PENDING");
