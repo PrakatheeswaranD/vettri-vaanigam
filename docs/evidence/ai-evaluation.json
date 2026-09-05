@@ -1,0 +1,71 @@
+{
+  "generatedAt": "2026-09-05T05:35:00.000Z",
+  "datasetVersion": "1.0",
+  "purpose": "Answer the question the architecture invites: the deterministic fallback looks capable, so what does the live model actually earn? Both providers were run over the same held-out cases on the same seeded catalogue.",
+  "environment": {
+    "catalogue": "seeded demo merchant (200 products, 703 variants)",
+    "liveModel": "gemini-flash-lite-latest",
+    "deterministicProvider": "DEMO_RULE_BASED",
+    "note": "The .env default gemini-3.5-flash was quota-exhausted at the free tier limit of 20 requests/day, so the live run used gemini-flash-lite-latest. The eval script throttles to 9 requests/minute so provider rate limiting is not scored as model failure."
+  },
+
+  "intentExtraction": {
+    "cases": 28,
+    "deterministic": {
+      "categoryAccuracy": "100.0% (24/24)",
+      "budgetAccuracy": "100.0% (11/11)",
+      "attributeAccuracy": "100.0% (10/10)",
+      "clarificationDecisionAccuracy": "100.0% (3/3)",
+      "overallExactSemanticMatch": "100.0% (28/28)"
+    },
+    "liveModel": {
+      "categoryAccuracy": "95.8% (23/24)",
+      "budgetAccuracy": "100.0% (11/11)",
+      "attributeAccuracy": "100.0% (10/10)",
+      "clarificationDecisionAccuracy": "100.0% (3/3)",
+      "overallExactSemanticMatch": "96.4% (27/28)",
+      "failures": [
+        {
+          "case": "malformed-phrasing",
+          "detail": "category expected null, model returned \"Running Shoes\" — it inferred a category where the correct answer was to infer none"
+        }
+      ]
+    }
+  },
+
+  "recommendationQuality": {
+    "cases": "8 + 1 adversarial scenario",
+    "deterministic": {
+      "hardConstraintViolationRate": "0.0% (0/31)",
+      "unknownProductHallucinationRate": "0.0% (0/31)",
+      "nearMatchDisclosureAccuracy": "100.0% (1/1)",
+      "adversarialHallucinationCaughtByGroundingValidator": true
+    },
+    "liveModel": {
+      "hardConstraintViolationRate": "0.0% (0/31)",
+      "unknownProductHallucinationRate": "0.0% (0/31)",
+      "nearMatchDisclosureAccuracy": "100.0% (1/1)",
+      "adversarialHallucinationCaughtByGroundingValidator": true
+    }
+  },
+
+  "whatThisShows": [
+    "The safety invariants hold identically under a live model and a deterministic one: 0% hard-constraint violations and 0% unknown-product hallucination post-validation in both modes.",
+    "The grounding validator catches an injected hallucinated product id in both modes. A model cannot introduce a product the server did not supply.",
+    "On this held-out set the deterministic extractor scores 100% and the live model 96.4%. The model does not beat the baseline here."
+  ],
+
+  "whatThisDoesNotShow": [
+    "That the live model is unnecessary. This set was built alongside the deterministic extractor and covers phrasings it was designed to handle, so it is biased toward the baseline and does not measure open-vocabulary input outside it.",
+    "Latency or cost per request. Neither is measured here.",
+    "That 28 intent cases and 8 recommendation cases are a sufficient sample for a production quality claim."
+  ],
+
+  "conclusion": "The deterministic provider stays the default. On this distribution the live model costs a network hop and a failure mode without improving accuracy, and the post-validation safety numbers are identical either way — which is the property the architecture is built to guarantee, and it holds regardless of which provider is selected.",
+
+  "reproduce": [
+    "pnpm --filter @razorgrowth/api eval:intent",
+    "pnpm --filter @razorgrowth/api eval:recommendation",
+    "Set AI_PROVIDER=gemini with GEMINI_API_KEY for the live path; unset for the deterministic path. Both exit non-zero on regression."
+  ]
+}

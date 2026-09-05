@@ -148,7 +148,26 @@ Honest limits: this is application-level tamper **evidence**, not a blockchain, 
 | Regression suites | `pnpm test:isolated`, `pnpm --filter @razorgrowth/web test`, and `pnpm --filter @razorgrowth/domain test` |
 | It really talks to Razorpay | [`docs/evidence/razorpay-testmode-proof.json`](docs/evidence/razorpay-testmode-proof.json) — real order, live 401 classified, HMAC schemes verified |
 | Agents cannot cheat it | `pnpm redteam` — 6 attacks with real Ed25519 signatures, asserts on server responses, exits non-zero on regression |
+| **What the live model actually earns** | [`docs/evidence/ai-evaluation.json`](docs/evidence/ai-evaluation.json) — both providers over the same held-out cases |
 | Failures are handled | [Problems log](docs/TRACK01_PROBLEMS_LOG.md) — 1,085 lines |
+
+### What the live model earns — measured, not asserted
+
+The architecture invites an obvious question: the deterministic fallback looks capable, so what is the model for? Both providers were run over the same held-out cases on the same seeded catalogue.
+
+| | Deterministic | Live Gemini |
+|---|---|---|
+| Intent extraction, exact semantic match (28 cases) | **100.0%** (28/28) | 96.4% (27/28) |
+| Hard-constraint violations, post-validation (31) | **0.0%** | **0.0%** |
+| Unknown-product hallucination, post-validation (31) | **0.0%** | **0.0%** |
+| Near-match disclosure accuracy | 100.0% | 100.0% |
+| Injected hallucinated product id caught by grounding | **Yes** | **Yes** |
+
+**The safety numbers are identical either way.** That is the property this architecture exists to guarantee, and it holds regardless of which provider is selected — a model cannot introduce a product the server did not supply, or a violation the validator does not catch.
+
+**And the honest part: the deterministic extractor beats the live model here**, 100% to 96.4%. The single live failure inferred a category where the correct answer was to infer none. So the deterministic provider stays the default; on this distribution the model costs a network hop and a failure mode without improving accuracy.
+
+This set was built alongside the deterministic extractor, so it is biased toward the baseline and does not measure the open-vocabulary input the model is actually for. It does not measure latency or cost. 28 intent cases is not a production quality claim. All of that is stated in the artifact rather than left for a reviewer to infer.
 
 ### Razorpay Test Mode proof
 
