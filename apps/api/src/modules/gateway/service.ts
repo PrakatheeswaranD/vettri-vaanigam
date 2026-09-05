@@ -66,7 +66,7 @@ import {
   systemClock,
 } from "@razorgrowth/domain";
 import { logger } from "../../observability/logger.js";
-import { appendLedgerEvent } from "../audit/ledger.js";
+import { appendLedgerEvent, withLedgerConcurrencyRetry } from "../audit/ledger.js";
 import { verifyMandateSignature } from "./mandate-verifier.js";
 import { resolveAgentForIntent } from "./agent-registry.js";
 import { getAIProvider } from "../agents/provider-factory.js";
@@ -404,23 +404,11 @@ async function writeDecision(prisma: PrismaClient, args: RecordArgs): Promise<Ga
     decisionLatencyMs,
   };
 
-  const record = await prisma.decisionRecord.create({ data });
+  const record = await withLedgerConcurrencyRetry(prisma, async (tx) => {
+    const decision = await tx.decisionRecord.create({ data });
 
-  // EVERY external decision reaches the hash-chained ledger.
-  //
-  // The schema promises that agent activity is auditable through the same
-  // tamper-evident chain as everything else, and writing only a
-  // DecisionRecord quietly bypassed it: the one class of event most likely
-  // to be disputed was the one class not chained. Each decision gets its
-  // own workflow id, because a refused intent never becomes an order and
-  // inventing a shared workflow would imply a relationship that does not
-  // exist.
-  //
-  // A ledger failure must not lose the decision that was already made, so
-  // it is logged loudly rather than thrown — the DecisionRecord remains
-  // the authoritative row either way.
-  try {
-    await appendLedgerEvent(prisma, {
+    // Decision and audit entry commit together. A failed audit blocks execution.
+    await appendLedgerEvent(tx, {
       workflowId,
       merchantId: args.merchantId,
       actorType: "POLICY_ENGINE",
@@ -433,7 +421,7 @@ async function writeDecision(prisma: PrismaClient, args: RecordArgs): Promise<Ga
       status: args.outcome === "DECLINE" ? "REJECTED" : "EXECUTED",
       conciseReason: args.explanation.slice(0, 500),
       relatedEntityType: "DecisionRecord",
-      relatedEntityId: record.id,
+      relatedEntityId: decision.id,
       metadata: {
         protocol: args.protocol ?? null,
         reasonCode: args.reasonCode,
@@ -443,12 +431,8 @@ async function writeDecision(prisma: PrismaClient, args: RecordArgs): Promise<Ga
       },
       executedAt: new Date(),
     });
-  } catch (err) {
-    logger.error(
-      { event: "vettri_vaanigam.ledger_append_failed", decisionId: record.id, err: err instanceof Error ? err.message : String(err) },
-      "Decision recorded but could not be appended to the audit ledger",
-    );
-  }
+    return decision;
+  });
 
   logger.info(
     { event: "vettri_vaanigam.decision", decisionId: record.id, outcome: args.outcome, reasonCode: args.reasonCode, decisionLatencyMs },
@@ -526,6 +510,7 @@ async function negotiate(
         product: { merchantId, status: "ACTIVE", id: { notIn: basketProductIds } },
       },
       include: { product: { select: { name: true, category: true } } },
+      orderBy: { sku: "asc" },
       take: 12,
     });
     if (candidates.length === 0) return NO_NEGOTIATION;
@@ -919,88 +904,99 @@ export async function handleAgentPurchaseIntent(
     });
   }
 
+  const negotiation = await negotiate(prisma, request.merchantId, basket, policy);
+  const offer = negotiation.offer;
+  const shouldApplyOffer = Boolean(
+    request.acceptNegotiation || headers["x-accept-negotiation"] === "true" ||
+    (typeof request.body === "object" && request.body !== null &&
+      (request.body as Record<string, unknown>).acceptNegotiation === true)
+  );
+  let executionLines: (PricedBasket["lines"][number] & { lineDiscountMinor?: number })[] = basket.lines;
+  let executionAmountMinor = basket.totalMinor;
+  let finalCategories = basket.categories;
+  if (offer && shouldApplyOffer) {
+    // Rail-specific approvals are bound to the original basket. A new basket
+    // must start a new protocol authorization, never inherit an attestation.
+    if (!intent.mandate || request.humanApprovalAttestation || intent.verifiedSettlement) {
+      return writeDecision(prisma, { ...shared, outcome: "DECLINE",
+        reasonCode: "OFFER_REQUIRES_NEW_AUTHORIZATION",
+        explanation: "This payment authorization is bound to the original basket. Submit the offered basket as a new intent. Nothing was charged.",
+        offer, negotiatorRawProposal: negotiation.raw });
+    }
+    const additions = await prisma.productVariant.findMany({
+      where: { sku: { in: offer.addSkus }, active: true, product: { merchantId: request.merchantId, status: "ACTIVE" } },
+      include: { product: { select: { category: true } } },
+    });
+    if (additions.length !== new Set(offer.addSkus).size || additions.some(v => v.currency !== basket.currency)) {
+      return writeDecision(prisma, { ...shared, outcome: "DECLINE", reasonCode: "OFFER_UNAVAILABLE",
+        explanation: "An offered item became unavailable or uses a different currency. Nothing was charged." });
+    }
+    const combined = [...basket.lines, ...additions.map(v => ({ productId: v.productId, variantId: v.id,
+      quantity: 1, unitPriceMinor: v.priceMinor, unitCostMinor: v.costMinor }))];
+    const gross = combined.reduce((sum, l) => sum + l.unitPriceMinor * l.quantity, 0);
+    const discount = Math.floor(gross * offer.discountBps / 10000);
+    // Allocate by cumulative amounts so rounding cannot make a line negative.
+    let cumulativeGross = 0;
+    let allocated = 0;
+    executionLines = combined.map(line => {
+      cumulativeGross += line.unitPriceMinor * line.quantity;
+      const cumulativeDiscount = Math.floor(cumulativeGross * discount / gross);
+      const lineDiscountMinor = cumulativeDiscount - allocated;
+      allocated = cumulativeDiscount;
+      return { ...line, lineDiscountMinor };
+    });
+    executionAmountMinor = gross - discount;
+    finalCategories = [...new Set([...basket.categories, ...additions.map(v => v.product.category)])];
+    const freshPolicy = await loadGatewayPolicy(prisma, request.merchantId);
+    const costMinor = combined.every(l => l.unitCostMinor !== null)
+      ? combined.reduce((sum, l) => sum + l.unitCostMinor! * l.quantity, 0) : null;
+    if (offer.discountBps > freshPolicy.maxNegotiationDiscountBps ||
+        offerBreachesFloorMargin({ revenueMinor: gross, costMinor, discountBps: offer.discountBps }, freshPolicy)) {
+      return writeDecision(prisma, { ...shared, outcome: "DECLINE", reasonCode: "OFFER_MARGIN_BREACH",
+        explanation: "The final offer no longer meets the merchant's discount or margin limits. Nothing was charged." });
+    }
+    const finalMandate = verifySpendMandate(intent.mandate, {
+      merchantId: request.merchantId, callerAgentId: intent.agentId, orderTotalMinor: executionAmountMinor,
+      currency: basket.currency, now: systemClock.now(), nonceAlreadyUsed: false,
+      verifySignature: verifyMandateSignature, trustedPublicKey: agent.trustedPublicKey,
+    });
+    // This request already claimed the nonce above; do not mistake its own
+    // claim for a replay while checking the final signed amount and expiry.
+    if (!finalMandate.valid) {
+      return writeDecision(prisma, { ...shared, computedTotalMinor: executionAmountMinor,
+        outcome: "DECLINE", reasonCode: finalMandate.code,
+        explanation: finalMandate.detail + " The final offer was not executed. Nothing was charged." });
+    }
+    const finalAgent = await resolveAgent(prisma, request.merchantId, intent, freshPolicy);
+    const finalEvaluation = evaluateAgentGatewayPolicy(freshPolicy, {
+      agentTrust: finalAgent.trust, orderTotalMinor: executionAmountMinor, claimedTotalMinor: null,
+      currency: basket.currency, categories: finalCategories, lineCount: executionLines.length,
+      recentIntentCount: finalAgent.recentIntentCount, protocolSupported: true, adaptiveTrust: finalAgent.adaptiveTrust,
+    });
+    Object.assign(shared, { computedTotalMinor: executionAmountMinor,
+      appliedCeilingMinor: finalEvaluation.appliedCeilingMinor, trustScoreAtDecision: finalEvaluation.trustScore,
+      trustBandAtDecision: finalEvaluation.trustBand, reasonCode: finalEvaluation.reasonCode,
+      explanation: finalEvaluation.explanation });
+    if (finalEvaluation.decision !== "AUTO_APPROVE") {
+      return writeDecision(prisma, { ...shared, outcome: finalEvaluation.decision,
+        normalizedBasket: executionLines, negotiatedDiscountBps: offer.discountBps,
+        offer, negotiatorRawProposal: negotiation.raw,
+        explanation: finalEvaluation.explanation + " The final offer was not executed. Nothing was charged." });
+    }
+  }
   const decidedAtMs = performance.now();
   const decisionId = randomUUID();
   const workflowId = `agent-decision-${decisionId}`;
-  const negotiation = await negotiate(prisma, request.merchantId, basket, policy);
-  const offer = negotiation.offer;
-
-  // Persist the policy decision BEFORE executing it. Payment/order ledger
-  // entries can therefore never appear earlier than the authorization that
-  // caused them. Execution then enriches this record with internal/provider
-  // identifiers, or safely changes the final outcome to STEP_UP on failure.
   const approved = await writeDecision(prisma, {
-    ...shared,
-    decisionId,
-    workflowId,
-    outcome: "AUTO_APPROVE",
-    decidedAtMs,
-    negotiatedDiscountBps: offer?.discountBps ?? null,
-    negotiatorRawProposal: negotiation.raw,
-    normalizedBasket: basket.lines,
-    offer,
-    explanation: [
-      evaluation.explanation,
-      offer
-        ? `The negotiator also offered ${offer.discountBps / 100}% off for adding ${offer.addSkus.length} item(s), within your configured ceiling.`
-        : null,
-      executeApprovedPurchase ? "The approved basket is now being turned into a payable checkout." : null,
-    ]
-      .filter(Boolean)
-      .join(" "),
+    ...shared, decisionId, workflowId, outcome: "AUTO_APPROVE", decidedAtMs,
+    computedTotalMinor: executionAmountMinor, normalizedBasket: executionLines,
+    negotiatedDiscountBps: offer && shouldApplyOffer ? offer.discountBps : null,
+    negotiatorRawProposal: negotiation.raw, offer,
+    explanation: shared.explanation + (offer && shouldApplyOffer
+      ? " The final bundle passed fresh mandate and merchant-policy checks."
+      : offer ? " An optional offer is available; this checkout contains only the original basket." : ""),
   });
-
   if (!executeApprovedPurchase) return approved;
-
-  const shouldApplyOffer = Boolean(
-    request.acceptNegotiation ||
-    headers["x-accept-negotiation"] === "true" ||
-    (typeof request.body === "object" && request.body !== null && (request.body as Record<string, unknown>).acceptNegotiation === true)
-  );
-
-  let executionLines = basket.lines;
-  let executionAmountMinor = basket.totalMinor;
-
-  if (offer && shouldApplyOffer && offer.addSkus.length > 0) {
-    const additionalVariants = await prisma.productVariant.findMany({
-      where: {
-        sku: { in: offer.addSkus },
-        active: true,
-        product: { merchantId: request.merchantId, status: "ACTIVE" },
-      },
-      include: { product: { select: { id: true, name: true } } },
-    });
-
-    const addLines = additionalVariants.map((v) => ({
-      productId: v.productId,
-      variantId: v.id,
-      sku: v.sku,
-      title: v.title,
-      unitPriceMinor: v.priceMinor,
-      unitCostMinor: v.costMinor,
-      quantity: 1,
-      lineTotalMinor: v.priceMinor,
-    }));
-
-    const combinedLines = [...basket.lines, ...addLines];
-    const totalGross = combinedLines.reduce((sum, l) => sum + l.unitPriceMinor * l.quantity, 0);
-    const discountFraction = offer.discountBps / 10000;
-    const totalDiscountMinor = Math.round(totalGross * discountFraction);
-
-    let allocatedDiscount = 0;
-    executionLines = combinedLines.map((line, idx) => {
-      const lineGross = line.unitPriceMinor * line.quantity;
-      const isLast = idx === combinedLines.length - 1;
-      const lineDiscount = isLast ? totalDiscountMinor - allocatedDiscount : Math.round((lineGross / totalGross) * totalDiscountMinor);
-      allocatedDiscount += lineDiscount;
-      return {
-        ...line,
-        lineDiscountMinor: lineDiscount,
-        lineTotalMinor: lineGross - lineDiscount,
-      };
-    });
-    executionAmountMinor = totalGross - totalDiscountMinor;
-  }
 
   // An approved intent has to become something the agent can actually pay.
   // Deliberately AFTER the decision clock stops: creating the order is

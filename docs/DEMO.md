@@ -2,7 +2,7 @@
 
 Everything below has been run end to end against a seeded local database. Timings are the target, not a promise — the point of the script is the order, which builds one argument rather than touring the product.
 
-> **Before you start.** Complete the README setup, then run `pnpm db:identities`. Run it again after `pnpm test` — the integration suite raises the demo shopper's spending limits to exercise large-basket paths and does not put them back, and the step-up gate at 2:00 is the whole demo. `pnpm db:identities` restores the fixture limits.
+> **Before you start.** Complete the README setup and run `pnpm db:identities`. Run verification with `pnpm test:isolated`; it creates a separate database and leaves demo spending limits untouched.
 
 **One-line framing to open with:** *"Any AI agent can now try to buy from this merchant. This is the gate it has to get through."*
 
@@ -28,7 +28,7 @@ Show the returned recommendations. Point at the reason codes on the top result �
 
 Say what the model did and did not do: it turned a sentence into a structured intent and ranked a candidate set the server had already filtered. It never saw a price it could change. If it returns a product that was not in that set, the grounding check drops the ranking and a deterministic ordering is used instead.
 
-**Land this:** AI where language is genuinely hard, and nowhere near the money.
+**Land this:** AI interprets language and proposes offers; deterministic code authorizes the final basket.
 
 ---
 

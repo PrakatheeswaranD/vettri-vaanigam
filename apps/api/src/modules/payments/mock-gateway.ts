@@ -21,6 +21,7 @@ export const MOCK_WEBHOOK_SECRET = "mock_test_webhook_secret";
 export class MockPaymentGateway implements PaymentGateway {
   readonly provider = "MOCK" as const;
   private readonly payments = new Map<string, ProviderPaymentInfo>();
+  private readonly orders = new Map<string, ProviderOrder[]>();
   private queuedOrderError: ProviderGatewayError | null = null;
   private queuedFetchError: ProviderGatewayError | null = null;
 
@@ -45,7 +46,13 @@ export class MockPaymentGateway implements PaymentGateway {
       this.queuedOrderError = null;
       throw err;
     }
-    return { providerOrderId: `mock_order_${randomUUID()}`, amountMinor: params.amountMinor, currency: params.currency, providerStatus: "created" };
+    const order = { providerOrderId: `mock_order_${randomUUID()}`, amountMinor: params.amountMinor, currency: params.currency, providerStatus: "created" };
+    this.orders.set(params.internalPaymentId, [...(this.orders.get(params.internalPaymentId) ?? []), order]);
+    return order;
+  }
+
+  async findOrdersByReceipt(receipt: string): Promise<ProviderOrder[]> {
+    return this.orders.get(receipt) ?? [];
   }
 
   async fetchPayment(providerPaymentId: string): Promise<ProviderPaymentInfo> {

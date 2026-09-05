@@ -181,6 +181,17 @@ async function continueProviderOrderCreation(
     return toInitiationResponse(latest, publicConfig.keyId, publicConfig.testMode);
   }
 
+  // Claim durably BEFORE the network call. Never expire this claim into a
+  // second POST: a crashed worker may already have created the provider order.
+  const ownership = await prisma.payment.updateMany({
+    where: { id: payment.id, providerOrderId: null, state: "CREATED", automaticRetryBlocked: false },
+    data: { automaticRetryBlocked: true },
+  });
+  if (ownership.count !== 1) {
+    const recovered = await recoverProviderOrder(prisma, merchantId, payment, workflowId, gateway);
+    return toInitiationResponse(recovered, publicConfig.keyId, publicConfig.testMode);
+  }
+
   // PART 07 §58-§59 — the external network call happens OUTSIDE any open
   // database transaction; the pre/post states are what make this safe
   // under a crash between the two.
@@ -189,10 +200,10 @@ async function continueProviderOrderCreation(
     providerOrder = await gateway.createPaymentOrder({ internalPaymentId: payment.id, amountMinor: payment.amountMinor, currency: payment.currency });
   } catch (err) {
     if (err instanceof ProviderGatewayError) {
-      if (err.category === "PROVIDER_TIMEOUT") {
+      if (!["PROVIDER_AUTHENTICATION_ERROR", "PROVIDER_VALIDATION_ERROR"].includes(err.category)) {
         await prisma.payment.update({ where: { id: payment.id }, data: { state: "UNKNOWN" } });
         logger.warn({ event: "payments.provider_order_uncertain", merchantId, paymentId: payment.id, err: err.message }, "Provider order creation timed out; state left UNKNOWN");
-        throw new AppError("PAYMENT_PROVIDER_ERROR", "Could not confirm the payment provider order was created; please try again.");
+        throw new AppError("PAYMENT_PROVIDER_ERROR", "Provider order outcome is unknown. Reconcile the existing payment; do not create a new checkout.");
       }
       const failureCategory = normalizeRazorpayFailure(null, err.message);
       await withLedgerConcurrencyRetry(prisma, async (tx) => {
@@ -213,15 +224,16 @@ async function continueProviderOrderCreation(
       logger.error({ event: "payments.provider_order_failed", merchantId, paymentId: payment.id, category: err.category }, err.message);
       throw new AppError("PAYMENT_PROVIDER_ERROR", `Payment provider rejected order creation: ${err.message}`);
     }
+    await prisma.payment.update({ where: { id: payment.id }, data: { state: "UNKNOWN" } });
     throw err;
   }
 
-  // PART 07 §90, §126 — atomic claim: only the request that actually wins
-  // this conditional update is allowed to record OUR provider order and
-  // advance checkout/order state. A genuine concurrent double-call could
-  // still create two orders upstream on Razorpay's side in a rare race
-  // (Test Mode, harmless) — the application itself only ever recognizes
-  // one, and only one ledger entry/response is ever produced.
+  if (providerOrder.amountMinor !== payment.amountMinor || providerOrder.currency !== payment.currency) {
+    await prisma.payment.update({ where: { id: payment.id }, data: { state: "UNKNOWN" } });
+    throw new AppError("FINANCIAL_INTEGRITY_ERROR", "Provider order does not match the authorized amount and currency.");
+  }
+
+  // Publish only the claimed provider result; recovery may have published it first.
   const claim = await prisma.payment.updateMany({
     where: { id: payment.id, providerOrderId: null },
     data: { providerOrderId: providerOrder.providerOrderId, state: "CREATED" },
@@ -254,6 +266,36 @@ async function continueProviderOrderCreation(
   });
 
   return toInitiationResponse(updated, publicConfig.keyId, publicConfig.testMode);
+}
+
+async function recoverProviderOrder(
+  prisma: PrismaClient, merchantId: string, payment: Payment, workflowId: string, gateway: PaymentGateway,
+): Promise<Payment> {
+  const latest = await prisma.payment.findUniqueOrThrow({ where: { id: payment.id } });
+  if (latest.providerOrderId) return latest;
+  if (!gateway.findOrdersByReceipt) throw AppError.conflict("Provider order requires manual reconciliation; automatic creation is blocked.");
+  const orders = await gateway.findOrdersByReceipt(payment.id);
+  if (orders.length !== 1) {
+    throw AppError.conflict(orders.length === 0
+      ? "Provider order creation is in progress or unconfirmed. Retry reconciliation later; no second order will be created."
+      : "Multiple provider orders match this receipt. Manual reconciliation is required.");
+  }
+  const order = orders[0]!;
+  if (order.amountMinor !== payment.amountMinor || order.currency !== payment.currency) {
+    throw new AppError("FINANCIAL_INTEGRITY_ERROR", "Recovered provider order does not match the authorized amount and currency.");
+  }
+  return withLedgerConcurrencyRetry(prisma, async tx => {
+    const claim = await tx.payment.updateMany({ where: { id: payment.id, providerOrderId: null, state: { in: ["CREATED", "UNKNOWN"] } },
+      data: { providerOrderId: order.providerOrderId, state: "CREATED" } });
+    if (claim.count === 1) {
+      await updateCheckoutStatus(tx, payment.checkoutId!, "PAYMENT_IN_PROGRESS");
+      await setOrderStatus(tx, payment.orderId, "PAYMENT_PENDING");
+      await appendLedgerEvent(tx, { workflowId, merchantId, actorType: "PAYMENT_SYSTEM", actionType: "PROVIDER_ORDER_RECOVERED",
+        status: "VERIFIED", conciseReason: "Recovered one matching provider order by receipt without issuing another create request.",
+        relatedEntityType: "Payment", relatedEntityId: payment.id, metadata: { providerOrderId: order.providerOrderId }, executedAt: new Date() });
+    }
+    return tx.payment.findUniqueOrThrow({ where: { id: payment.id } });
+  });
 }
 
 export async function verifyClientCompletion(prisma: PrismaClient, merchantId: string, request: PaymentClientVerificationRequestDTO): Promise<PaymentDTO> {
@@ -386,7 +428,7 @@ export async function reconcilePayment(prisma: PrismaClient, merchantId: string,
   const gateway = getPaymentGateway();
   if (!gateway) throw new AppError("PAYMENT_NOT_CONFIGURED", "Razorpay Test Mode is not configured on this server.");
 
-  const payment = await findPaymentById(prisma, merchantId, paymentId);
+  let payment = await findPaymentById(prisma, merchantId, paymentId);
   if (!payment) throw AppError.notFound(`Payment not found: ${paymentId}`);
   /**
    * NEVER ASK ONE PROVIDER ABOUT ANOTHER PROVIDER'S TRANSACTION.
@@ -417,7 +459,9 @@ export async function reconcilePayment(prisma: PrismaClient, merchantId: string,
     );
   }
   if (!payment.providerPaymentId && !payment.providerOrderId) {
-    throw AppError.conflict("No provider reference exists yet for this payment; nothing to reconcile.");
+    const pendingCheckout = await findCheckoutById(prisma, merchantId, payment.checkoutId!);
+    if (!pendingCheckout) throw AppError.notFound("Checkout not found for payment.");
+    payment = await recoverProviderOrder(prisma, merchantId, payment, pendingCheckout.workflowId, gateway);
   }
   const now = systemClock.now();
   if (payment.lastReconciledAt && now.getTime() - payment.lastReconciledAt.getTime() < RECONCILE_COOLDOWN_MS) {

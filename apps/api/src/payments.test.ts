@@ -11,7 +11,7 @@
  * this suite (PART 07 §9, §115).
  */
 import { randomUUID } from "node:crypto";
-import { afterAll, beforeAll, beforeEach, describe, expect, it } from "vitest";
+import { afterAll, beforeAll, beforeEach, describe, expect, it, vi } from "vitest";
 import type { FastifyInstance } from "fastify";
 import { buildAuthedTestApp, getTestMerchantId } from "./test-helpers/test-app.js";
 import { prisma } from "./db/client.js";
@@ -404,9 +404,13 @@ describe("Payments — initiation idempotency and concurrency (PART 07 §90-§93
   it("two concurrent initiation calls for the same checkout produce exactly one payment attempt", async () => {
     const { checkoutId } = await readyCheckout();
     const [a, b] = await Promise.all([initiate(checkoutId), initiate(checkoutId)]);
-    expect(a.statusCode).toBe(200);
-    expect(b.statusCode).toBe(200);
-    expect(a.json().providerOrderId).toBe(b.json().providerOrderId);
+    expect([a.statusCode, b.statusCode]).toContain(200);
+    expect([200, 409]).toContain(a.statusCode);
+    expect([200, 409]).toContain(b.statusCode);
+    const final = await initiate(checkoutId);
+    expect(final.statusCode).toBe(200);
+    const record = await prisma.payment.findFirstOrThrow({ where: { checkoutId } });
+    expect(await getMockPaymentGatewayForTests().findOrdersByReceipt(record.id)).toHaveLength(1);
 
     const payments = await prisma.payment.count({ where: { checkoutId } });
     expect(payments).toBe(1);
@@ -423,7 +427,7 @@ describe("Payments — initiation idempotency and concurrency (PART 07 §90-§93
     expect(second.json().error.code).toBe("PAYMENT_ALREADY_ATTEMPTED");
   });
 
-  it("a provider timeout leaves the payment recoverable via a subsequent initiation attempt", async () => {
+  it("a provider timeout without evidence blocks a second create request", async () => {
     const { checkoutId } = await readyCheckout();
     getMockPaymentGatewayForTests().queueOrderCreationError(new ProviderGatewayError("PROVIDER_TIMEOUT", "simulated timeout"));
     const first = await initiate(checkoutId);
@@ -434,8 +438,27 @@ describe("Payments — initiation idempotency and concurrency (PART 07 §90-§93
     expect(payment.providerOrderId).toBeNull();
 
     const second = await initiate(checkoutId);
-    expect(second.statusCode).toBe(200);
-    expect(second.json().providerOrderId).toEqual(expect.any(String));
+    expect(second.statusCode).toBe(409);
+    expect(await getMockPaymentGatewayForTests().findOrdersByReceipt(payment.id)).toHaveLength(0);
+  });
+
+  it("recovers an accepted order after a lost response without a second provider POST", async () => {
+    const { checkoutId } = await readyCheckout();
+    const gateway = getMockPaymentGatewayForTests();
+    const create = gateway.createPaymentOrder.bind(gateway);
+    const spy = vi.spyOn(gateway, "createPaymentOrder").mockImplementationOnce(async params => {
+      await create(params);
+      throw new ProviderGatewayError("PROVIDER_TIMEOUT", "response lost after acceptance");
+    });
+    try {
+      expect((await initiate(checkoutId)).statusCode).toBe(502);
+      const recovered = await initiate(checkoutId);
+      expect(recovered.statusCode).toBe(200);
+      expect(spy).toHaveBeenCalledTimes(1);
+      const payment = await prisma.payment.findFirstOrThrow({ where: { checkoutId } });
+      expect(await gateway.findOrdersByReceipt(payment.id)).toHaveLength(1);
+      expect(await prisma.agentAction.count({ where: { relatedEntityId: payment.id, actionType: "PROVIDER_ORDER_RECOVERED" } })).toBe(1);
+    } finally { spy.mockRestore(); }
   });
 });
 

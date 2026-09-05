@@ -3,7 +3,7 @@
   "version": "0.1.0",
   "private": true,
   "type": "module",
-  "description": "Vettri Vaanigam \u2014 a merchant-side gateway making any Razorpay merchant safely payable by any AI buyer agent, on any protocol (Track 01).",
+  "description": "Vettri Vaanigam — a merchant-side gateway making any Razorpay merchant safely payable by any AI buyer agent, on any protocol (Track 01).",
   "engines": {
     "node": ">=20"
   },
@@ -31,7 +31,8 @@
     "demo:simulate": "pnpm --filter @razorgrowth/api run demo:simulate",
     "demo:golden-path": "pnpm --filter @razorgrowth/api run demo:golden-path",
     "demo:agent-swarm": "pnpm --filter @razorgrowth/api run demo:agent-swarm",
-    "redteam": "pnpm --filter @razorgrowth/api run redteam"
+    "redteam": "pnpm --filter @razorgrowth/api run redteam",
+    "test:isolated": "node scripts/test-isolated.mjs"
   },
   "devDependencies": {
     "@electric-sql/pglite": "^0.5.7",

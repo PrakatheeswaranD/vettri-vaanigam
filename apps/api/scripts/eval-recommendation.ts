@@ -80,6 +80,16 @@ async function main() {
     const intent = toIntent(c);
     await throttle(provider.mode);
     const products = await searchCandidateProducts(prisma, merchantId, { category: intent.category });
+    // Budgets must describe the scenario against today's catalogue, rather
+    // than silently turning an old near-match fixture into an exact match.
+    if (["clear-best-match", "near-match-budget", "over-budget-product"].includes(c.id)) {
+      const unconstrained = evaluateCandidates(products, { ...intent, budget: { ...intent.budget, maxMinor: null } });
+      const eligible = [...unconstrained.exact].sort((a, b) => a.effectivePriceMinor - b.effectivePriceMinor);
+      if (!eligible.length) throw new Error(`${c.id}: no purchasable fixture satisfies the non-budget constraints`);
+      const cheapest = eligible[0]!.effectivePriceMinor;
+      intent.budget.maxMinor = c.id === "clear-best-match" ? cheapest : Math.floor(cheapest / 1.05);
+      console.log(`Scenario ${c.id}: catalogue-derived budget ${intent.budget.maxMinor} minor units; cheapest eligible ${cheapest}.`);
+    }
     const evaluated = evaluateCandidates(products, intent);
     const outcome = await buildRecommendations(provider, evaluated, intent);
 
@@ -98,7 +108,7 @@ async function main() {
     }
     if (c.expectNearMatchViolationType) {
       nearMatchCasesChecked++;
-      const allMatch = outcome.recommendations.every((r) => r.violations.some((v) => v.type === c.expectNearMatchViolationType));
+      const allMatch = outcome.recommendations.length > 0 && outcome.recommendations.every((r) => r.violations.some((v) => v.type === c.expectNearMatchViolationType));
       if (allMatch) nearMatchCasesCorrect++;
       else failures.push(`${c.id}: near-match violation type mismatch`);
     }
@@ -144,6 +154,7 @@ async function main() {
   console.log(`Adversarial hallucination caught by grounding validator: ${adversarialCaught ? "YES" : "NO"}`);
 
   if (failures.length > 0) {
+    process.exitCode = 1;
     console.log("\n--- Failures ---");
     for (const f of failures) console.log(`  ✗ ${f}`);
   }

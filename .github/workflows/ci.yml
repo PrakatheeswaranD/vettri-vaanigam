@@ -94,7 +94,10 @@ jobs:
         run: pnpm db:identities
 
       - name: Test
-        run: pnpm test
+        run: |
+          pnpm test:isolated
+          pnpm --filter @razorgrowth/domain test
+          pnpm --filter @razorgrowth/web test
 
       - name: Build
         run: pnpm build

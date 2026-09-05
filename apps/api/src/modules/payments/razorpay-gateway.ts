@@ -24,6 +24,7 @@ export interface RazorpayConfig {
 
 interface RazorpayOrderResponse {
   id: string;
+  receipt?: string;
   amount: number;
   currency: string;
   status: string;
@@ -118,6 +119,16 @@ export function createRazorpayGateway(config: RazorpayConfig): PaymentGateway {
         config.timeoutMs,
       );
       return { providerOrderId: body.id, amountMinor: body.amount, currency: body.currency, providerStatus: body.status };
+    },
+
+    async findOrdersByReceipt(receipt: string): Promise<ProviderOrder[]> {
+      const body = await requestJson<{ items: RazorpayOrderResponse[] }>(
+        `${config.apiBaseUrl}/orders?receipt=${encodeURIComponent(receipt)}&count=100`,
+        { method: "GET", headers: { Authorization: authHeader } }, config.timeoutMs,
+      );
+      return body.items.filter(order => order.receipt === receipt).map(order => ({
+        providerOrderId: order.id, amountMinor: order.amount, currency: order.currency, providerStatus: order.status,
+      }));
     },
 
     async fetchPayment(providerPaymentId: string): Promise<ProviderPaymentInfo> {

@@ -18,6 +18,16 @@ const __dirname = path.dirname(fileURLToPath(import.meta.url));
  * side effects at import time are not enough. */
 export function setup(): void {
   loadDotenv({ path: path.resolve(__dirname, "../../../../.env") });
+  const testUrl = process.env.TEST_DATABASE_URL;
+  if (!testUrl) throw new Error("TEST_DATABASE_URL is required. Run pnpm test:isolated for a disposable database.");
+  const destination = (raw: string) => {
+    const url = new URL(raw);
+    const host = ["localhost", "127.0.0.1", "[::1]"].includes(url.hostname) ? "loopback" : url.hostname;
+    return `${host}:${url.port || "5432"}${url.pathname}`;
+  };
+  if (process.env.DATABASE_URL && destination(testUrl) === destination(process.env.DATABASE_URL)) {
+    throw new Error("The test and application databases must be different. Run pnpm test:isolated.");
+  }
   // `.env` is shared between running the app and running the tests, so
   // pointing the app at a hosted database also re-points the tests — and
   // the local-database guard below then (correctly) refuses to run the

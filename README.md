@@ -29,7 +29,7 @@ This project takes **direction B — make a merchant transactable by an AI buyer
 |---|---|---|
 | **Explainable** | Every decision writes a plain-English `conciseReason` plus reason codes — refusals included | [`gateway/service.ts`](apps/api/src/modules/gateway/service.ts) |
 | **Bounded** | Policy ceilings, mandate amount limits, discount clamps, floor margin, hard maximum | [`packages/domain/`](packages/domain/src) |
-| **Gated** | A policy decision is required before execution; step-up produces a real payment link for a human | [`policy-engine.ts`](packages/domain/src/policy-engine.ts) |
+| **Gated** | A policy decision is required before execution; external-agent step-up waits for an authenticated owner or approver | [`policy-engine.ts`](packages/domain/src/policy-engine.ts) |
 | **Audit trail** | Per-workflow SHA-256 hash chain, single writer, intent → payment on one `workflowId` | [`audit/ledger.ts`](apps/api/src/modules/audit/ledger.ts) |
 | **One failure, gracefully** | A real Razorpay `401` classified into a closed taxonomy; a stale authorization refused with `PRICE_CHANGED` | [evidence ↓](#evidence-you-can-check-yourself) |
 
@@ -42,8 +42,8 @@ NPCI's UAP and the protocol race (ACP, AP2, x402) make agent-to-agent commerce a
 | Criterion | Short answer |
 |---|---|
 | **Problem taste** | Pricing authority leaking to an untrusted caller is a real, per-request commerce failure — not a chatbot demo |
-| **Build quality** | Green CI, **610 tests**, a pure dependency-free domain layer, zero `TODO`s, honest boundaries |
-| **AI judgment** | 7 narrow AI operations, all proposal-shaped and validated. **The entire external-agent purchase path never touches a model** |
+| **Build quality** | Automated CI, isolated API regression tests, a pure dependency-free domain layer, documented boundaries |
+| **AI judgment** | 7 narrow AI operations, all proposal-shaped and validated. Authorization is deterministic; optional upsell proposals can call a model |
 | **Failure recovery** | [A 1,085-line problems log](docs/TRACK01_PROBLEMS_LOG.md) of what broke and what was done — including the unflattering entries |
 
 ---
@@ -90,17 +90,12 @@ Razorpay asks for *"the right tool in the right place, and where you chose not t
 | **Authorization & policy** | **Never** | Pure domain code, no I/O, exhaustively tested |
 | **Mandate verification** | **Never** | Cryptography, not judgment |
 | **Agent trust scoring** | **Never** | Deterministic arithmetic over existing decision records |
-| **Discounts & negotiation** | **Never** | 483 lines, zero AI |
+| **Discounts & negotiation** | **Mixed** | Buyer negotiation is deterministic; the gateway can use bounded AI upsell proposals, with fresh final-basket authorization |
 | **Protocol parsing** | **Never** | An LLM reading payment amounts is the nightmare case |
 
-**The deliberate non-use worth naming:** an external agent's request travels from the wire to a Razorpay order **without touching a model once**. The AI in this product talks to humans, never to money.
+The authorization decision uses deterministic code. After the original basket passes, the optional negotiator may call a model to propose additional SKUs and a discount. Code grounds the SKUs, clamps the discount, and rejects margin breaches. If the offer is accepted, its final amount, categories and current merchant policy are checked again before execution. Rail-specific approvals require a new intent for a changed basket.
 
-Two design choices follow from that:
-
-- **Validators reject, never clamp.** Silently clamping a bad model output to a legal value launders it into an approved action and makes the audit trail lie about what the model actually proposed.
-- **Three fallback layers.** Provider absent, grounding failed, or call threw — each falls back to deterministic behaviour rather than degrading silently.
-
----
+Growth-proposal validators reject invalid outputs. The optional gateway negotiator instead records both the raw proposal and its bounded result; these are different validation contracts.
 
 ## Money safety
 
@@ -111,12 +106,12 @@ Every money action, traced:
 | Buyer purchase proposal | No | Price from catalogue row | Category, daily, max-purchase, autonomous limit | Ledger + DecisionRecord |
 | Buyer authorization | No | Re-checks category, currency, ceiling | Cumulative daily reservation inside the transaction | Ledger |
 | External agent purchase | No | Variant re-fetch → `PRICE_CHANGED`, `FINANCIAL_INTEGRITY_ERROR` | Gateway policy + Ed25519 mandate | Ledger + order fingerprint |
-| Discount / negotiation | No | Floor margin, auto-apply ceiling | Merchant discount ceiling | Ledger |
+| Discount / negotiation | Optional gateway AI proposal | Grounded SKUs, bounded discount, floor margin | Fresh final-basket mandate and merchant-policy checks | Raw proposal + bounded result + ledger |
 | Growth offer | **Yes** | `validateGrowthProposal` — rejects, never clamps | Allowed action types, discount cap, buyer budget | Ledger |
 | Razorpay order | No | Server-computed total only | Payment state machine | Ledger + provider order |
 | Payment confirmation | No | HMAC-SHA256, constant-time compare | Transition guard | Ledger |
 
-**There is no code path by which model output determines an amount, a limit, or an authorization.**
+**Models cannot set policy limits or grant authorization. An optional model-proposed discount can influence the final price only through deterministic bounds and a fresh authorization check.**
 
 ### The gate, fired three times
 
@@ -150,7 +145,7 @@ Honest limits: this is application-level tamper **evidence**, not a blockchain, 
 | Claim | How to verify |
 |---|---|
 | It builds and passes | [CI](https://github.com/PrakatheeswaranD/vettri-vaanigam/actions/workflows/ci.yml) — typecheck, lint, migrate, seed, test, build, evals |
-| 610 tests pass | `pnpm test` — 538 API (54 files) + 72 web |
+| Regression suites | `pnpm test:isolated`, `pnpm --filter @razorgrowth/web test`, and `pnpm --filter @razorgrowth/domain test` |
 | It really talks to Razorpay | [`docs/evidence/razorpay-testmode-proof.json`](docs/evidence/razorpay-testmode-proof.json) — real order, live 401 classified, HMAC schemes verified |
 | Agents cannot cheat it | `pnpm redteam` — 6 attacks with real Ed25519 signatures, asserts on server responses, exits non-zero on regression |
 | Failures are handled | [Problems log](docs/TRACK01_PROBLEMS_LOG.md) — 1,085 lines |
@@ -188,7 +183,7 @@ Replace the two signing-secret placeholders with distinct random values. Leave p
 docker compose up -d db
 ```
 
-Then point `DATABASE_URL` and `TEST_DATABASE_URL` at `postgresql://razorgrowth:razorgrowth@127.0.0.1:5433/razorgrowth`.
+Then point `DATABASE_URL`  at `postgresql://razorgrowth:razorgrowth@127.0.0.1:5433/razorgrowth`.
 
 <details>
 <summary>No Docker? Use the bundled PGlite shim — and its caveats</summary>
@@ -226,10 +221,10 @@ Deliberately public fixtures, **not real accounts**. Do not expose a seeded inst
 ### Verify
 
 ```sh
-pnpm typecheck && pnpm lint && pnpm test && pnpm build
+pnpm typecheck && pnpm lint && pnpm test:isolated && pnpm --filter @razorgrowth/web test && pnpm --filter @razorgrowth/domain test && pnpm build
 ```
 
-> **Re-run `pnpm db:identities` after `pnpm test`.** Several integration tests raise the demo shopper's limits to the schema maximum to exercise large-basket paths and do not restore them. Left that way the step-up gate silently never fires and a reviewer sees a six-figure purchase auto-approve. `pnpm db:identities` restores the fixture limits.
+Tests run in a freshly seeded disposable database with `pnpm test:isolated`. Direct `pnpm test` requires an explicit local `TEST_DATABASE_URL` distinct from the application database. The suite refuses a shared database before touching rows.
 
 ### Optional live AI
 

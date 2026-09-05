@@ -98,6 +98,10 @@ export interface PaymentGateway {
 
   createPaymentOrder(params: CreatePaymentOrderParams): Promise<ProviderOrder>;
 
+  /** Read-only recovery after an ambiguous create response. A receipt is a
+   * correlation key, not an idempotency guarantee. Multiple matches fail closed. */
+  findOrdersByReceipt?(receipt: string): Promise<ProviderOrder[]>;
+
   fetchPayment(providerPaymentId: string): Promise<ProviderPaymentInfo>;
 
   /**

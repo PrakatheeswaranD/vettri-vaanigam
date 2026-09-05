@@ -1,0 +1,8 @@
+{
+  "generatedAt": "2026-09-05T04:47:47.146Z",
+  "mode": "RAZORPAY_TEST_MODE",
+  "providerOrderId": "order_TY49bxbEmoWnDf",
+  "status": "CAPTURE_NOT_PROVEN",
+  "payments": [],
+  "scope": "Provider read-back only. Does not prove application webhook delivery or application ledger reconciliation."
+}
