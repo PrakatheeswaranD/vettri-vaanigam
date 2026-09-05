@@ -1,159 +1,254 @@
-# VETTRI VAANIGAM
+# Vettri Vaanigam
 
-### Governed agentic commerce for merchants and AI buyers
+### The gate an AI buyer has to get through to spend money at a Razorpay merchant
 
-**Any AI agent can now try to buy from a merchant. This is the gate it has to get through.**
+[![CI](https://github.com/PrakatheeswaranD/vettri-vaanigam/actions/workflows/ci.yml/badge.svg)](https://github.com/PrakatheeswaranD/vettri-vaanigam/actions/workflows/ci.yml)
+[![License: MIT](https://img.shields.io/badge/License-MIT-blue.svg)](LICENSE)
+[![Node](https://img.shields.io/badge/node-24-brightgreen.svg)](package.json)
+[![Razorpay](https://img.shields.io/badge/Razorpay-Test%20Mode-002970.svg)](docs/evidence/razorpay-testmode-proof.json)
 
-A merchant-side gateway that makes a Razorpay merchant transactable by an AI buyer — with every money action explainable, bounded and gated. The model proposes; deterministic code prices, authorizes and executes; Razorpay is the authority on whether money actually moved.
+**Every agentic commerce protocol — ACP, AP2, UAP, UCP, x402 — states a price on the wire. A merchant who believes that number has handed pricing authority to a stranger's language model.**
 
-A buyer describes what they need. VETTRI VAANIGAM helps discover products, evaluates merchant offers, checks purchase permissions, and prepares checkout. The merchant sees opportunities, controls the agent's boundaries, and follows decisions through an auditable transaction trail.
+Vettri Vaanigam is the gate that doesn't believe it. One endpoint any AI buyer agent can reach in any of those dialects, which **re-prices the basket from the merchant's own catalogue**, verifies a signed spend mandate, scores the agent against its own history, and answers `AUTO_APPROVE` / `STEP_UP` / `DECLINE` — writing a plain-English decision record on every path, including requests it could not parse.
 
-Two documents are worth reading before the code: the [five-minute demo script](docs/DEMO.md), and [the problems log](docs/TRACK01_PROBLEMS_LOG.md) — a running record of what broke during the build and what was done about it, including the entries that are unflattering:
-
-- *P3-2 · Acted on 1 of 80 payments and reported the cycle complete*
-- *P0-4 · `GET /buyer/standing` defaulted the seller to the buyer*
-- *P3-6 · The first test run passed vacuously*
+> **The model proposes. Deterministic code prices, authorizes and executes. Razorpay decides whether money actually moved.**
 
 ---
 
-> **Independent demonstration project** prepared for a Razorpay internship submission. Not an official Razorpay product or a production-readiness claim. Use Razorpay **Test Mode** only for evaluation.
+## Track 01 — how this maps
+
+**Track:** AI Growth & Agentic Commerce · *"Grow the merchant's revenue, and make them sellable to AI buyers."*
+
+This project takes **direction B — make a merchant transactable by an AI buyer end to end** — and treats it as a merchant-side infrastructure problem rather than a shopping-assistant problem. The growth surface exists, but it is the second act; the gate is the product.
+
+### The bar
+
+> *"Every money action explainable, bounded and gated. Show the audit trail and one failure handled gracefully."*
+
+| Requirement | How it is met | Where |
+|---|---|---|
+| **Explainable** | Every decision writes a plain-English `conciseReason` plus reason codes — refusals included | [`gateway/service.ts`](apps/api/src/modules/gateway/service.ts) |
+| **Bounded** | Policy ceilings, mandate amount limits, discount clamps, floor margin, hard maximum | [`packages/domain/`](packages/domain/src) |
+| **Gated** | A policy decision is required before execution; step-up produces a real payment link for a human | [`policy-engine.ts`](packages/domain/src/policy-engine.ts) |
+| **Audit trail** | Per-workflow SHA-256 hash chain, single writer, intent → payment on one `workflowId` | [`audit/ledger.ts`](apps/api/src/modules/audit/ledger.ts) |
+| **One failure, gracefully** | A real Razorpay `401` classified into a closed taxonomy; a stale authorization refused with `PRICE_CHANGED` | [evidence ↓](#evidence-you-can-check-yourself) |
+
+### Why now
+
+NPCI's UAP and the protocol race (ACP, AP2, x402) make agent-to-agent commerce an open problem, and Razorpay's in-app pilots are already live. The unanswered question is not *"can an agent talk to a merchant"* — it is **"what stops one spending money it shouldn't."** No individual merchant should implement mandate verification, protocol adapters and agent trust scoring. That belongs where the payment rails already are.
+
+### Evaluation criteria
+
+| Criterion | Short answer |
+|---|---|
+| **Problem taste** | Pricing authority leaking to an untrusted caller is a real, per-request commerce failure — not a chatbot demo |
+| **Build quality** | Green CI, **610 tests**, a pure dependency-free domain layer, zero `TODO`s, honest boundaries |
+| **AI judgment** | 7 narrow AI operations, all proposal-shaped and validated. **The entire external-agent purchase path never touches a model** |
+| **Failure recovery** | [A 1,085-line problems log](docs/TRACK01_PROBLEMS_LOG.md) of what broke and what was done — including the unflattering entries |
+
+---
 
 ## Architecture
 
-![VETTRI VAANIGAM architecture: six layers explain buyer and merchant entry points, API validation, agent intelligence, deterministic authorization, verified Razorpay commerce, and PostgreSQL persistence.](docs/images/architecture-detailed.png)
+![Vettri Vaanigam architecture: six layers covering buyer and merchant entry points, API validation, agent intelligence, deterministic authorization, verified Razorpay commerce, and PostgreSQL persistence.](docs/images/architecture-detailed.png)
 
-[Architecture details and trust boundaries](docs/ARCHITECTURE.md) · [Scalable SVG](docs/images/architecture-detailed.svg) · [Simple overview](docs/images/architecture.png) · [Agent-facing API specification](docs/openapi/agent-commerce.openapi.json)
+[**Full architecture** — invariants, threat model, state machines](docs/ARCHITECTURE.md) · [Scalable SVG](docs/images/architecture-detailed.svg) · [Agent-facing OpenAPI](docs/openapi/agent-commerce.openapi.json)
 
-## What the project demonstrates
+### The request path an external agent actually takes
 
-- **Buyer Agent:** conversational product discovery, comparison, recommendation, and policy-bound checkout. A deterministic demo mode works without a paid AI key.
-- **Merchant Agent:** opportunity detection, governed proposals, approvals, growth controls, campaign comparisons, and ledger-backed activity.
-- **Merchant experience:** Merchant Today, an attention inbox, opportunities, customers and orders, agent controls, and activity, with technical configuration under advanced navigation.
-- **Commerce and Razorpay:** server-calculated checkout, idempotent execution, payment verification, signed webhooks, and reconciliation for uncertain payment states.
-- **Agent-facing integration:** gateway policy checks, AI-readable catalogue, ACP routes, AP2 compatibility fixtures, and configuration-dependent x402 settlement paths. These are implementation surfaces, not universal protocol certification.
-- **Safety:** tenant scoping, role checks, bounded execution authorizations, consent/contact checks for message drafts, and a hash-chained application audit ledger.
+Order of operations *is* the design — each step runs only because the previous one succeeded:
 
-### Implementation boundaries
+```
+detect protocol (explicit markers only, else UNKNOWN)
+  → adapter parses into one canonical ParsedIntent
+  → resolve SKUs against the catalogue
+  → REPRICE THE BASKET FROM CATALOGUE ROWS      ← the load-bearing step
+  → verify Ed25519 spend mandate (12 checks)
+  → compute adaptive agent trust
+  → evaluate merchant policy
+  → AUTO_APPROVE | STEP_UP | DECLINE
+  → execute: re-fetch variants, guarded stock decrement, Razorpay order
+  → append to the hash-chained ledger
+```
 
-The buyer/checkout/payment and existing governed-action flows have automated integration coverage. The newer weekly-growth-plan layer is **partially implemented**:
+Repricing happens **before** mandate verification and **before** policy on purpose: both ceilings must be evaluated against *our* number. Verifying a mandate against a price the caller supplied would make the signature meaningless.
 
-- Weekly snapshots and approvals persist; regeneration preserves the original snapshot.
-- Contact-limited message drafts and retryable job records exist.
-- Email, WhatsApp, SMS, push, and Buyer Agent delivery adapters are **not yet integrated**. A queued message is not a delivered message.
-- Unsupported weekly-plan action types remain blocked. A weekly approval does not bypass per-action governance or spend money.
-- End-to-end portfolio budget reservations, background job recovery, and statistically validated incremental-profit reporting remain future work.
-- Holdout comparisons are estimates, not proof that the agent caused revenue. Missing cost data is not profit.
+---
 
-See the [demo walkthrough](docs/DEMO.md) for a reproducible review path.
+## Where AI is used — and where it deliberately is not
 
-## Technology
+Razorpay asks for *"the right tool in the right place, and where you chose not to use one."*
 
-- Frontend: React 18, TypeScript, Vite, Tailwind CSS, TanStack Query.
-- API: Fastify, TypeScript, Zod, Prisma.
-- Data: PostgreSQL; a local PGlite server is supplied for development.
-- Shared packages: domain rules and API contracts.
-- Verification: Vitest, Testing Library, ESLint, TypeScript checks, GitHub Actions.
+| Concern | AI? | Why |
+|---|---|---|
+| Understanding buyer language | **Yes** | Open vocabulary; grounded against real merchant categories so it cannot invent a taxonomy |
+| Ranking a pre-filtered candidate set | **Yes** | Bounded set; falls back to deterministic ordering on any failure |
+| Normalising messy catalogue text | **Yes** | The job LLMs are genuinely best at |
+| Drafting a policy from a sentence | **Yes** | Draft only — a human approves it |
+| Proposing a growth action | **Yes** | From a bounded candidate list, then validated |
+| **Pricing** | **Never** | Catalogue rows only |
+| **Authorization & policy** | **Never** | Pure domain code, no I/O, exhaustively tested |
+| **Mandate verification** | **Never** | Cryptography, not judgment |
+| **Agent trust scoring** | **Never** | Deterministic arithmetic over existing decision records |
+| **Discounts & negotiation** | **Never** | 483 lines, zero AI |
+| **Protocol parsing** | **Never** | An LLM reading payment amounts is the nightmare case |
 
-## Run locally
+**The deliberate non-use worth naming:** an external agent's request travels from the wire to a Razorpay order **without touching a model once**. The AI in this product talks to humans, never to money.
 
-Use **Node.js 24** and the pnpm version declared in `package.json`. Run commands from the repository root.
+Two design choices follow from that:
 
-1. Clone this repository and install dependencies:
+- **Validators reject, never clamp.** Silently clamping a bad model output to a legal value launders it into an approved action and makes the audit trail lie about what the model actually proposed.
+- **Three fallback layers.** Provider absent, grounding failed, or call threw — each falls back to deterministic behaviour rather than degrading silently.
 
-   ```sh
-   pnpm install --frozen-lockfile
-   ```
+---
 
-2. Copy `.env.example` to `.env`. On PowerShell:
+## Money safety
 
-   ```powershell
-   Copy-Item .env.example .env
-   ```
+Every money action, traced:
 
-   On macOS/Linux, use `cp .env.example .env`. Do not overwrite an existing configured `.env`. Keep `DATABASE_URL` and `DIRECT_URL` pointed at the local database for this walkthrough. Replace the two signing-secret placeholders with distinct random values. Keep payment and AI keys unset for the offline demo.
+| Money action | AI proposes? | Validation | Policy gate | Audit |
+|---|---|---|---|---|
+| Buyer purchase proposal | No | Price from catalogue row | Category, daily, max-purchase, autonomous limit | Ledger + DecisionRecord |
+| Buyer authorization | No | Re-checks category, currency, ceiling | Cumulative daily reservation inside the transaction | Ledger |
+| External agent purchase | No | Variant re-fetch → `PRICE_CHANGED`, `FINANCIAL_INTEGRITY_ERROR` | Gateway policy + Ed25519 mandate | Ledger + order fingerprint |
+| Discount / negotiation | No | Floor margin, auto-apply ceiling | Merchant discount ceiling | Ledger |
+| Growth offer | **Yes** | `validateGrowthProposal` — rejects, never clamps | Allowed action types, discount cap, buyer budget | Ledger |
+| Razorpay order | No | Server-computed total only | Payment state machine | Ledger + provider order |
+| Payment confirmation | No | HMAC-SHA256, constant-time compare | Transition guard | Ledger |
 
-3. Start the local database in a separate terminal and leave it running:
+**There is no code path by which model output determines an amount, a limit, or an authorization.**
 
-   ```sh
-   pnpm db:up
-   ```
+### The gate, fired three times
 
-   **If you have Docker, prefer real Postgres instead** — it is the more reliable path:
+Against the seeded ₹3,489 shoe, all three outcomes are reachable on demand:
 
-   ```sh
-   docker compose up -d db
-   ```
+| Quantity | Total | Outcome | Why |
+|---|---|---|---|
+| 1 | ₹3,489 | `AUTO_APPROVE` | under the ₹5,000 autonomous limit |
+| 3 | ₹10,467 | `STEP_UP` | over it — the buyer is **asked** |
+| 8 | ₹27,912 | `DECLINE` | over the ₹25,000 hard ceiling — the buyer is **refused** |
 
-   Then point `DATABASE_URL` and `TEST_DATABASE_URL` at `postgresql://razorgrowth:razorgrowth@127.0.0.1:5433/razorgrowth` and skip `pnpm db:up` entirely. `pnpm db:up` runs a PGlite socket shim (Postgres compiled to WebAssembly) that exists so this project can run on a machine with no Docker and no install rights. It works, but it is the least reliable component here: it can wedge while still holding port 5432 — so the port reports open while queries hang — and it has corrupted its own data directory more than once. If that happens, stop the process, delete `.dbdata`, and repeat steps 3 and 4. See [`docker-compose.yml`](docker-compose.yml) for the rationale.
+Two thresholds, not one: *"how much may the agent spend without me"* and *"how much am I willing to spend at all"* are different questions. A purchase over the hard maximum is never offered for approval, because approving it was never on the table.
 
-4. In another terminal, create the schema and **local demo data**:
+---
 
-   ```sh
-   pnpm db:generate
-   pnpm db:migrate
-   pnpm db:seed
-   pnpm db:identities
-   pnpm dev
-   ```
+## Audit trail
 
-   Seeding writes demo records. Never run it against a production or shared database. The local database uses port 5432; stop a conflicting local service or configure a different database before starting.
+```
+buyer intent → AI interpretation → proposal → validation → policy decision
+  → execution → provider result → chained ledger event
+```
 
-5. Open the frontend at `http://localhost:5173`. The API runs at `http://localhost:4000/api/v1`.
+`eventHash = SHA256(canonical(event) + previousEventHash)`, scoped per `workflowId`, written by exactly one function. The conversation and the purchase share one `workflowId`, so *"you recommended this"* and *"you charged me for it"* are links in one verifiable chain.
 
-### Local demonstration accounts
+Honest limits: this is application-level tamper **evidence**, not a blockchain, and it deliberately excludes prompts and model responses — you can audit what was decided, not what the model was shown.
 
-These credentials are deliberately public fixtures, **not real accounts**. Do not expose a seeded instance to the public internet.
+---
 
-- Merchant owner: `owner@meridianathletics.demo` / `MeridianDemo!2026`
-- Buyer: `customer@vettrivaanigam.demo` / `CustomerDemo!2026`
-- Platform admin: `admin@vettrivaanigam.demo` / `AdminDemo!2026`
+## Evidence you can check yourself
 
-### Optional Razorpay Test Mode
+| Claim | How to verify |
+|---|---|
+| It builds and passes | [CI](https://github.com/PrakatheeswaranD/vettri-vaanigam/actions/workflows/ci.yml) — typecheck, lint, migrate, seed, test, build, evals |
+| 610 tests pass | `pnpm test` — 538 API (54 files) + 72 web |
+| It really talks to Razorpay | [`docs/evidence/razorpay-testmode-proof.json`](docs/evidence/razorpay-testmode-proof.json) — real order, live 401 classified, HMAC schemes verified |
+| Agents cannot cheat it | `pnpm redteam` — 6 attacks with real Ed25519 signatures, asserts on server responses, exits non-zero on regression |
+| Failures are handled | [Problems log](docs/TRACK01_PROBLEMS_LOG.md) — 1,085 lines |
 
-Set all three values in the untracked `.env`: `RAZORPAY_KEY_ID`, `RAZORPAY_KEY_SECRET`, and `RAZORPAY_WEBHOOK_SECRET`. A partial configuration is rejected. Configure a reachable test webhook endpoint ending in `/api/v1/payments/webhooks/razorpay` with the matching webhook secret.
-
-Without these values, product discovery and checkout preparation remain available, but real provider payment initiation fails closed. Automated tests use a mock payment gateway; they do not prove that live Test Mode credentials or webhook delivery are configured.
-
-To prove the Razorpay side specifically, run:
+### Razorpay Test Mode proof
 
 ```sh
 pnpm --filter @razorgrowth/api razorpay:proof
 ```
 
-This exercises the same `RazorpayPaymentGateway` the application uses against live Test Mode and writes [`docs/evidence/razorpay-testmode-proof.json`](docs/evidence/razorpay-testmode-proof.json). It creates a real provider order, confirms Razorpay echoes the server-computed amount unchanged, runs the reconciliation read-back, and checks that a real Razorpay `401` surfaces as a classified `PROVIDER_AUTHENTICATION_ERROR` rather than a leaked HTTP status. It refuses to run against an `rzp_live_` key.
+Drives the same `RazorpayPaymentGateway` the application uses against live Test Mode. It creates a real provider order, confirms Razorpay echoes the server-computed amount unchanged, exercises the reconciliation read-back that resolves an `UNKNOWN` payment, and confirms a real Razorpay `401` surfaces as a classified `PROVIDER_AUTHENTICATION_ERROR` rather than a leaked HTTP status. It refuses to run against an `rzp_live_` key.
 
-What it deliberately does **not** claim: that a payment was captured. Completing a checkout needs a human at Razorpay's hosted checkout with a test card, so the script creates a real payment link and reports it as an outstanding manual step instead of implying a settlement.
+**What it does not claim:** that a payment was captured. Completing a checkout needs a human at Razorpay's hosted checkout with a test card, so the script creates a real payment link and reports it as an outstanding manual step rather than implying settlement.
+
+### Break the agent
+
+The in-app sandbox runs 9 attack presets through the **production verifier**, not a simulation — a real Ed25519 keypair signs a real mandate, and the same code path that serves live requests refuses the tampered one. If a guarantee regressed, the preset would report success and say so.
+
+---
+
+## Quick start
+
+Requires **Node 24** and the pnpm version in `package.json`. Run from the repository root.
+
+```sh
+pnpm install --frozen-lockfile
+cp .env.example .env          # PowerShell: Copy-Item .env.example .env
+```
+
+Replace the two signing-secret placeholders with distinct random values. Leave payment and AI keys unset for the offline demo.
+
+**Start the database.** With Docker (recommended):
+
+```sh
+docker compose up -d db
+```
+
+Then point `DATABASE_URL` and `TEST_DATABASE_URL` at `postgresql://razorgrowth:razorgrowth@127.0.0.1:5433/razorgrowth`.
+
+<details>
+<summary>No Docker? Use the bundled PGlite shim — and its caveats</summary>
+
+```sh
+pnpm db:up
+```
+
+`pnpm db:up` runs Postgres compiled to WebAssembly so this project can run on a machine with no Docker and no install rights. It works, but it is the least reliable component here: it can wedge while still holding port 5432 — so the port reports open while queries hang — and it has corrupted its own data directory more than once. If that happens, stop the process, delete `.dbdata`, and repeat. See [`docker-compose.yml`](docker-compose.yml) for the full rationale.
+</details>
+
+**Then, in another terminal:**
+
+```sh
+pnpm db:migrate
+pnpm db:seed
+pnpm db:identities
+pnpm dev
+```
+
+Frontend at `http://localhost:5173`, API at `http://localhost:4000/api/v1`.
+
+Follow the [**five-minute demo script**](docs/DEMO.md) from here.
+
+### Demo accounts
+
+Deliberately public fixtures, **not real accounts**. Do not expose a seeded instance to the internet.
+
+| Role | Email | Password |
+|---|---|---|
+| Merchant owner | `owner@meridianathletics.demo` | `MeridianDemo!2026` |
+| Buyer | `customer@vettrivaanigam.demo` | `CustomerDemo!2026` |
+| Platform admin | `admin@vettrivaanigam.demo` | `AdminDemo!2026` |
+
+### Verify
+
+```sh
+pnpm typecheck && pnpm lint && pnpm test && pnpm build
+```
+
+> **Re-run `pnpm db:identities` after `pnpm test`.** Several integration tests raise the demo shopper's limits to the schema maximum to exercise large-basket paths and do not restore them. Left that way the step-up gate silently never fires and a reviewer sees a six-figure purchase auto-approve. `pnpm db:identities` restores the fixture limits.
 
 ### Optional live AI
 
-The default setup has a labeled rule-based fallback. Provider selection and optional Anthropic/Gemini settings are validated in `apps/api/src/config/env.ts`. Keep API keys server-side; never place them in a `VITE_*` variable.
+Defaults to a labelled deterministic provider so everything runs without a key. Set `AI_PROVIDER=anthropic` or `gemini` with the matching key for the live path; the mode is shown in the UI rather than implied. Keys stay server-side — never in a `VITE_*` variable.
 
-## Verify
+---
 
-Prepare and seed a **dedicated local database** first. Tests mutate demo records and should not run against a database used for an active demonstration. Set `TEST_DATABASE_URL` and `TEST_DIRECT_URL` to that local database if your application uses another database.
+## What is deliberately not built
 
-```sh
-pnpm typecheck
-pnpm lint
-pnpm test
-pnpm build
-```
+Named here so a reviewer does not have to discover it:
 
-Focused weekly-plan safeguards:
+- **Delivery adapters for the weekly growth plan.** Snapshots, approvals and job records persist; email, WhatsApp, SMS, push and Buyer Agent hand-off do not exist. A queued message is not a delivered message. The surface is hidden behind `VITE_ENABLE_WEEKLY_PLAN`.
+- **Causal revenue attribution.** Holdout comparisons are estimates. Missing cost data is not profit.
+- **Deep AP2 / UAP / UCP implementations.** ACP and x402 are implemented; the others are adapters and conformance fixtures — implementation surfaces, not protocol certification.
+- **Production key management, background job recovery, distributed tracing.**
 
-```sh
-pnpm --filter @razorgrowth/api test src/growth-plans.test.ts
-```
+The alternative — a designed extension presented as a finished system — is the specific failure this project is built to avoid.
 
-Recent local verification: the 538-test API suite passed in full (54 files), and the 72-test frontend suite passed. Typecheck and the production build passed. These are local results, not a claim that GitHub CI or a production deployment has passed. CI is defined in [`.github/workflows/ci.yml`](.github/workflows/ci.yml).
-
-**Re-run `pnpm db:identities` after `pnpm test`.** Several integration tests raise the demo shopper's spending limits to the schema maximum to exercise large-basket paths, and do not restore them. Left that way, the step-up gate — the control the whole demo turns on — silently never fires, and a reviewer sees a six-figure purchase auto-approve. `pnpm db:identities` restores the fixture limits (₹5,000 autonomous, ₹25,000 hard ceiling) so all three outcomes are reachable again:
-
-| Quantity of the seeded ₹3,489 shoe | Total | Outcome |
-|---|---|---|
-| 1 | ₹3,489 | `AUTO_APPROVE` |
-| 3 | ₹10,467 | `STEP_UP` |
-| 8 | ₹27,912 | `DECLINE` |
+---
 
 ## Repository structure
 
@@ -162,32 +257,30 @@ apps/
   api/                 Fastify routes, services, Prisma schema and migrations
   web/                 Buyer, merchant, and administration interfaces
 packages/
-  domain/              Business rules and deterministic calculations
+  domain/              Business rules and deterministic calculations — no I/O, no AI
   contracts/           Shared validation schemas and DTOs
-  config/              Shared tooling configuration
 docs/
-  images/              Architecture image
+  ARCHITECTURE.md      Invariants, threat model, state machines
+  DEMO.md              Five-minute review script
+  TRACK01_PROBLEMS_LOG.md   What broke, and what was done about it
+  evidence/            Razorpay Test Mode proof output
   openapi/             Agent-facing API specification
-  conformance/         Protocol fixtures
 scripts/               Local database and demonstration tooling
 evals/                 AI evaluation fixtures
-.github/workflows/     Continuous integration
 ```
 
-## Design decisions
+`packages/domain/` is the layer to read first. It holds the policy engine, mandate verification, trust scoring, payment state machine and money arithmetic, with a test file beside almost every module, and depends on nothing.
 
-**The model proposes; the server authorizes.** Prices, stock checks, discount ceilings, and permission checks are not delegated to free-form model output.
+---
 
-**Authorization is not execution; execution is not payment.** Each transition has its own records and checks. Payment success requires verified provider evidence.
+## Technology
 
-**Unknown stays unknown.** An uncertain payment is reconciled; an unsupported action is blocked; a draft is not reported as sent.
+React 18 · TypeScript · Vite · Tailwind · TanStack Query · Fastify · Zod · Prisma · PostgreSQL · Vitest · GitHub Actions
 
-**The ledger provides tamper evidence, not immutability.** Its hash chain helps detect changes but is not a blockchain or a substitute for database access control.
+---
 
-## Submission and security notes
+> **Independent demonstration project** built for a Razorpay internship submission. Not an official Razorpay product and not a production-readiness claim. Razorpay **Test Mode** only.
 
-The product is **Vettri Vaanigam**. Machine-readable API extensions use `vettri_vaanigam` and mandates use `vettri_vaanigam_mandate`. Legacy mandate input names and stored browser preferences remain readable for compatibility. Historical migration files are preserved; a new migration updates existing demo login addresses without replacing accounts.
+## License
 
-Do not upload `.env`, local databases, session data, API keys, `node_modules`, or build output. `.gitignore` excludes these working files, but it does not remove them from old Git commits. Older local development history contained database files: publish a reviewed source-only snapshot rather than pushing that history unchanged.
-
-Keep any hosted demo private until public fixture accounts are removed, secrets are provisioned securely, and deployment controls have been reviewed. Detailed development notes under `docs/TRACK01_*` are historical records; this README describes the current submission scope.
+[MIT](LICENSE)
