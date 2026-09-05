@@ -1,8 +1,8 @@
 # VETTRI VAANIGAM — architecture
 
-![Detailed system architecture with six numbered layers](images/architecture-detailed.svg)
+![Detailed system architecture with six numbered layers](images/architecture-detailed.png)
 
-[Full-resolution PNG](images/architecture-detailed.png) · [Simplified overview](images/architecture.svg) · [Five-minute demo](DEMO.md) · [Problems log](TRACK01_PROBLEMS_LOG.md)
+[Scalable SVG](images/architecture-detailed.svg) · [Simplified overview](images/architecture.png) · [Five-minute demo](DEMO.md) · [Problems log](TRACK01_PROBLEMS_LOG.md)
 
 ---
 

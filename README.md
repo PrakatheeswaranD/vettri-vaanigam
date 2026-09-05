@@ -8,19 +8,21 @@ A merchant-side gateway that makes a Razorpay merchant transactable by an AI buy
 
 A buyer describes what they need. VETTRI VAANIGAM helps discover products, evaluates merchant offers, checks purchase permissions, and prepares checkout. The merchant sees opportunities, controls the agent's boundaries, and follows decisions through an auditable transaction trail.
 
-Two documents are worth reading before the code: the [five-minute demo script](docs/DEMO.md), and [the problems log](docs/TRACK01_PROBLEMS_LOG.md) — a running record of what broke during the build and what was done about it, including the bugs that were embarrassing:
+Two documents are worth reading before the code: the [five-minute demo script](docs/DEMO.md), and [the problems log](docs/TRACK01_PROBLEMS_LOG.md) — a running record of what broke during the build and what was done about it, including the entries that are unflattering:
 
-> *"P3-2 · Acted on 1 of 80 payments and reported the cycle complete"*
-> *"P0-4 · `GET /buyer/standing` defaulted the seller to the buyer"*
-> *"P3-6 · The first test run passed vacuously"*
+- *P3-2 · Acted on 1 of 80 payments and reported the cycle complete*
+- *P0-4 · `GET /buyer/standing` defaulted the seller to the buyer*
+- *P3-6 · The first test run passed vacuously*
 
-> Independent demonstration project prepared for a Razorpay internship submission. Not an official Razorpay product or a production-readiness claim. Use Razorpay **Test Mode** only for evaluation.
+---
+
+> **Independent demonstration project** prepared for a Razorpay internship submission. Not an official Razorpay product or a production-readiness claim. Use Razorpay **Test Mode** only for evaluation.
 
 ## Architecture
 
-![VETTRI VAANIGAM architecture: six layers explain buyer and merchant entry points, API validation, agent intelligence, deterministic authorization, verified Razorpay commerce, and PostgreSQL persistence.](docs/images/architecture-detailed.svg)
+![VETTRI VAANIGAM architecture: six layers explain buyer and merchant entry points, API validation, agent intelligence, deterministic authorization, verified Razorpay commerce, and PostgreSQL persistence.](docs/images/architecture-detailed.png)
 
-[Architecture details and trust boundaries](docs/ARCHITECTURE.md) · [Download detailed PNG](docs/images/architecture-detailed.png) · [Simple overview](docs/images/architecture.svg) · [Agent-facing API specification](docs/openapi/agent-commerce.openapi.json)
+[Architecture details and trust boundaries](docs/ARCHITECTURE.md) · [Scalable SVG](docs/images/architecture-detailed.svg) · [Simple overview](docs/images/architecture.png) · [Agent-facing API specification](docs/openapi/agent-commerce.openapi.json)
 
 ## What the project demonstrates
 
